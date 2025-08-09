@@ -1,9 +1,15 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>35bcd824-e2a8-4b19-8a38-061e7b79fd5a</UserSecretsId>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.0.3" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EvoAPI.Core\EvoAPI.Core.csproj" />
     <ProjectReference Include="..\EvoAPI.Infrastructure\EvoAPI.Infrastructure.csproj" />

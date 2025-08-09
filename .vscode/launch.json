@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch EvoAPI",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/EvoAPI.Api/bin/Debug/net8.0/EvoAPI.Api.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/EvoAPI.Api",
+            "stopAtEntry": false,
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+            },
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            },
+            "sourceFileMap": {
+                "/Views": "${workspaceFolder}/Views"
+            }
+        },
+        {
+            "name": "Launch EvoAPI + Frontend",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "Start All Development Services",
+            "program": "${workspaceFolder}/src/EvoAPI.Api/bin/Debug/net8.0/EvoAPI.Api.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/EvoAPI.Api",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        }
+    ]
+}

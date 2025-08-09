@@ -1,0 +1,101 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/EvoAPI.sln",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Run EvoAPI",
+            "type": "shell",
+            "command": "dotnet",
+            "args": ["run", "--project", "src/EvoAPI.Api"],
+            "options": {
+                "env": {
+                    "ASPNETCORE_ENVIRONMENT": "Test",
+                    "DB_PASSWORD": "4gKpQ4!t?H#kypq*"
+                }
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*)$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*info: Microsoft.Hosting.Lifetime.*",
+                    "endsPattern": "^.*info: Microsoft.Hosting.Lifetime.*Application started.*"
+                }
+            }
+        },
+        {
+            "label": "Run EvoTech Frontend",
+            "type": "shell",
+            "command": "npm",
+            "args": ["run", "dev"],
+            "options": {
+                "cwd": "../evotech"
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*)$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*Ready on.*",
+                    "endsPattern": "^.*Proxy routes configured.*"
+                }
+            }
+        },
+        {
+            "label": "Start All Development Services",
+            "dependsOrder": "parallel",
+            "dependsOn": [
+                "Run EvoAPI",
+                "Run EvoTech Frontend"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ]
+}
