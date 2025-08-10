@@ -9,5 +9,7 @@ public interface IDataService
     Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays);
     Task<DataTable> GetAllPrioritiesAsync();
     Task<bool> UpdatePriorityAsync(UpdatePriorityRequest request);
+    Task<DataTable> GetAllStatusSecondariesAsync();
+    Task<bool> UpdateStatusSecondaryAsync(UpdateStatusSecondaryRequest request);
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

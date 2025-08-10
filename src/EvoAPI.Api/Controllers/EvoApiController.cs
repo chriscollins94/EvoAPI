@@ -176,6 +176,48 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("statussecondaries")]
+        public async Task<ActionResult<ApiResponse<List<StatusSecondaryDto>>>> GetStatusSecondaries()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all status secondaries");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllStatusSecondariesAsync();
+                var statusSecondaries = ConvertDataTableToStatusSecondaries(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetStatusSecondaries", $"Retrieved {statusSecondaries.Count} status secondaries", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<StatusSecondaryDto>>
+                {
+                    Success = true,
+                    Message = "Status secondaries retrieved successfully",
+                    Data = statusSecondaries,
+                    Count = statusSecondaries.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetStatusSecondaries", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving status secondaries");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving status secondaries",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
     #region Post
@@ -264,6 +306,79 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPut("statussecondaries/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateStatusSecondary(int id, [FromBody] UpdateStatusSecondaryRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating status secondary {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.StatusSecondary))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Status secondary name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update status secondary
+                var success = await _dataService.UpdateStatusSecondaryAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdateStatusSecondary", $"Updated status secondary {id} - {request.StatusSecondary}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Status secondary updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Status secondary not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateStatusSecondary", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating status secondary {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the status secondary",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -325,6 +440,30 @@ public class EvoApiController : BaseController
         }
 
         return priorities;
+    }
+
+    private static List<StatusSecondaryDto> ConvertDataTableToStatusSecondaries(DataTable dataTable)
+    {
+        var statusSecondaries = new List<StatusSecondaryDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var statusSecondary = new StatusSecondaryDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                StatusId = Convert.ToInt32(row["StatusId"]),
+                StatusSecondary = row["StatusSecondary"]?.ToString() ?? string.Empty,
+                Color = row["Color"]?.ToString(),
+                Code = row["Code"]?.ToString(),
+                Attack = row["Attack"] != DBNull.Value ? Convert.ToInt32(row["Attack"]) : 0
+            };
+
+            statusSecondaries.Add(statusSecondary);
+        }
+
+        return statusSecondaries;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)
