@@ -7,7 +7,7 @@ using System.Diagnostics;
 namespace EvoAPI.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("[controller]")]
 public class AuthTestController : BaseController
 {
     public AuthTestController(IAuditService auditService)
@@ -23,6 +23,40 @@ public class AuthTestController : BaseController
             Timestamp = DateTime.UtcNow,
             Environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"
         });
+    }
+
+    [HttpGet("public/diagnostics")]
+    [AllowAnonymous]
+    public IActionResult GetDiagnostics()
+    {
+        try
+        {
+            var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+            var connectionString = config.GetConnectionString("DefaultConnection");
+            
+            return Ok(new
+            {
+                Status = "Diagnostics running",
+                Environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production",
+                HasConnectionString = !string.IsNullOrEmpty(connectionString),
+                ConnectionStringLength = connectionString?.Length ?? 0,
+                HasPassword = connectionString?.Contains("Password=") ?? false,
+                HasPlaceholder = connectionString?.Contains("{DB_PASSWORD}") ?? false,
+                Timestamp = DateTime.UtcNow,
+                MachineName = Environment.MachineName,
+                ProcessId = Environment.ProcessId
+            });
+        }
+        catch (Exception ex)
+        {
+            return Ok(new
+            {
+                Status = "Error in diagnostics",
+                Error = ex.Message,
+                StackTrace = ex.StackTrace,
+                Timestamp = DateTime.UtcNow
+            });
+        }
     }
 
     [HttpGet("profile")]
@@ -117,6 +151,89 @@ public class AuthTestController : BaseController
             ClientIP = ClientIPAddress,
             UserAgent
         });
+    }
+
+    [HttpGet("test-database")]
+    [AllowAnonymous]
+    public async Task<IActionResult> TestDatabase()
+    {
+        try
+        {
+            var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+            var connectionString = config.GetConnectionString("DefaultConnection");
+            
+            using var connection = new System.Data.SqlClient.SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new System.Data.SqlClient.SqlCommand("SELECT COUNT(*) FROM servicerequest", connection);
+            var count = await command.ExecuteScalarAsync();
+            
+            return Ok(new
+            {
+                Message = "Database connection successful",
+                ServiceRequestCount = count,
+                ConnectionString = connectionString?.Replace("Password=", "Password=***"),
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            return Ok(new
+            {
+                Message = "Database connection failed",
+                Error = ex.Message,
+                StackTrace = ex.StackTrace,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    [HttpGet("recent-audit-logs")]
+    [AdminOnly]
+    public async Task<IActionResult> GetRecentAuditLogs()
+    {
+        try
+        {
+            // Simple query to check recent audit entries - this will help debug the work orders issue
+            var sql = @"
+                SELECT TOP 10 
+                    a_timestamp, 
+                    a_name, 
+                    a_description, 
+                    a_detail,
+                    a_responsetime
+                FROM audit 
+                ORDER BY a_timestamp DESC";
+            
+            var connectionString = HttpContext.RequestServices
+                .GetRequiredService<IConfiguration>()
+                .GetConnectionString("DefaultConnection");
+            
+            using var connection = new System.Data.SqlClient.SqlConnection(connectionString);
+            using var command = new System.Data.SqlClient.SqlCommand(sql, connection);
+            
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+            
+            var logs = new List<object>();
+            while (await reader.ReadAsync())
+            {
+                logs.Add(new
+                {
+                    Timestamp = reader["a_timestamp"],
+                    Name = reader["a_name"]?.ToString(),
+                    Description = reader["a_description"]?.ToString(),
+                    Detail = reader["a_detail"]?.ToString(),
+                    ResponseTime = reader["a_responsetime"]?.ToString()
+                });
+            }
+            
+            return Ok(new { Message = "Recent audit logs", Logs = logs });
+        }
+        catch (Exception ex)
+        {
+            return Ok(new { Message = "Error reading audit logs", Error = ex.Message });
+        }
     }
 
     [HttpGet("debug-token")]

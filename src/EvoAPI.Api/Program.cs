@@ -8,7 +8,7 @@ using EvoAPI.Core.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add user secrets to configuration
-if (builder.Environment.IsDevelopment())
+if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Test")
 {
     builder.Configuration.AddUserSecrets<Program>();
 }
@@ -20,30 +20,43 @@ logger.LogInformation("Environment: {Environment}", builder.Environment.Environm
 logger.LogInformation("ApplicationName: {ApplicationName}", builder.Environment.ApplicationName);
 logger.LogInformation("ContentRootPath: {ContentRootPath}", builder.Environment.ContentRootPath);
 
+// Debug: Check if DB_PASSWORD is loaded
+var dbPassword = builder.Configuration["DB_PASSWORD"];
+logger.LogInformation("DB_PASSWORD from config: {HasPassword}", !string.IsNullOrEmpty(dbPassword) ? "Found" : "NOT FOUND");
+
 // Replace password placeholder with actual password from secrets/environment
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+logger.LogInformation("Original ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+
 if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PASSWORD}"))
 {
-    var dbPassword = builder.Configuration["DB_PASSWORD"];
     if (!string.IsNullOrEmpty(dbPassword))
     {
         connectionString = connectionString.Replace("{DB_PASSWORD}", dbPassword);
-        // Update the configuration with the resolved connection string
+        // This is the correct way to update the configuration
         builder.Configuration.GetSection("ConnectionStrings")["DefaultConnection"] = connectionString;
+        logger.LogInformation("Password replacement successful");
+    }
+    else
+    {
+        logger.LogError("DB_PASSWORD not found in configuration - User Secrets may not be loaded properly");
     }
 }
 
-logger.LogInformation("Active ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
-// Configure Kestrel for HTTPS
-builder.WebHost.ConfigureKestrel(options =>
+// Configure Kestrel for HTTPS only in local development
+if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local")
 {
-    options.ListenLocalhost(5001, listenOptions =>
+    builder.WebHost.ConfigureKestrel(options =>
     {
-        listenOptions.UseHttps();
+        options.ListenLocalhost(5001, listenOptions =>
+        {
+            listenOptions.UseHttps();
+        });
     });
-});
+}
 
 // Add services to the container.
 builder.Services.AddControllers();

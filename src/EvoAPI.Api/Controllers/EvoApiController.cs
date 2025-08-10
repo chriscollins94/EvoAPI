@@ -8,7 +8,7 @@ using System.Data;
 namespace EvoAPI.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("[controller]")]
 [Authorize]
 public class EvoApiController : BaseController
 {
