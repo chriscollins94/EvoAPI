@@ -12,96 +12,84 @@ namespace EvoAPI.Api.Controllers;
 [Authorize]
 public class EvoApiController : BaseController
 {
+    #region Initialize
+
     private readonly IDataService _dataService;
-    private readonly ILogger<EvoApiController> _logger;
-
-    public EvoApiController(
-        IDataService dataService, 
-        IAuditService auditService,
-        ILogger<EvoApiController> logger)
-    {
-        _dataService = dataService;
-        _logger = logger;
-        InitializeAuditService(auditService);
-    }
-
-
-    /// Get work orders with optional number of days filter
-
-    /// <param name="numberOfDays">Number of days to retrieve (default: 30, max: 1500)</param>
-    /// <returns>List of work orders</returns>
-    [HttpGet("workorders")]
-    [ProducesResponseType(typeof(ApiResponse<List<WorkOrderDto>>), 200)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 500)]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrders([FromQuery] int numberOfDays = 30)
-    {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        
-        try
+        private readonly ILogger<EvoApiController> _logger;
+    
+        public EvoApiController(
+            IDataService dataService, 
+            IAuditService auditService,
+            ILogger<EvoApiController> logger)
         {
-            _logger.LogInformation("Getting work orders for {NumberOfDays} days", numberOfDays);
+            _dataService = dataService;
+            _logger = logger;
+            InitializeAuditService(auditService);
+        }
+    #endregion
+
+    #region Get
+        [HttpGet("workorders")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrders([FromQuery] int numberOfDays = 30)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             
-            // Validate input
-            if (numberOfDays <= 0)
+            try
             {
-                return BadRequest(new ApiResponse<object>
+                _logger.LogInformation("Getting work orders for {NumberOfDays} days", numberOfDays);
+                
+                // Validate input
+                if (numberOfDays <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "NumberOfDays must be greater than 0",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetWorkOrdersAsync(numberOfDays);
+                var workOrders = ConvertDataTableToWorkOrders(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetWorkOrders", $"Retrieved {workOrders.Count} work orders for {numberOfDays} days", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<WorkOrderDto>>
+                {
+                    Success = true,
+                    Message = "Work orders retrieved successfully",
+                    Data = workOrders,
+                    Count = workOrders.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetWorkOrders", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving work orders for {NumberOfDays} days", numberOfDays);
+                
+                return StatusCode(500, new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "NumberOfDays must be greater than 0",
+                    Message = "An error occurred while retrieving work orders",
                     Count = 0
                 });
             }
-
-            // Get data from service
-            var dataTable = await _dataService.GetWorkOrdersAsync(numberOfDays);
-            var workOrders = ConvertDataTableToWorkOrders(dataTable);
-
-            stopwatch.Stop();
-            
-            // Log successful operation
-            await LogOperationAsync("GetWorkOrders", $"Retrieved {workOrders.Count} work orders for {numberOfDays} days", stopwatch.Elapsed);
-
-            return Ok(new ApiResponse<List<WorkOrderDto>>
-            {
-                Success = true,
-                Message = "Work orders retrieved successfully",
-                Data = workOrders,
-                Count = workOrders.Count
-            });
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            await LogErrorAsync("GetWorkOrders", ex, stopwatch.Elapsed);
-            
-            _logger.LogError(ex, "Error retrieving work orders for {NumberOfDays} days", numberOfDays);
-            
-            return StatusCode(500, new ApiResponse<object>
-            {
-                Success = false,
-                Message = "An error occurred while retrieving work orders",
-                Count = 0
-            });
-        }
-    }
-
-
-    /// Get work orders schedule with optional number of days filter
-
-    /// <param name="numberOfDays">Number of days to retrieve (default: 30, max: 1500)</param>
-    /// <returns>List of scheduled work orders</returns>
-    [HttpGet("workorders/schedule")]
-    [ProducesResponseType(typeof(ApiResponse<List<WorkOrderDto>>), 200)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 500)]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
+    
+        [HttpGet("workorders/schedule")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            _logger.LogInformation("Getting work orders schedule for {NumberOfDays} days", numberOfDays);
+            // _logger.LogInformation("Getting work orders schedule for {NumberOfDays} days", numberOfDays);
             
             // Validate input
             if (numberOfDays <= 0)
@@ -146,34 +134,21 @@ public class EvoApiController : BaseController
             });
         }
     }
+    #endregion
 
-
-    /// POST version of GetWorkOrders for complex filters
-
-    /// <param name="request">Work order request parameters</param>
-    /// <returns>List of work orders</returns>
-    [HttpPost("workorders")]
-    [ProducesResponseType(typeof(ApiResponse<List<WorkOrderDto>>), 200)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 500)]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersPost([FromBody] WorkOrderRequest request)
-    {
-        return await GetWorkOrders(request.NumberOfDays);
-    }
-
-
-    /// POST version of GetWorkOrdersSchedule for complex filters
-
-    /// <param name="request">Work order request parameters</param>
-    /// <returns>List of scheduled work orders</returns>
-    [HttpPost("workorders/schedule")]
-    [ProducesResponseType(typeof(ApiResponse<List<WorkOrderDto>>), 200)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
-    [ProducesResponseType(typeof(ApiResponse<object>), 500)]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedulePost([FromBody] WorkOrderRequest request)
-    {
-        return await GetWorkOrdersSchedule(request.NumberOfDays);
-    }
+    #region Post
+        [HttpPost("workorders")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersPost([FromBody] WorkOrderRequest request)
+        {
+            return await GetWorkOrders(request.NumberOfDays);
+        }
+    
+        [HttpPost("workorders/schedule")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedulePost([FromBody] WorkOrderRequest request)
+        {
+            return await GetWorkOrdersSchedule(request.NumberOfDays);
+        }
+    #endregion
 
     #region Helper Methods
 
