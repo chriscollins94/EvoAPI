@@ -237,6 +237,132 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetAllPrioritiesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    p_id as Id,
+                    p_insertdatetime as InsertDateTime,
+                    p_modifieddatetime as ModifiedDateTime,
+                    p_priority as PriorityName,
+                    p_order as [Order],
+                    p_color as Color,
+                    p_arrivaltimeinhours as ArrivalTimeInHours,
+                    p_attack as Attack
+                FROM Priority
+                ORDER BY p_order, p_priority";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllPriorities",
+                Detail = $"Retrieved {result.Rows.Count} priorities",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllPriorities",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving priorities");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdatePriorityAsync(EvoAPI.Shared.DTOs.UpdatePriorityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE Priority 
+                SET 
+                    p_priority = @PriorityName,
+                    p_order = @Order,
+                    p_color = @Color,
+                    p_arrivaltimeinhours = @ArrivalTimeInHours,
+                    p_attack = @Attack,
+                    p_modifieddatetime = GETDATE()
+                WHERE p_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@PriorityName", request.PriorityName },
+                { "@Order", request.Order ?? (object)DBNull.Value },
+                { "@Color", request.Color ?? (object)DBNull.Value },
+                { "@ArrivalTimeInHours", request.ArrivalTimeInHours ?? (object)DBNull.Value },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdatePriority",
+                Detail = $"Updated priority {request.Id} - {request.PriorityName}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdatePriority",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating priority {Id}", request.Id);
+            throw;
+        }
+    }
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");

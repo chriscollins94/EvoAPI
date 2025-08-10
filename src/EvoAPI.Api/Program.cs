@@ -47,7 +47,7 @@ logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionSt
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
 // Configure Kestrel for HTTPS only in local development
-if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local")
+if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local" || builder.Environment.EnvironmentName == "Test")
 {
     builder.WebHost.ConfigureKestrel(options =>
     {

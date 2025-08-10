@@ -81,16 +81,16 @@ public class EvoApiController : BaseController
                 });
             }
         }
-    
-        [HttpGet("workorders/schedule")]
-        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
+
+    [HttpGet("workorders/schedule")]
+    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        
+
         try
         {
             // _logger.LogInformation("Getting work orders schedule for {NumberOfDays} days", numberOfDays);
-            
+
             // Validate input
             if (numberOfDays <= 0)
             {
@@ -107,7 +107,7 @@ public class EvoApiController : BaseController
             var workOrders = ConvertDataTableToWorkOrders(dataTable);
 
             stopwatch.Stop();
-            
+
             // Log successful operation
             await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days", stopwatch.Elapsed);
 
@@ -123,9 +123,9 @@ public class EvoApiController : BaseController
         {
             stopwatch.Stop();
             await LogErrorAsync("GetWorkOrdersSchedule", ex, stopwatch.Elapsed);
-            
+
             _logger.LogError(ex, "Error retrieving work orders schedule for {NumberOfDays} days", numberOfDays);
-            
+
             return StatusCode(500, new ApiResponse<object>
             {
                 Success = false,
@@ -134,6 +134,48 @@ public class EvoApiController : BaseController
             });
         }
     }
+
+        [HttpGet("priorities")]
+        public async Task<ActionResult<ApiResponse<List<PriorityDto>>>> GetPriorities()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all priorities");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllPrioritiesAsync();
+                var priorities = ConvertDataTableToPriorities(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetPriorities", $"Retrieved {priorities.Count} priorities", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<PriorityDto>>
+                {
+                    Success = true,
+                    Message = "Priorities retrieved successfully",
+                    Data = priorities,
+                    Count = priorities.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetPriorities", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving priorities");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving priorities",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
     #region Post
@@ -149,6 +191,81 @@ public class EvoApiController : BaseController
             return await GetWorkOrdersSchedule(request.NumberOfDays);
         }
     #endregion
+    #region Put
+        [HttpPut("priorities/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdatePriority(int id, [FromBody] UpdatePriorityRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating priority {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.PriorityName))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Priority name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update priority
+                var success = await _dataService.UpdatePriorityAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdatePriority", $"Updated priority {id} - {request.PriorityName}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Priority updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Priority not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdatePriority", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating priority {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the priority",
+                    Count = 0
+                });
+            }
+        }
+    #endregion
+
 
     #region Helper Methods
 
@@ -184,6 +301,30 @@ public class EvoApiController : BaseController
         }
 
         return workOrders;
+    }
+
+    private static List<PriorityDto> ConvertDataTableToPriorities(DataTable dataTable)
+    {
+        var priorities = new List<PriorityDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var priority = new PriorityDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                PriorityName = row["PriorityName"]?.ToString() ?? string.Empty,
+                Order = row["Order"] != DBNull.Value ? Convert.ToInt32(row["Order"]) : null,
+                Color = row["Color"]?.ToString(),
+                ArrivalTimeInHours = row["ArrivalTimeInHours"] != DBNull.Value ? Convert.ToDecimal(row["ArrivalTimeInHours"]) : null,
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            priorities.Add(priority);
+        }
+
+        return priorities;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)
