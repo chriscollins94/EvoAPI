@@ -69,7 +69,7 @@ public class DataService : IDataService
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
                     WHERE 
-                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 1, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
+                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
@@ -178,7 +178,7 @@ public class DataService : IDataService
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
                     WHERE 
-                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 1, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
+                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                 )
