@@ -260,6 +260,90 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("attackpointnotes")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointNoteDto>>>> GetAttackPointNotes()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point notes");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointNotesAsync();
+                var attackPointNotes = ConvertDataTableToAttackPointNotes(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointNotes", $"Retrieved {attackPointNotes.Count} attack point notes", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointNoteDto>>
+                {
+                    Success = true,
+                    Message = "Attack point notes retrieved successfully",
+                    Data = attackPointNotes,
+                    Count = attackPointNotes.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointNotes", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point notes");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point notes",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("attackpointstatus")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointStatusDto>>>> GetAttackPointStatus()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point status records");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointStatusAsync();
+                var attackPointStatus = ConvertDataTableToAttackPointStatus(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointStatus", $"Retrieved {attackPointStatus.Count} attack point status records", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointStatusDto>>
+                {
+                    Success = true,
+                    Message = "Attack point status records retrieved successfully",
+                    Data = attackPointStatus,
+                    Count = attackPointStatus.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point status records");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point status records",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -577,6 +661,297 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        // Attack Point Notes endpoints
+        [HttpPut("attackpointnotes/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointNote(int id, [FromBody] UpdateAttackPointNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Description))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Description is required",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointNoteAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointNote", $"Updated attack point note {id} - {request.Description}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point note updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointNote", $"Failed to update attack point note {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point note",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point note {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point note",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointnotes")]
+        public async Task<ActionResult<ApiResponse<AttackPointNoteDto>>> CreateAttackPointNote([FromBody] CreateAttackPointNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point note: {Description}", request.Description);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = false,
+                        Message = "Description must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointNoteAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newAttackPointNote = new AttackPointNoteDto
+                    {
+                        Id = newId.Value,
+                        Description = request.Description,
+                        Hours = request.Hours,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointNote", $"Created attack point note - {request.Description} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = true,
+                        Message = "Attack point note created successfully",
+                        Data = newAttackPointNote,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointNote", $"Failed to create attack point note - {request.Description}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point note",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point note {Description}", request.Description);
+                
+                return StatusCode(500, new ApiResponse<AttackPointNoteDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point note",
+                    Count = 0
+                });
+            }
+        }
+
+        // Attack Point Status endpoints
+        [HttpPut("attackpointstatus/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointStatus(int id, [FromBody] UpdateAttackPointStatusRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (request.DaysInStatus < 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Days in status must be non-negative",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointStatusAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointStatus", $"Updated attack point status {id} - {request.DaysInStatus} days", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point status updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointStatus", $"Failed to update attack point status {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point status",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point status {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point status",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointstatus")]
+        public async Task<ActionResult<ApiResponse<AttackPointStatusDto>>> CreateAttackPointStatus([FromBody] CreateAttackPointStatusRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point status: {DaysInStatus} days", request.DaysInStatus);
+                
+                // Validate the request
+                if (request.DaysInStatus < 0)
+                {
+                    return BadRequest(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = false,
+                        Message = "Days in status must be non-negative",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointStatusAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newAttackPointStatus = new AttackPointStatusDto
+                    {
+                        Id = newId.Value,
+                        DaysInStatus = request.DaysInStatus,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointStatus", $"Created attack point status - {request.DaysInStatus} days with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = true,
+                        Message = "Attack point status created successfully",
+                        Data = newAttackPointStatus,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointStatus", $"Failed to create attack point status - {request.DaysInStatus} days", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point status",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point status {DaysInStatus}", request.DaysInStatus);
+                
+                return StatusCode(500, new ApiResponse<AttackPointStatusDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point status",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -687,6 +1062,49 @@ public class EvoApiController : BaseController
         }
 
         return callCenters;
+    }
+
+    private static List<AttackPointNoteDto> ConvertDataTableToAttackPointNotes(DataTable dataTable)
+    {
+        var attackPointNotes = new List<AttackPointNoteDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPointNote = new AttackPointNoteDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Description = row["Description"]?.ToString() ?? string.Empty,
+                Hours = Convert.ToInt32(row["Hours"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            attackPointNotes.Add(attackPointNote);
+        }
+
+        return attackPointNotes;
+    }
+
+    private static List<AttackPointStatusDto> ConvertDataTableToAttackPointStatus(DataTable dataTable)
+    {
+        var attackPointStatus = new List<AttackPointStatusDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPointStatusItem = new AttackPointStatusDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                DaysInStatus = Convert.ToInt32(row["DaysInStatus"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            attackPointStatus.Add(attackPointStatusItem);
+        }
+
+        return attackPointStatus;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)

@@ -14,5 +14,11 @@ public interface IDataService
     Task<DataTable> GetAllCallCentersAsync();
     Task<bool> UpdateCallCenterAsync(UpdateCallCenterRequest request);
     Task<int?> CreateCallCenterAsync(CreateCallCenterRequest request);
+    Task<DataTable> GetAllAttackPointNotesAsync();
+    Task<bool> UpdateAttackPointNoteAsync(UpdateAttackPointNoteRequest request);
+    Task<int?> CreateAttackPointNoteAsync(CreateAttackPointNoteRequest request);
+    Task<DataTable> GetAllAttackPointStatusAsync();
+    Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
+    Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }
