@@ -218,10 +218,54 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("callcenters")]
+        public async Task<ActionResult<ApiResponse<List<CallCenterDto>>>> GetCallCenters()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all call centers");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllCallCentersAsync();
+                var callCenters = ConvertDataTableToCallCenters(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetCallCenters", $"Retrieved {callCenters.Count} call centers", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<CallCenterDto>>
+                {
+                    Success = true,
+                    Message = "Call centers retrieved successfully",
+                    Data = callCenters,
+                    Count = callCenters.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCallCenters", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving call centers");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving call centers",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
+
+
     #region Post
-        [HttpPost("workorders")]
+    [HttpPost("workorders")]
         public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersPost([FromBody] WorkOrderRequest request)
         {
             return await GetWorkOrders(request.NumberOfDays);
@@ -233,8 +277,11 @@ public class EvoApiController : BaseController
             return await GetWorkOrdersSchedule(request.NumberOfDays);
         }
     #endregion
+
+
+
     #region Put
-        [HttpPut("priorities/{id}")]
+    [HttpPut("priorities/{id}")]
         public async Task<ActionResult<ApiResponse<object>>> UpdatePriority(int id, [FromBody] UpdatePriorityRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -379,6 +426,157 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPut("callcenters/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateCallCenter(int id, [FromBody] UpdateCallCenterRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating call center {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Name))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Call center name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update call center
+                var success = await _dataService.UpdateCallCenterAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdateCallCenter", $"Updated call center {id} - {request.Name}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Call center updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Call center not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateCallCenter", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating call center {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the call center",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("callcenters")]
+        public async Task<ActionResult<ApiResponse<CallCenterDto>>> CreateCallCenter([FromBody] CreateCallCenterRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new call center: {Name}", request.Name);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<CallCenterDto>
+                    {
+                        Success = false,
+                        Message = "Call center name must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateCallCenterAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newCallCenter = new CallCenterDto
+                    {
+                        Id = newId.Value,
+                        OId = request.O_id,
+                        Name = request.Name,
+                        Active = request.Active,
+                        TempId = null,
+                        Note = request.Note,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateCallCenter", $"Created call center - {request.Name} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<CallCenterDto>
+                    {
+                        Success = true,
+                        Message = "Call center created successfully",
+                        Data = newCallCenter,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateCallCenter", $"Failed to create call center - {request.Name}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<CallCenterDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create call center",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateCallCenter", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating call center {Name}", request.Name);
+                
+                return StatusCode(500, new ApiResponse<CallCenterDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the call center",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -464,6 +662,31 @@ public class EvoApiController : BaseController
         }
 
         return statusSecondaries;
+    }
+
+    private static List<CallCenterDto> ConvertDataTableToCallCenters(DataTable dataTable)
+    {
+        var callCenters = new List<CallCenterDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var callCenter = new CallCenterDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                OId = Convert.ToInt32(row["OId"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Name = row["Name"]?.ToString() ?? string.Empty,
+                Active = Convert.ToBoolean(row["Active"]),
+                TempId = row["TempId"]?.ToString(),
+                Note = row["Note"]?.ToString(),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            callCenters.Add(callCenter);
+        }
+
+        return callCenters;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)

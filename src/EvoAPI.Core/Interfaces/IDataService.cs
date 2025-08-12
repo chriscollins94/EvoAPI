@@ -11,5 +11,8 @@ public interface IDataService
     Task<bool> UpdatePriorityAsync(UpdatePriorityRequest request);
     Task<DataTable> GetAllStatusSecondariesAsync();
     Task<bool> UpdateStatusSecondaryAsync(UpdateStatusSecondaryRequest request);
+    Task<DataTable> GetAllCallCentersAsync();
+    Task<bool> UpdateCallCenterAsync(UpdateCallCenterRequest request);
+    Task<int?> CreateCallCenterAsync(CreateCallCenterRequest request);
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

@@ -489,6 +489,213 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetAllCallCentersAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    cc_id as Id,
+                    o_id as OId,
+                    cc_insertdatetime as InsertDateTime,
+                    cc_modifieddatetime as ModifiedDateTime,
+                    cc_name as Name,
+                    cc_active as Active,
+                    cc_tempid as TempId,
+                    cc_note as Note,
+                    cc_attack as Attack
+                FROM dbo.CallCenter
+                ORDER BY cc_name";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenters",
+                Detail = $"Retrieved {result.Rows.Count} call centers",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenters",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving call centers");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateCallCenterAsync(EvoAPI.Shared.DTOs.UpdateCallCenterRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.CallCenter 
+                SET 
+                    o_id = @OId,
+                    cc_name = @Name,
+                    cc_active = @Active,
+                    cc_tempid = @TempId,
+                    cc_note = @Note,
+                    cc_attack = @Attack,
+                    cc_modifieddatetime = GETDATE()
+                WHERE cc_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@OId", request.OId },
+                { "@Name", request.Name },
+                { "@Active", request.Active },
+                { "@TempId", request.TempId ?? (object)DBNull.Value },
+                { "@Note", request.Note ?? (object)DBNull.Value },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenter",
+                Detail = $"Updated call center {request.Id} - {request.Name}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenter",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating call center {Id}", request.Id);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateCallCenterAsync(EvoAPI.Shared.DTOs.CreateCallCenterRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.CallCenter 
+                (o_id, cc_name, cc_active, cc_tempid, cc_note, cc_attack, cc_insertdatetime, cc_modifieddatetime)
+                VALUES 
+                (@OId, @Name, @Active, @TempId, @Note, @Attack, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@OId", request.O_id },
+                { "@Name", request.Name },
+                { "@Active", request.Active },
+                { "@TempId", (object)DBNull.Value },
+                { "@Note", request.Note ?? (object)DBNull.Value },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateCallCenter",
+                    Detail = $"Created new call center '{request.Name}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenter",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating call center {Name}", request.Name);
+            throw;
+        }
+    }
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
