@@ -344,6 +344,182 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("zones")]
+        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZones()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting zones");
+                
+                var dataTable = await _dataService.GetAllZonesAsync();
+                var zones = ConvertDataTableToZones(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetZones", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<ZoneDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {zones.Count} zones",
+                    Data = zones,
+                    Count = zones.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetZones", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving zones");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving zones",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users")]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetUsers()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active users");
+                
+                var dataTable = await _dataService.GetAllUsersAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUsers", $"Retrieved {users.Count} active users", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} active users",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUsers", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving users");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving users",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("adminusers")]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active admin users");
+                
+                var dataTable = await _dataService.GetAdminUsersAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetAdminUsers", $"Retrieved {users.Count} active admin users", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} active admin users",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAdminUsers", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving admin users");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving admin users",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("statusassignments")]
+        public async Task<ActionResult<ApiResponse<StatusAssignmentMatrixDto>>> GetStatusAssignments()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting status assignment matrix");
+                
+                // Get all the data in parallel
+                var zonesTask = _dataService.GetAllZonesAsync();
+                var usersTask = _dataService.GetAdminUsersAsync();
+                var statusSecondariesTask = _dataService.GetAllStatusSecondariesAsync();
+                var assignmentsTask = _dataService.GetAdminZoneStatusAssignmentsAsync();
+                
+                await Task.WhenAll(zonesTask, usersTask, statusSecondariesTask, assignmentsTask);
+                
+                var zones = ConvertDataTableToZones(await zonesTask);
+                var users = ConvertDataTableToUsers(await usersTask);
+                var statusSecondaries = ConvertDataTableToStatusSecondaries(await statusSecondariesTask);
+                var assignments = ConvertDataTableToAdminZoneStatusAssignments(await assignmentsTask);
+                
+                var matrix = new StatusAssignmentMatrixDto
+                {
+                    Zones = zones,
+                    Users = users,
+                    StatusSecondaries = statusSecondaries,
+                    Assignments = assignments
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetStatusAssignments", 
+                    $"Retrieved matrix with {zones.Count} zones, {users.Count} users, {statusSecondaries.Count} status secondaries, {assignments.Count} assignments", 
+                    stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<StatusAssignmentMatrixDto>
+                {
+                    Success = true,
+                    Message = "Status assignment matrix retrieved successfully",
+                    Data = matrix,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetStatusAssignments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving status assignment matrix");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving status assignment matrix",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -359,6 +535,86 @@ public class EvoApiController : BaseController
         public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedulePost([FromBody] WorkOrderRequest request)
         {
             return await GetWorkOrdersSchedule(request.NumberOfDays);
+        }
+
+        [HttpPost("statusassignments")]
+        public async Task<ActionResult<ApiResponse<AdminZoneStatusAssignmentDto>>> CreateStatusAssignment([FromBody] CreateAdminZoneStatusAssignmentRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                // Validate input
+                if (request.UserId <= 0 || request.ZoneId <= 0 || request.StatusSecondaryId <= 0)
+                {
+                    return BadRequest(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = false,
+                        Message = "Valid User ID, Zone ID, and Status Secondary ID are required",
+                        Count = 0
+                    });
+                }
+
+                // Create assignment
+                var newId = await _dataService.CreateAdminZoneStatusAssignmentAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (newId.HasValue)
+                {
+                    var newAssignment = new AdminZoneStatusAssignmentDto
+                    {
+                        Id = newId.Value,
+                        UserId = request.UserId,
+                        ZoneId = request.ZoneId,
+                        StatusSecondaryId = request.StatusSecondaryId,
+                        InsertDateTime = DateTime.UtcNow
+                    };
+                    
+                    await LogOperationAsync("CreateStatusAssignment", 
+                        $"Created assignment {newId} for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = true,
+                        Message = "Status assignment created successfully",
+                        Data = newAssignment,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogErrorAsync("CreateStatusAssignment", 
+                        new Exception("Failed to create status assignment - no ID returned"), 
+                        stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create status assignment",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateStatusAssignment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                return StatusCode(500, new ApiResponse<AdminZoneStatusAssignmentDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the status assignment",
+                    Count = 0
+                });
+            }
         }
     #endregion
 
@@ -952,6 +1208,76 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpDelete("statusassignments")]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteStatusAssignment([FromBody] DeleteAdminZoneStatusAssignmentRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Deleting status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                // Validate input
+                if (request.UserId <= 0 || request.ZoneId <= 0 || request.StatusSecondaryId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid User ID, Zone ID, and Status Secondary ID are required",
+                        Count = 0
+                    });
+                }
+
+                // Delete assignment
+                var success = await _dataService.DeleteAdminZoneStatusAssignmentAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("DeleteStatusAssignment", 
+                        $"Deleted assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Status assignment deleted successfully",
+                        Count = 0
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("DeleteStatusAssignment", 
+                        $"Failed to delete assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to delete status assignment",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteStatusAssignment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error deleting status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting the status assignment",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -1105,6 +1431,83 @@ public class EvoApiController : BaseController
         }
 
         return attackPointStatus;
+    }
+
+    private static List<ZoneDto> ConvertDataTableToZones(DataTable dataTable)
+    {
+        var zones = new List<ZoneDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var zone = new ZoneDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Number = row["Number"]?.ToString() ?? string.Empty,
+                Description = row["Description"]?.ToString(),
+                Acronym = row["Acronym"]?.ToString(),
+                UserId = Convert.ToInt32(row["UserId"])
+            };
+
+            zones.Add(zone);
+        }
+
+        return zones;
+    }
+
+    private static List<UserDto> ConvertDataTableToUsers(DataTable dataTable)
+    {
+        var users = new List<UserDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var user = new UserDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                OId = Convert.ToInt32(row["OId"]),
+                AId = row["AId"] != DBNull.Value ? Convert.ToInt32(row["AId"]) : null,
+                VId = row["VId"] != DBNull.Value ? Convert.ToInt32(row["VId"]) : null,
+                SupervisorId = row["SupervisorId"] != DBNull.Value ? Convert.ToInt32(row["SupervisorId"]) : null,
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"]),
+                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null
+            };
+
+            users.Add(user);
+        }
+
+        return users;
+    }
+
+    private static List<AdminZoneStatusAssignmentDto> ConvertDataTableToAdminZoneStatusAssignments(DataTable dataTable)
+    {
+        var assignments = new List<AdminZoneStatusAssignmentDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var assignment = new AdminZoneStatusAssignmentDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                UserId = Convert.ToInt32(row["UserId"]),
+                ZoneId = Convert.ToInt32(row["ZoneId"]),
+                StatusSecondaryId = Convert.ToInt32(row["StatusSecondaryId"]),
+                UserDisplayName = row["UserDisplayName"]?.ToString(),
+                ZoneName = row["ZoneName"]?.ToString(),
+                StatusSecondaryName = row["StatusSecondaryName"]?.ToString()
+            };
+
+            assignments.Add(assignment);
+        }
+
+        return assignments;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)

@@ -20,5 +20,15 @@ public interface IDataService
     Task<DataTable> GetAllAttackPointStatusAsync();
     Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
     Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);
+    
+    // Status Assignment methods
+    Task<DataTable> GetAllZonesAsync();
+    Task<DataTable> GetAllUsersAsync();
+    Task<DataTable> GetAdminUsersAsync();
+    Task<DataTable> GetAdminZoneStatusAssignmentsAsync();
+    Task<int?> CreateAdminZoneStatusAssignmentAsync(CreateAdminZoneStatusAssignmentRequest request);
+    Task<bool> UpdateAdminZoneStatusAssignmentAsync(UpdateAdminZoneStatusAssignmentRequest request);
+    Task<bool> DeleteAdminZoneStatusAssignmentAsync(DeleteAdminZoneStatusAssignmentRequest request);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

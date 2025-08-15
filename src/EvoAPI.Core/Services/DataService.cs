@@ -1,4 +1,5 @@
 using EvoAPI.Core.Interfaces;
+using EvoAPI.Shared.DTOs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Data;
@@ -1120,5 +1121,346 @@ public class DataService : IDataService
         _logger.LogInformation("Query completed successfully. Rows returned: {Count}", dataTable.Rows.Count);
         
         return dataTable;
+    }
+
+    public async Task<DataTable> GetAllZonesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT z_id as Id, z_insertdatetime as InsertDateTime, z_modifieddatetime as ModifiedDateTime,
+                       z_number as Number, z_description as Description, z_acronym as Acronym, u_id as UserId
+                FROM dbo.Zone
+                ORDER BY z_number";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllZones",
+                Detail = $"Retrieved {result.Rows.Count} zones",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllZones",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving zones");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllUsersAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT u_id as Id, o_id as OId, a_id as AId, v_id as VId, supervisor_id as SupervisorId,
+                       u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
+                       u_username as Username, u_firstname as FirstName, u_lastname as LastName,
+                       u_email as Email, u_active as Active, z_id as ZoneId
+                FROM dbo.[User]
+                WHERE u_active = 1
+                ORDER BY u_firstname, u_lastname, u_username";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUsers",
+                Detail = $"Retrieved {result.Rows.Count} active users",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUsers",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving users");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAdminUsersAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT DISTINCT u.u_id as Id, u.o_id as OId, u.a_id as AId, u.v_id as VId, u.supervisor_id as SupervisorId,
+                       u.u_insertdatetime as InsertDateTime, u.u_modifieddatetime as ModifiedDateTime,
+                       u.u_username as Username, u.u_firstname as FirstName, u.u_lastname as LastName,
+                       u.u_email as Email, u.u_active as Active, u.z_id as ZoneId
+                FROM dbo.[User] u
+                INNER JOIN dbo.xrefUserRole xur ON u.u_id = xur.u_id
+                INNER JOIN dbo.Role r ON xur.r_id = r.r_id
+                WHERE u.u_active = 1 
+                  AND (r.r_role = 'System Administrator')
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAdminUsers",
+                Detail = $"Retrieved {result.Rows.Count} active admin users",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAdminUsers",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving admin users");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAdminZoneStatusAssignmentsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT a.xazss_id as Id, a.xazss_insertdatetime as InsertDateTime, 
+                       a.xazss_modifieddatetime as ModifiedDateTime,
+                       a.u_id as UserId, a.z_id as ZoneId, a.ss_id as StatusSecondaryId,
+                       u.u_firstname + ' ' + u.u_lastname as UserDisplayName,
+                       z.z_number as ZoneName,
+                       ss.ss_statussecondary as StatusSecondaryName
+                FROM dbo.xrefAdminZoneStatusSecondary a
+                INNER JOIN dbo.[User] u ON a.u_id = u.u_id
+                INNER JOIN dbo.Zone z ON a.z_id = z.z_id
+                INNER JOIN dbo.StatusSecondary ss ON a.ss_id = ss.ss_id
+                ORDER BY z.z_number, ss.ss_statussecondary, u.u_firstname, u.u_lastname";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAdminZoneStatusAssignments",
+                Detail = $"Retrieved {result.Rows.Count} admin zone status assignments",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAdminZoneStatusAssignments",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving admin zone status assignments");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateAdminZoneStatusAssignmentAsync(CreateAdminZoneStatusAssignmentRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.xrefAdminZoneStatusSecondary (xazss_insertdatetime, u_id, z_id, ss_id)
+                VALUES (GETUTCDATE(), @UserId, @ZoneId, @StatusSecondaryId);
+                SELECT SCOPE_IDENTITY();";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", request.UserId },
+                { "@ZoneId", request.ZoneId },
+                { "@StatusSecondaryId", request.StatusSecondaryId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            var newId = result.Rows.Count > 0 ? Convert.ToInt32(result.Rows[0][0]) : (int?)null;
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAdminZoneStatusAssignment",
+                Detail = $"Created assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}. New ID: {newId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return newId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAdminZoneStatusAssignment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating admin zone status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                request.UserId, request.ZoneId, request.StatusSecondaryId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAdminZoneStatusAssignmentAsync(UpdateAdminZoneStatusAssignmentRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.xrefAdminZoneStatusSecondary 
+                SET xazss_modifieddatetime = GETUTCDATE(),
+                    u_id = @UserId,
+                    z_id = @ZoneId,
+                    ss_id = @StatusSecondaryId
+                WHERE xazss_id = @Id";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@UserId", request.UserId },
+                { "@ZoneId", request.ZoneId },
+                { "@StatusSecondaryId", request.StatusSecondaryId }
+            };
+            
+            await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAdminZoneStatusAssignment",
+                Detail = $"Updated assignment {request.Id} to User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAdminZoneStatusAssignment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating admin zone status assignment {Id}", request.Id);
+            return false;
+        }
+    }
+
+    public async Task<bool> DeleteAdminZoneStatusAssignmentAsync(DeleteAdminZoneStatusAssignmentRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.xrefAdminZoneStatusSecondary 
+                WHERE u_id = @UserId AND z_id = @ZoneId AND ss_id = @StatusSecondaryId";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", request.UserId },
+                { "@ZoneId", request.ZoneId },
+                { "@StatusSecondaryId", request.StatusSecondaryId }
+            };
+            
+            await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAdminZoneStatusAssignment",
+                Detail = $"Deleted assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAdminZoneStatusAssignment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting admin zone status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                request.UserId, request.ZoneId, request.StatusSecondaryId);
+            return false;
+        }
     }
 }
