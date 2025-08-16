@@ -1581,6 +1581,8 @@ public class EvoApiController : BaseController
                 sr_requestnumber = row["sr_requestnumber"]?.ToString() ?? string.Empty,
                 sr_insertdatetime = Convert.ToDateTime(row["sr_insertdatetime"]),
                 sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
+                sr_datenextstep = row["sr_datenextstep"] != DBNull.Value ? Convert.ToDateTime(row["sr_datenextstep"]) : null,
+                sr_actionablenote = row["sr_actionablenote"]?.ToString() ?? string.Empty,
                 zone = row["zone"]?.ToString() ?? string.Empty,
                 admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,
                 admin_firstname = row["admin_firstname"]?.ToString() ?? string.Empty,
