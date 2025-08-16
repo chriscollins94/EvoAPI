@@ -42,6 +42,7 @@ public class DataService : IDataService
                         s.s_status            AS Status,
                         ss.ss_statussecondary AS SecondaryStatus,
                         ss.ss_color           AS StatusColor,
+                        p.p_priority          AS Priority,
                         u.u_firstname         AS AssignedFirstName,
                         u.u_lastname          AS AssignedLastName,
                         l.l_location          AS Location,
@@ -59,6 +60,7 @@ public class DataService : IDataService
                     INNER JOIN callcenter cc ON xccc.cc_id = cc.cc_id
                     INNER JOIN [status] s ON sr.s_id = s.s_id
                     INNER JOIN location l ON sr.l_id = l.l_id
+                    INNER JOIN priority p ON sr.p_id = p.p_id
                     INNER JOIN address a ON l.a_id = a.a_id
                     INNER JOIN trade t ON sr.t_id = t.t_id
                     LEFT JOIN workorder wo ON sr.wo_id_primary = wo.wo_id
@@ -86,6 +88,7 @@ public class DataService : IDataService
                     Status,
                     SecondaryStatus,
                     StatusColor,
+                    Priority,
                     AssignedFirstName,
                     AssignedLastName,
                     Location,
@@ -151,6 +154,7 @@ public class DataService : IDataService
                         s.s_status            AS Status,
                         ss.ss_statussecondary AS SecondaryStatus,
                         ss.ss_color           AS StatusColor,
+                        p.p_priority          AS Priority,
                         u.u_firstname         AS AssignedFirstName,
                         u.u_lastname          AS AssignedLastName,
                         l.l_location          AS Location,
@@ -168,6 +172,7 @@ public class DataService : IDataService
                     INNER JOIN callcenter cc ON xccc.cc_id = cc.cc_id
                     INNER JOIN [status] s ON sr.s_id = s.s_id
                     INNER JOIN location l ON sr.l_id = l.l_id
+                    INNER JOIN priority p ON sr.p_id = p.p_id
                     INNER JOIN address a ON l.a_id = a.a_id
                     INNER JOIN trade t ON sr.t_id = t.t_id
                     LEFT JOIN workorder wo ON sr.sr_id = wo.sr_id
@@ -193,6 +198,7 @@ public class DataService : IDataService
                     RequestNumber,
                     TotalDue,
                     Status,
+                    Priority,
                     SecondaryStatus,
                     StatusColor,
                     AssignedFirstName,

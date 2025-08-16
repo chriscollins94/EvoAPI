@@ -1342,6 +1342,11 @@ public class EvoApiController : BaseController
 
     #region Helper Methods
 
+    private static string CleanString(object value)
+    {
+        return value?.ToString()?.Trim()?.Replace("\r\n", "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+    }
+
     private static List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
     {
         var workOrders = new List<WorkOrderDto>();
@@ -1351,23 +1356,24 @@ public class EvoApiController : BaseController
             var workOrder = new WorkOrderDto
             {
                 sr_id = Convert.ToInt32(row["sr_id"]),
-                CallCenter = row["CallCenter"]?.ToString() ?? string.Empty,
-                Company = row["Company"]?.ToString() ?? string.Empty,
-                Trade = row["Trade"]?.ToString() ?? string.Empty,
+                CallCenter = CleanString(row["CallCenter"]),
+                Company = CleanString(row["Company"]),
+                Trade = CleanString(row["Trade"]),
                 StartDate = row["StartDate"]?.ToString() ?? string.Empty,
                 EndDate = row["EndDate"]?.ToString() ?? string.Empty,
-                RequestNumber = row["RequestNumber"]?.ToString() ?? string.Empty,
+                RequestNumber = CleanString(row["RequestNumber"]),
                 TotalDue = row["TotalDue"] != DBNull.Value ? Convert.ToDecimal(row["TotalDue"]) : null,
-                Status = row["Status"]?.ToString() ?? string.Empty,
-                SecondaryStatus = row["SecondaryStatus"]?.ToString() ?? string.Empty,
-                StatusColor = row["StatusColor"]?.ToString() ?? string.Empty,
-                AssignedFirstName = row["AssignedFirstName"]?.ToString() ?? string.Empty,
-                AssignedLastName = row["AssignedLastName"]?.ToString() ?? string.Empty,
-                Location = row["Location"]?.ToString() ?? string.Empty,
-                Address = row["Address"]?.ToString() ?? string.Empty,
-                City = row["City"]?.ToString() ?? string.Empty,
-                Zone = row["Zone"]?.ToString() ?? string.Empty,
-                CreatedBy = row["CreatedBy"]?.ToString() ?? string.Empty
+                Priority = CleanString(row["Priority"]),
+                Status = CleanString(row["Status"]),
+                SecondaryStatus = CleanString(row["SecondaryStatus"]),
+                StatusColor = CleanString(row["StatusColor"]),
+                AssignedFirstName = CleanString(row["AssignedFirstName"]),
+                AssignedLastName = CleanString(row["AssignedLastName"]),
+                Location = CleanString(row["Location"]),
+                Address = CleanString(row["Address"]),
+                City = CleanString(row["City"]),
+                Zone = CleanString(row["Zone"]),
+                CreatedBy = CleanString(row["CreatedBy"])
             };
 
             workOrders.Add(workOrder);
@@ -1387,9 +1393,9 @@ public class EvoApiController : BaseController
                 Id = Convert.ToInt32(row["Id"]),
                 InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
                 ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
-                PriorityName = row["PriorityName"]?.ToString() ?? string.Empty,
+                PriorityName = CleanString(row["PriorityName"]),
                 Order = row["Order"] != DBNull.Value ? Convert.ToInt32(row["Order"]) : null,
-                Color = row["Color"]?.ToString(),
+                Color = CleanString(row["Color"]),
                 ArrivalTimeInHours = row["ArrivalTimeInHours"] != DBNull.Value ? Convert.ToDecimal(row["ArrivalTimeInHours"]) : null,
                 Attack = Convert.ToInt32(row["Attack"])
             };
@@ -1412,9 +1418,9 @@ public class EvoApiController : BaseController
                 InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
                 ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
                 StatusId = Convert.ToInt32(row["StatusId"]),
-                StatusSecondary = row["StatusSecondary"]?.ToString() ?? string.Empty,
-                Color = row["Color"]?.ToString(),
-                Code = row["Code"]?.ToString(),
+                StatusSecondary = CleanString(row["StatusSecondary"]),
+                Color = CleanString(row["Color"]),
+                Code = CleanString(row["Code"]),
                 Attack = row["Attack"] != DBNull.Value ? Convert.ToInt32(row["Attack"]) : 0
             };
 
@@ -1578,20 +1584,20 @@ public class EvoApiController : BaseController
             var attackPoint = new AttackPointDto
             {
                 sr_id = Convert.ToInt32(row["sr_id"]),
-                sr_requestnumber = row["sr_requestnumber"]?.ToString() ?? string.Empty,
+                sr_requestnumber = CleanString(row["sr_requestnumber"]),
                 sr_insertdatetime = Convert.ToDateTime(row["sr_insertdatetime"]),
                 sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
                 sr_datenextstep = row["sr_datenextstep"] != DBNull.Value ? Convert.ToDateTime(row["sr_datenextstep"]) : null,
-                sr_actionablenote = row["sr_actionablenote"]?.ToString() ?? string.Empty,
-                zone = row["zone"]?.ToString() ?? string.Empty,
+                sr_actionablenote = CleanString(row["sr_actionablenote"]),
+                zone = CleanString(row["zone"]),
                 admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,
-                admin_firstname = row["admin_firstname"]?.ToString() ?? string.Empty,
-                admin_lastname = row["admin_lastname"]?.ToString() ?? string.Empty,
-                cc_name = row["cc_name"]?.ToString() ?? string.Empty,
-                c_name = row["c_name"]?.ToString() ?? string.Empty,
-                p_priority = row["p_priority"]?.ToString() ?? string.Empty,
-                ss_statussecondary = row["ss_statussecondary"]?.ToString() ?? string.Empty,
-                t_trade = row["t_trade"]?.ToString() ?? string.Empty,
+                admin_firstname = CleanString(row["admin_firstname"]),
+                admin_lastname = CleanString(row["admin_lastname"]),
+                cc_name = CleanString(row["cc_name"]),
+                c_name = CleanString(row["c_name"]),
+                p_priority = CleanString(row["p_priority"]),
+                ss_statussecondary = CleanString(row["ss_statussecondary"]),
+                t_trade = CleanString(row["t_trade"]),
                 hours_since_last_note = row["hours_since_last_note"] != DBNull.Value ? Convert.ToInt32(row["hours_since_last_note"]) : 0,
                 days_in_current_status = row["days_in_current_status"] != DBNull.Value ? Convert.ToInt32(row["days_in_current_status"]) : 0,
                 AttackCallCenter = row["AttackCallCenter"] != DBNull.Value ? Convert.ToInt32(row["AttackCallCenter"]) : 0,

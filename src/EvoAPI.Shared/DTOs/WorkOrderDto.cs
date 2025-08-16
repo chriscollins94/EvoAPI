@@ -10,6 +10,7 @@ public class WorkOrderDto
     public string EndDate { get; set; } = string.Empty;
     public string RequestNumber { get; set; } = string.Empty;
     public decimal? TotalDue { get; set; }
+    public string Priority { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string SecondaryStatus { get; set; } = string.Empty;
     public string StatusColor { get; set; } = string.Empty;
