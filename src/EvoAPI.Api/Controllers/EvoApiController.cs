@@ -520,6 +520,59 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("attackpoints")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointDto>>>> GetAttackPoints([FromQuery] int topCount = 15)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attack points with top {TopCount} per admin", topCount);
+                
+                // Validate input
+                if (topCount <= 0 || topCount > 100)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "TopCount must be between 1 and 100",
+                        Count = 0
+                    });
+                }
+
+                // Get data from service
+                var dataTable = await _dataService.GetAttackPointsAsync(topCount);
+                var attackPoints = ConvertDataTableToAttackPoints(dataTable);
+
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPoints", $"Retrieved {attackPoints.Count} attack points with top {topCount} per admin", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<List<AttackPointDto>>
+                {
+                    Success = true,
+                    Message = "Attack points retrieved successfully",
+                    Data = attackPoints,
+                    Count = attackPoints.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPoints", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack points with top {TopCount} per admin", topCount);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack points",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -535,6 +588,12 @@ public class EvoApiController : BaseController
         public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedulePost([FromBody] WorkOrderRequest request)
         {
             return await GetWorkOrdersSchedule(request.NumberOfDays);
+        }
+
+        [HttpPost("attackpoints")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointDto>>>> GetAttackPointsPost([FromBody] AttackPointRequest request)
+        {
+            return await GetAttackPoints(request.TopCount);
         }
 
         [HttpPost("statusassignments")]
@@ -1508,6 +1567,43 @@ public class EvoApiController : BaseController
         }
 
         return assignments;
+    }
+
+    private static List<AttackPointDto> ConvertDataTableToAttackPoints(DataTable dataTable)
+    {
+        var attackPoints = new List<AttackPointDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPoint = new AttackPointDto
+            {
+                sr_id = Convert.ToInt32(row["sr_id"]),
+                sr_requestnumber = row["sr_requestnumber"]?.ToString() ?? string.Empty,
+                sr_insertdatetime = Convert.ToDateTime(row["sr_insertdatetime"]),
+                sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
+                zone = row["zone"]?.ToString() ?? string.Empty,
+                admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,
+                admin_firstname = row["admin_firstname"]?.ToString() ?? string.Empty,
+                admin_lastname = row["admin_lastname"]?.ToString() ?? string.Empty,
+                cc_name = row["cc_name"]?.ToString() ?? string.Empty,
+                c_name = row["c_name"]?.ToString() ?? string.Empty,
+                p_priority = row["p_priority"]?.ToString() ?? string.Empty,
+                ss_statussecondary = row["ss_statussecondary"]?.ToString() ?? string.Empty,
+                t_trade = row["t_trade"]?.ToString() ?? string.Empty,
+                hours_since_last_note = row["hours_since_last_note"] != DBNull.Value ? Convert.ToInt32(row["hours_since_last_note"]) : 0,
+                days_in_current_status = row["days_in_current_status"] != DBNull.Value ? Convert.ToInt32(row["days_in_current_status"]) : 0,
+                AttackCallCenter = row["AttackCallCenter"] != DBNull.Value ? Convert.ToInt32(row["AttackCallCenter"]) : 0,
+                AttackPriority = row["AttackPriority"] != DBNull.Value ? Convert.ToInt32(row["AttackPriority"]) : 0,
+                AttackStatusSecondary = row["AttackStatusSecondary"] != DBNull.Value ? Convert.ToInt32(row["AttackStatusSecondary"]) : 0,
+                AttackHoursSinceLastNote = row["AttackHoursSinceLastNote"] != DBNull.Value ? Convert.ToInt32(row["AttackHoursSinceLastNote"]) : 0,
+                AttackDaysInStatus = row["AttackDaysInStatus"] != DBNull.Value ? Convert.ToInt32(row["AttackDaysInStatus"]) : 0,
+                AttackPoints = row["AttackPoints"] != DBNull.Value ? Convert.ToInt32(row["AttackPoints"]) : 0
+            };
+
+            attackPoints.Add(attackPoint);
+        }
+
+        return attackPoints;
     }
 
     private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)

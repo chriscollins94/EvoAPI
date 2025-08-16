@@ -20,6 +20,7 @@ public interface IDataService
     Task<DataTable> GetAllAttackPointStatusAsync();
     Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
     Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);
+    Task<DataTable> GetAttackPointsAsync(int topCount = 15);
     
     // Status Assignment methods
     Task<DataTable> GetAllZonesAsync();

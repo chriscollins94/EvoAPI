@@ -1463,4 +1463,165 @@ public class DataService : IDataService
             return false;
         }
     }
+
+    public async Task<DataTable> GetAttackPointsAsync(int topCount = 15)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                WITH ranked_results AS (
+                    select sr.sr_id, 
+                           sr.sr_insertdatetime, 
+                           sr.sr_totaldue,
+                           sr.sr_requestnumber,
+                           z.z_number + '-' + z.z_acronym zone, 
+                           cc.cc_name,
+                           c.c_name,
+                           p.p_priority,
+                           ss.ss_statussecondary,
+                           t.t_trade, 
+                           CASE 
+                               WHEN latest_note.won_insertdatetime IS NULL THEN 0
+                               ELSE DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
+                           END as hours_since_last_note,
+                           CASE 
+                               WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
+                               ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
+                           END as days_in_current_status,
+                           cc.cc_attack as AttackCallCenter,
+                           p.p_attack AttackPriority, 
+                           ss.ss_attack AttackStatusSecondary,
+                           ISNULL(apn.apn_attack, 0) as AttackHoursSinceLastNote,
+                           ISNULL(aps.aps_attack, 0) as AttackDaysInStatus,
+                           (p.p_attack + ss.ss_attack + ISNULL(aps.aps_attack, 0) + ISNULL(apn.apn_attack, 0) + cc.cc_attack) as AttackPoints,
+                           admin_user.u_id as admin_u_id,
+                           admin_user.u_firstname as admin_firstname,
+                           admin_user.u_lastname as admin_lastname,
+                           ROW_NUMBER() OVER (PARTITION BY ISNULL(admin_user.u_id, -1) ORDER BY (p.p_attack + ss.ss_attack + ISNULL(aps.aps_attack, 0) + ISNULL(apn.apn_attack, 0) + cc.cc_attack) DESC) as rn
+                    from servicerequest sr
+                    inner join xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
+                    inner join Company c on xccc.c_id = c.c_id
+                    inner join callcenter cc on xccc.cc_id = cc.cc_id
+                    inner join workorder wo on sr.wo_id_primary = wo.wo_id
+                    inner join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id
+                    inner join [user] u on xwou.u_id = u.u_id
+                    inner join zone z on u.z_id = z.z_id
+                    inner join statussecondary ss on wo.ss_id = ss.ss_id
+                    inner join Priority p on sr.p_id = p.p_id
+                    left join trade t on sr.t_id = t.t_id
+                    left join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
+                    left join [user] admin_user on xazss.u_id = admin_user.u_id
+                    left join (
+                        -- Get the most recent note for any work order related to each service request
+                        select sr_inner.sr_id,
+                               won.won_insertdatetime,
+                               row_number() over (partition by sr_inner.sr_id order by won.won_insertdatetime desc) as rn
+                        from servicerequest sr_inner
+                        inner join workorder wo_inner on wo_inner.sr_id = sr_inner.sr_id  -- All work orders for this service request
+                        inner join workordernote won on won.wo_id = wo_inner.wo_id
+                    ) latest_note on latest_note.sr_id = sr.sr_id and latest_note.rn = 1
+                    left join (
+                        -- Get the most recent status change for the primary work order
+                        select wo_id,
+                               ssc_insertdatetime,
+                               row_number() over (partition by wo_id order by ssc_insertdatetime desc) as rn
+                        from statussecondarychange
+                    ) latest_status_change on latest_status_change.wo_id = wo.wo_id and latest_status_change.rn = 1
+                    left join AttackPointStatus aps on (
+                        CASE 
+                            WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
+                            ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
+                        END
+                    ) >= aps.aps_daysinstatus
+                    and aps.aps_id = (
+                        select MAX(aps2.aps_id) 
+                        from AttackPointStatus aps2 
+                        where (
+                            CASE 
+                                WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
+                                ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
+                            END
+                        ) >= aps2.aps_daysinstatus
+                    )
+                    left join AttackPointNote apn on apn.apn_id = (
+                        CASE 
+                            WHEN latest_note.won_insertdatetime IS NULL THEN 1  -- NO NOTES case (apn_id = 1)
+                            ELSE (
+                                select TOP 1 apn2.apn_id 
+                                from AttackPointNote apn2 
+                                where apn2.apn_hours <= DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
+                                  AND apn2.apn_id > 1  -- Exclude NO NOTES record when there are actual notes
+                                order by apn2.apn_hours desc
+                            )
+                        END
+                    )
+                    where 1=1
+                    and sr.s_id not in (9) --Paid
+                    and sr.s_id not in (6) --Rejected
+                    and c.c_name NOT IN ('Metro Pipe Program')
+                    and cc.cc_name NOT IN ('Administrative')
+                    and (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or wo.wo_startdatetime is null)
+                )
+                SELECT sr_id, 
+                       sr_insertdatetime, 
+                       sr_totaldue,
+                       sr_requestnumber,
+                       zone, 
+                       admin_u_id,
+                       admin_firstname,
+                       admin_lastname,
+                       cc_name,
+                       c_name,
+                       p_priority,
+                       ss_statussecondary,
+                       t_trade, 
+                       hours_since_last_note,
+                       days_in_current_status,
+                       AttackCallCenter,
+                       AttackPriority, 
+                       AttackStatusSecondary,
+                       AttackHoursSinceLastNote,
+                       AttackDaysInStatus,
+                       AttackPoints
+                FROM ranked_results 
+                WHERE rn <= @TopCount
+                ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@TopCount", topCount }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttackPoints",
+                Detail = $"Retrieved attack points with top {topCount} results per admin",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttackPoints",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attack points with top {TopCount} results", topCount);
+            throw;
+        }
+    }
 }
