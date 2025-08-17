@@ -52,8 +52,7 @@ public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrders()
             Success = true,
             Message = "Work orders retrieved successfully",
             Data = workOrders,
-            Count = workOrders.Count,
-            ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            Count = workOrders.Count
         });
     }
     catch (Exception ex)
@@ -64,11 +63,38 @@ public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrders()
         return StatusCode(500, new ApiResponse<List<WorkOrderDto>>
         {
             Success = false,
-            Message = "Failed to retrieve work orders",
-            ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            Message = "Failed to retrieve work orders"
         });
     }
 }
+```
+
+### ApiResponse<T> Structure
+The `ApiResponse<T>` class is located in `Shared/DTOs/WorkOrderDto.cs` and has these properties:
+```csharp
+public class ApiResponse<T>
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public T? Data { get; set; }
+    public int Count { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+}
+```
+**Important**: There is **no** `ResponseTime` property. Do not add this property to ApiResponse objects.
+
+### Audit Logging Method Signatures
+BaseController provides these audit logging methods:
+```csharp
+// Standard audit logging - responseTime parameter must be string
+protected async Task LogAuditAsync(string description, object? detail = null, string? responseTime = null)
+
+// Error audit logging
+protected async Task LogAuditErrorAsync(string description, Exception ex, object? detail = null)
+```
+**Critical**: `LogAuditAsync` expects `string?` for responseTime parameter, not `TimeSpan`. Always convert:
+```csharp
+await LogAuditAsync("Operation", detail, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
 ```
 
 ## Authentication & Authorization
@@ -181,5 +207,8 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 - **Never** bypass `BaseController` for authenticated endpoints
 - **Never** skip `ApiResponse<T>` wrapper pattern
 - **Never** forget timing measurement with `Stopwatch`
+- **Never** add `ResponseTime` property to `ApiResponse<T>` objects - this property doesn't exist
+- **Never** pass `TimeSpan` to `LogAuditAsync` - convert to string first: `timeSpan.TotalSeconds.ToString("0.00")`
 - **Always** use async/await patterns consistently
 - **Always** include proper error handling and audit logging
+- **Always** verify `ApiResponse<T>` property names match the actual class definition

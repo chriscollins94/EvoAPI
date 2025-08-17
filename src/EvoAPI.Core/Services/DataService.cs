@@ -1646,4 +1646,151 @@ public class DataService : IDataService
             throw;
         }
     }
+
+    public async Task<DataTable> GetHighVolumeDashboardAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @" 
+
+WITH LastFiveWeekdays AS (
+    SELECT 
+        DATEADD(DAY, -daysToSubtract, CONVERT(DATE, GETDATE())) AS Date,
+        ROW_NUMBER() OVER (ORDER BY daysToSubtract) AS DayOrder,
+        FORMAT(DATEADD(DAY, -daysToSubtract, CONVERT(DATE, GETDATE())), 'dddd') AS DayName
+    FROM (
+        SELECT TOP 5 
+            SUM(CASE 
+                    WHEN DATEPART(WEEKDAY, DATEADD(DAY, -number, CONVERT(DATE, GETDATE()))) IN (1, 7) THEN 1 
+                    ELSE 0 
+                END) OVER (ORDER BY number) + number AS daysToSubtract
+        FROM (
+            SELECT ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 AS number
+            FROM sys.objects a
+            CROSS JOIN sys.objects b
+        ) nums
+        WHERE DATEPART(WEEKDAY, DATEADD(DAY, -number, CONVERT(DATE, GETDATE()))) NOT IN (1, 7)
+        ORDER BY number
+    ) d
+),
+ActiveTechs AS (
+    SELECT DISTINCT 
+        u.u_firstname + ' ' + u.u_lastname AS Tech
+    FROM HighVolumeBatchDetail hvbd
+    JOIN [user] u ON hvbd.u_id = u.u_id
+    WHERE DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime) >= DATEADD(DAY, -30, GETDATE())
+),
+DailyStats AS (
+    SELECT 
+        u.u_firstname + ' ' + u.u_lastname AS Tech,
+        CONVERT(DATE, DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime)) AS CompletionDate,
+        COUNT(hvbd.sr_id) AS CompletionCount
+    FROM HighVolumeBatchDetail hvbd
+    JOIN [user] u ON hvbd.u_id = u.u_id
+    WHERE DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime) >= DATEADD(DAY, -30, GETDATE())
+    GROUP BY 
+        u.u_firstname + ' ' + u.u_lastname,
+        CONVERT(DATE, DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime))
+),
+CrossJoined AS (
+    SELECT 
+        t.Tech,
+        d.Date,
+        d.DayOrder,
+        d.DayName,
+        ISNULL(ds.CompletionCount, 0) AS CompletionCount
+    FROM ActiveTechs t
+    CROSS JOIN LastFiveWeekdays d
+    LEFT JOIN DailyStats ds ON ds.Tech = t.Tech 
+        AND ds.CompletionDate = d.Date
+),
+DailyTechSummary AS (
+    SELECT 
+        Tech,
+        MAX(CASE WHEN DayOrder = 1 THEN CompletionCount ELSE 0 END) AS [Today],
+        MAX(CASE WHEN DayOrder = 2 THEN CompletionCount ELSE 0 END) AS [Previous_1],
+        MAX(CASE WHEN DayOrder = 3 THEN CompletionCount ELSE 0 END) AS [Previous_2],
+        MAX(CASE WHEN DayOrder = 4 THEN CompletionCount ELSE 0 END) AS [Previous_3],
+        MAX(CASE WHEN DayOrder = 5 THEN CompletionCount ELSE 0 END) AS [Previous_4],
+        MAX(CASE WHEN DayOrder = 1 THEN DayName END) AS Today_Name,
+        MAX(CASE WHEN DayOrder = 2 THEN DayName END) AS Previous_1_Name,
+        MAX(CASE WHEN DayOrder = 3 THEN DayName END) AS Previous_2_Name,
+        MAX(CASE WHEN DayOrder = 4 THEN DayName END) AS Previous_3_Name,
+        MAX(CASE WHEN DayOrder = 5 THEN DayName END) AS Previous_4_Name
+    FROM CrossJoined
+    GROUP BY Tech
+),
+NotCompleted AS (
+    SELECT COUNT(*) AS NotCompleted
+    FROM HighVolumeBatchDetail
+    WHERE hvbd_completeddatetime IS NULL
+)
+-- Per-tech rows (NotCompleted is NULL here to avoid repeating the same scalar)
+SELECT 
+    Tech,
+    [Today],
+    [Previous_1],
+    [Previous_2],
+    [Previous_3],
+    [Previous_4],
+    Today_Name,
+    Previous_1_Name,
+    Previous_2_Name,
+    Previous_3_Name,
+    Previous_4_Name,
+    CAST(NULL AS INT) AS NotCompleted
+FROM DailyTechSummary
+
+UNION ALL
+
+-- TOTAL row with the single NotCompleted value
+SELECT
+    'TOTAL' AS Tech,
+    SUM([Today]) AS [Today],
+    SUM([Previous_1]) AS [Previous_1],
+    SUM([Previous_2]) AS [Previous_2],
+    SUM([Previous_3]) AS [Previous_3],
+    SUM([Previous_4]) AS [Previous_4],
+    MAX(Today_Name) AS Today_Name,
+    MAX(Previous_1_Name) AS Previous_1_Name,
+    MAX(Previous_2_Name) AS Previous_2_Name,
+    MAX(Previous_3_Name) AS Previous_3_Name,
+    MAX(Previous_4_Name) AS Previous_4_Name,
+    (SELECT NotCompleted FROM NotCompleted) AS NotCompleted
+FROM DailyTechSummary;
+
+";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetHighVolumeDashboard",
+                Detail = "Retrieved high volume dashboard data",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetHighVolumeDashboard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving high volume dashboard data");
+            throw;
+        }
+    }
 }
