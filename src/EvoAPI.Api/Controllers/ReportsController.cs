@@ -70,18 +70,18 @@ public class ReportsController : BaseController
 
     [HttpGet("receipts")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport([FromQuery] string? searchText = null)
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport()
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetReceiptsDashboardAsync(searchText);
+            var dataTable = await _dataService.GetReceiptsDashboardAsync();
             var reportData = ConvertDataTableToReceiptsReport(dataTable);
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetReceiptsReport", $"Retrieved {reportData.Count} records with search: '{searchText ?? "none"}'", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            await LogAuditAsync("GetReceiptsReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<ReceiptsReportDto>>
             {

@@ -1794,52 +1794,49 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetReceiptsDashboardAsync(string? searchText = null)
+    public async Task<DataTable> GetReceiptsDashboardAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            string sql = @"
-                SELECT top 500 cc.cc_name, c.c_name, rt.rt_receipttype, supplier.c_name 'Supplier', att_company 'SupplierEntered', sr.sr_requestnumber, wou.u_firstname, wou.u_lastname, u_submittedby.u_firstname + ' ' + u_submittedby.u_lastname 'SubmittedBy', att_receiptamount, att_insertdatetime, att_filename, att_description, att_comment, att_path, sr.sr_id, wo.wo_id, att.att_id, att_extension
+            var sql = @"
+
+                SELECT 
+                    cc.cc_name,
+                    c.c_name,
+                    rt.rt_receipttype ,
+                    supplier.c_name as supplier,
+                    att.att_company as supplierEntered,
+                    sr.sr_requestnumber,
+                    wou.u_firstname ,
+                    wou.u_lastname ,
+                    u_submittedby.u_firstname + ' ' + u_submittedby.u_lastname as submittedBy,
+                    att.att_receiptamount ,
+                    att.att_insertdatetime ,
+                    att.att_filename ,
+                    att.att_description ,
+                    att.att_comment ,
+                    att.att_path ,
+                    sr.sr_id ,
+                    sr.wo_id_primary as wo_id,
+                    att.att_id ,
+                    att.att_extension 
                 FROM attachment att with(nolock)
-                LEFT JOIN ReceiptType rt with(nolock) on att.rt_id = rt.rt_id
-                LEFT JOIN ServiceRequest sr with(nolock) on att.sr_id = sr.sr_id
-                LEFT JOIN workorder wo with(nolock) on sr.wo_id_primary = wo.wo_id
-                LEFT JOIN xrefWorkOrderUser xwou with(nolock) on wo.wo_id = xwou.wo_id
+                LEFT JOIN receipttype rt with(nolock) on att.rt_id = rt.rt_id
+                LEFT JOIN servicerequest sr with(nolock) on att.sr_id = sr.sr_id
+                LEFT JOIN xrefWorkOrderUser xwou with(nolock) on sr.wo_id_primary = xwou.wo_id 
                 LEFT JOIN [user] wou with(nolock) on xwou.u_id = wou.u_id
                 LEFT JOIN [user] u_submittedby with(nolock) on att.u_id_submittedby = u_submittedby.u_id
                 LEFT JOIN xrefCompanyCallCenter xccc with(nolock) on sr.xccc_id = xccc.xccc_id
                 LEFT JOIN company c with(nolock) on xccc.c_id = c.c_id
                 LEFT JOIN company supplier with(nolock) on att.c_id = supplier.c_id
                 LEFT JOIN callcenter cc with(nolock) on xccc.cc_id = cc.cc_id
-                WHERE att_receipt = 1";
+                WHERE att_receipt = 1
+                ORDER BY att_id desc
+";
 
-            var parameters = new Dictionary<string, object>();
-
-            // Add search filter if searchText is provided
-            if (!string.IsNullOrWhiteSpace(searchText))
-            {
-                sql += @"
-                    AND (
-                        cc_name like '%' + @searchtext + '%'
-                        OR c.c_name like '%' + @searchtext + '%'
-                        OR att_company like '%' + @searchtext + '%'
-                        OR att_receiptamount like '%' + @searchtext + '%'
-                        OR supplier.c_name like '%' + @searchtext + '%'
-                        OR sr_requestnumber like '%' + @searchtext + '%'
-                        OR wou.u_firstname like '%' + @searchtext + '%'
-                        OR wou.u_lastname like '%' + @searchtext + '%'
-                        OR u_submittedby.u_firstname like '%' + @searchtext + '%'
-                        OR u_submittedby.u_lastname like '%' + @searchtext + '%'
-                        OR rt.rt_receipttype like '%' + @searchtext + '%'
-                    )";
-                parameters.Add("@searchtext", searchText);
-            }
-
-            sql += " ORDER BY att_id desc";
-
-            var result = await ExecuteQueryAsync(sql, parameters);
+            var result = await ExecuteQueryAsync(sql);
             
             stopwatch.Stop();
             await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
