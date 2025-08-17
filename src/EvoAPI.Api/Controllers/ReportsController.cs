@@ -68,6 +68,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("receipts")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport([FromQuery] string? searchText = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetReceiptsDashboardAsync(searchText);
+            var reportData = ConvertDataTableToReceiptsReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetReceiptsReport", $"Retrieved {reportData.Count} records with search: '{searchText ?? "none"}'", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = true,
+                Message = "Receipts report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetReceiptsReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve receipts report data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -98,6 +134,39 @@ public class ReportsController : BaseController
         return result;
     }
 
+    private static List<ReceiptsReportDto> ConvertDataTableToReceiptsReport(DataTable dataTable)
+    {
+        var result = new List<ReceiptsReportDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ReceiptsReportDto
+            {
+                CallCenter = CleanString(row["cc_name"]),
+                Company = CleanString(row["c_name"]),
+                ReceiptType = CleanString(row["rt_receipttype"]),
+                Supplier = CleanString(row["Supplier"]),
+                SupplierEntered = CleanString(row["SupplierEntered"]),
+                RequestNumber = CleanString(row["sr_requestnumber"]),
+                TechFirstName = CleanString(row["u_firstname"]),
+                TechLastName = CleanString(row["u_lastname"]),
+                SubmittedBy = CleanString(row["SubmittedBy"]),
+                ReceiptAmount = ConvertToDecimal(row["att_receiptamount"]),
+                InsertDateTime = ConvertToDateTime(row["att_insertdatetime"]) ?? DateTime.MinValue,
+                FileName = CleanString(row["att_filename"]),
+                Description = CleanString(row["att_description"]),
+                Comment = CleanString(row["att_comment"]),
+                Path = CleanString(row["att_path"]),
+                ServiceRequestId = ConvertToInt(row["sr_id"]),
+                WorkOrderId = ConvertToInt(row["wo_id"]),
+                AttachmentId = ConvertToInt(row["att_id"]),
+                Extension = CleanString(row["att_extension"])
+            });
+        }
+        
+        return result;
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -107,6 +176,28 @@ public class ReportsController : BaseController
             return result;
             
         return 0;
+    }
+
+    private static decimal ConvertToDecimal(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return 0m;
+        
+        if (decimal.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return 0m;
+    }
+
+    private static DateTime? ConvertToDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
     }
 
     private static string CleanString(object value)
