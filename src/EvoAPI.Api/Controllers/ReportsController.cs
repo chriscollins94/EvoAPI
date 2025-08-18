@@ -160,7 +160,9 @@ public class ReportsController : BaseController
                 ServiceRequestId = ConvertToInt(row["sr_id"]),
                 WorkOrderId = ConvertToInt(row["wo_id"]),
                 AttachmentId = ConvertToInt(row["att_id"]),
-                Extension = CleanString(row["att_extension"])
+                Extension = CleanString(row["att_extension"]),
+                TradeId = ConvertToNullableInt(row["t_id"]),
+                Trade = CleanString(row["t_trade"])
             });
         }
         
@@ -176,6 +178,17 @@ public class ReportsController : BaseController
             return result;
             
         return 0;
+    }
+
+    private static int? ConvertToNullableInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
     }
 
     private static decimal ConvertToDecimal(object value)

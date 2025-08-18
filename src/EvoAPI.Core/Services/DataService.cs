@@ -1821,10 +1821,13 @@ FROM DailyTechSummary;
                     sr.sr_id ,
                     sr.wo_id_primary as wo_id,
                     att.att_id ,
-                    att.att_extension 
+                    att.att_extension,
+                    t.t_id,
+                    t.t_trade
                 FROM attachment att with(nolock)
                 LEFT JOIN receipttype rt with(nolock) on att.rt_id = rt.rt_id
                 LEFT JOIN servicerequest sr with(nolock) on att.sr_id = sr.sr_id
+                LEFT JOIN trade t with(nolock) on sr.t_id = t.t_id
                 LEFT JOIN xrefWorkOrderUser xwou with(nolock) on sr.wo_id_primary = xwou.wo_id 
                 LEFT JOIN [user] wou with(nolock) on xwou.u_id = wou.u_id
                 LEFT JOIN [user] u_submittedby with(nolock) on att.u_id_submittedby = u_submittedby.u_id

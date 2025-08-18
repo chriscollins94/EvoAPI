@@ -21,5 +21,7 @@ public class ReceiptsReportDto
     public int WorkOrderId { get; set; }
     public int AttachmentId { get; set; }
     public string Extension { get; set; } = string.Empty;
+    public int? TradeId { get; set; }
+    public string Trade { get; set; } = string.Empty;
     public string TechFullName => $"{TechFirstName} {TechLastName}".Trim();
 }
