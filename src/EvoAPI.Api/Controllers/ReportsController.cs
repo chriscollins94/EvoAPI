@@ -104,6 +104,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("tech-detail")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<TechDetailReportDto>>>> GetTechDetailReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechDetailDashboardAsync();
+            var reportData = ConvertDataTableToTechDetailReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechDetailReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = true,
+                Message = "Tech detail report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechDetailReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech detail report data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -163,6 +199,36 @@ public class ReportsController : BaseController
                 Extension = CleanString(row["att_extension"]),
                 TradeId = ConvertToNullableInt(row["t_id"]),
                 Trade = CleanString(row["t_trade"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<TechDetailReportDto> ConvertDataTableToTechDetailReport(DataTable dataTable)
+    {
+        var result = new List<TechDetailReportDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new TechDetailReportDto
+            {
+                UserId = ConvertToInt(row["u_id"]),
+                FirstName = CleanString(row["u_firstname"]),
+                LastName = CleanString(row["u_lastname"]),
+                PerformanceId = ConvertToInt(row["perf_id"]),
+                PerformanceDate = ConvertToDateTime(row["perf_insertdate"]),
+                Utilization = CleanString(row["perf_utilization"]),
+                Profitability = CleanString(row["perf_profitability"]),
+                Attendance = CleanString(row["perf_attendance"]),
+                Comment = CleanString(row["perf_comment"]),
+                Address1 = CleanString(row["a_address1"]),
+                Address2 = CleanString(row["a_address2"]),
+                City = CleanString(row["a_city"]),
+                State = CleanString(row["a_state"]),
+                Zip = CleanString(row["a_zip"]),
+                ZoneId = ConvertToNullableInt(row["z_id"]),
+                ZoneNumber = CleanString(row["z_number"])
             });
         }
         

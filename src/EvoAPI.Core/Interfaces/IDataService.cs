@@ -34,6 +34,7 @@ public interface IDataService
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
+    Task<DataTable> GetTechDetailDashboardAsync();
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

@@ -1869,4 +1869,99 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<DataTable> GetTechDetailDashboardAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            var sql = @"
+                WITH RankedPerformance AS (
+                    SELECT 
+                        u.u_id, 
+                        u.u_firstname, 
+                        u.u_lastname, 
+                        u.a_id,  -- Include a_id for joining with address table
+                        u.z_id,  -- Include z_id for joining with zone table
+                        perf.perf_id, 
+                        CONVERT(DATE, perf.perf_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time') AS perf_insertdate, 
+                        perf.perf_utilization, 
+                        perf.perf_profitability, 
+                        perf.perf_attendance, 
+                        perf.perf_comment,
+                        ROW_NUMBER() OVER (PARTITION BY perf.u_id ORDER BY perf.perf_insertdatetime DESC) AS rn
+                    FROM performance perf
+                    JOIN [user] u ON perf.u_id = u.u_id
+                )
+                SELECT 
+                    rp.u_id, 
+                    rp.u_firstname, 
+                    rp.u_lastname, 
+                    rp.perf_id, 
+                    rp.perf_insertdate,  -- Only the date in CST
+                    rp.perf_utilization, 
+                    rp.perf_profitability, 
+                    rp.perf_attendance, 
+                    rp.perf_comment,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    z.z_id,
+                    z.z_number
+                FROM RankedPerformance rp
+                LEFT JOIN address a ON rp.a_id = a.a_id  -- Join with address table if a_id exists
+                LEFT JOIN zone z ON rp.z_id = z.z_id     -- Join with zone table if z_id exists
+                WHERE rp.rn = 1
+                ORDER BY z.z_number, rp.u_lastname, rp.u_firstname;
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+                    
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetTechDetailDashboard",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech detail records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechDetailDashboard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving tech detail dashboard data");
+            throw;
+        }
+    }
 }
