@@ -1516,7 +1516,15 @@ public class DataService : IDataService
                     inner join workorder wo on sr.wo_id_primary = wo.wo_id
                     inner join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id
                     inner join [user] u on xwou.u_id = u.u_id
-                    inner join zone z on u.z_id = z.z_id
+                    -- New zone logic based on location-to-zone relationship
+                    inner join location l on sr.l_id = l.l_id
+                    inner join address a on l.a_id = a.a_id
+                    inner join tax on left(a.a_zip,5) = tax.tax_zip
+                    inner join ZoneMicro zm on tax.zm_id = zm.zm_id
+                    inner join zone z on CASE 
+                        WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
+                        ELSE zm.z_id 
+                    END = z.z_id
                     inner join statussecondary ss on wo.ss_id = ss.ss_id
                     inner join Priority p on sr.p_id = p.p_id
                     left join trade t on sr.t_id = t.t_id
@@ -1570,7 +1578,7 @@ public class DataService : IDataService
                         WHERE (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  -- NO NOTES case
                         OR (latest_note.won_insertdatetime IS NOT NULL 
                             AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
-                            AND apn_id > 1)  -- Regular case, exclude NO NOTES record
+                            AND apn_id > 1)  -- Regular case, exclude NO NOTES records
                         ORDER BY CASE
                                     WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets priority
                                     ELSE apn_hours
@@ -1608,7 +1616,8 @@ public class DataService : IDataService
                     AttackPoints
                 FROM ranked_results 
                 WHERE rn <= @TopCount
-                ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC";
+                ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC;
+";
 
             
             var parameters = new Dictionary<string, object>
