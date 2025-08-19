@@ -1966,4 +1966,85 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<DataTable> GetTechActivityDashboardAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            
+            const string sql = @"
+                SELECT 
+                    tt.tt_id,
+                    ttt.ttt_id,
+                    tt.u_id,
+                    tt.wo_id,
+                    wo.sr_id,
+                    sr.t_id,
+                    ttt.ttt_timetype,
+                    ttt.ttt_paidtime,
+                    FORMAT(tt.tt_begin AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') AS tt_begin,
+                    FORMAT(tt.tt_end AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') AS tt_end,
+                    tt.tt_invoicedrate,
+                    u.u_firstname,
+                    u.u_lastname,
+                    sr.sr_requestnumber,
+                    t.t_trade,
+                    cc.cc_name,
+                    c.c_name
+                FROM timetracking tt
+                    INNER JOIN TimeTrackingType ttt ON tt.ttt_id = ttt.ttt_id
+                    INNER JOIN [user] u ON tt.u_id = u.u_id
+                    LEFT JOIN workorder wo ON tt.wo_id = wo.wo_id
+                    LEFT JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                    LEFT JOIN trade t ON sr.t_id = t.t_id
+                    LEFT JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
+                    LEFT JOIN callcenter cc ON xccc.cc_id = cc.cc_id
+                    LEFT JOIN Company c ON xccc.c_id = c.c_id
+                WHERE tt.tt_begin >= DATEADD(DAY, -1200, GETDATE()) and ttt.ttt_id not in (1)
+                ORDER BY tt.tt_id DESC;
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+                    
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetTechActivityDashboard",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech activity records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechActivityDashboard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving tech activity dashboard data");
+            throw;
+        }
+    }
 }

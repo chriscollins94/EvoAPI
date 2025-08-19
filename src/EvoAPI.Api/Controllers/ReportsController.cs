@@ -140,6 +140,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("tech-activity")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechActivityDashboardAsync();
+            var reportData = ConvertDataTableToTechActivityReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<TechActivityReportDto>>
+            {
+                Success = true,
+                Message = "Tech activity report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechActivityReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TechActivityReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech activity report data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -229,6 +265,37 @@ public class ReportsController : BaseController
                 Zip = CleanString(row["a_zip"]),
                 ZoneId = ConvertToNullableInt(row["z_id"]),
                 ZoneNumber = CleanString(row["z_number"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<TechActivityReportDto> ConvertDataTableToTechActivityReport(DataTable dataTable)
+    {
+        var result = new List<TechActivityReportDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new TechActivityReportDto
+            {
+                TtId = ConvertToInt(row["tt_id"]),
+                TttId = ConvertToInt(row["ttt_id"]),
+                UserId = ConvertToInt(row["u_id"]),
+                WorkOrderId = ConvertToNullableInt(row["wo_id"]),
+                ServiceRequestId = ConvertToNullableInt(row["sr_id"]),
+                TradeId = ConvertToNullableInt(row["t_id"]),
+                TimeType = CleanString(row["ttt_timetype"]),
+                PaidTime = CleanString(row["ttt_paidtime"]),
+                BeginTime = CleanString(row["tt_begin"]),
+                EndTime = CleanString(row["tt_end"]),
+                InvoicedRate = ConvertToDecimal(row["tt_invoicedrate"]),
+                FirstName = CleanString(row["u_firstname"]),
+                LastName = CleanString(row["u_lastname"]),
+                ServiceRequestNumber = CleanString(row["sr_requestnumber"]),
+                Trade = CleanString(row["t_trade"]),
+                CallCenter = CleanString(row["cc_name"]),
+                Company = CleanString(row["c_name"])
             });
         }
         

@@ -35,6 +35,7 @@ public interface IDataService
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
     Task<DataTable> GetTechDetailDashboardAsync();
+    Task<DataTable> GetTechActivityDashboardAsync();
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }
