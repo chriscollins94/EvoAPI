@@ -1899,6 +1899,7 @@ FROM DailyTechSummary;
                         ROW_NUMBER() OVER (PARTITION BY perf.u_id ORDER BY perf.perf_insertdatetime DESC) AS rn
                     FROM performance perf
                     JOIN [user] u ON perf.u_id = u.u_id
+                    WHERE u.u_active = 1
                 )
                 SELECT 
                     rp.u_id, 
@@ -1921,6 +1922,7 @@ FROM DailyTechSummary;
                 LEFT JOIN address a ON rp.a_id = a.a_id  -- Join with address table if a_id exists
                 LEFT JOIN zone z ON rp.z_id = z.z_id     -- Join with zone table if z_id exists
                 WHERE rp.rn = 1
+                    AND rp.u_id NOT IN (SELECT DISTINCT u_id FROM zone WHERE u_id IS NOT NULL)  -- Exclude zone managers
                 ORDER BY z.z_number, rp.u_lastname, rp.u_firstname;
             ";
 
