@@ -1477,7 +1477,6 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-
                 WITH ranked_results AS (
                     select sr.sr_id, 
                         sr.sr_insertdatetime, 
@@ -1492,7 +1491,7 @@ public class DataService : IDataService
                         ss.ss_statussecondary,
                         t.t_trade, 
                         CASE 
-                            WHEN latest_note.won_insertdatetime IS NULL THEN 0
+                            WHEN latest_note.won_insertdatetime IS NULL THEN NULL
                             ELSE DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
                         END as hours_since_last_note,
                         CASE 
@@ -1528,8 +1527,8 @@ public class DataService : IDataService
                     inner join statussecondary ss on wo.ss_id = ss.ss_id
                     inner join Priority p on sr.p_id = p.p_id
                     left join trade t on sr.t_id = t.t_id
-                    left join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
-                    left join [user] admin_user on xazss.u_id = admin_user.u_id
+                    inner join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
+                    inner join [user] admin_user on xazss.u_id = admin_user.u_id
                     left join (
                         -- Get the most recent note for any work order related to each service request
                         select sr_inner.sr_id,
@@ -1571,18 +1570,23 @@ public class DataService : IDataService
                             END >= aps_daysinstatus
                         ORDER BY aps_daysinstatus DESC, aps_id DESC  -- Get the highest threshold that applies
                     ) aps_lookup
-                    -- Optimized AttackPointNote lookup using OUTER APPLY
+                    -- Fixed AttackPointNote lookup using OUTER APPLY
                     OUTER APPLY (
                         SELECT TOP 1 apn_attack
                         FROM AttackPointNote 
-                        WHERE (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  -- NO NOTES case
-                        OR (latest_note.won_insertdatetime IS NOT NULL 
+                        WHERE 
+                            -- Case 1: Truly no notes exist 
+                            (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  
+                            OR 
+                            -- Case 2: Notes exist and meet the time threshold criteria
+                            (latest_note.won_insertdatetime IS NOT NULL 
                             AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
-                            AND apn_id > 1)  -- Regular case, exclude NO NOTES records
-                        ORDER BY CASE
-                                    WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets priority
-                                    ELSE apn_hours
-                                END DESC
+                            AND apn_id > 1)  
+                        ORDER BY 
+                            CASE
+                                WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets highest priority
+                                ELSE apn_hours  -- Otherwise order by hours threshold descending
+                            END DESC
                     ) apn_lookup
                     where 1=1
                     and sr.s_id not in (9) --Paid
