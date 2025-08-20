@@ -21,6 +21,14 @@ public class TechActivityReportDto
     public string CallCenter { get; set; } = string.Empty;
     public string Company { get; set; } = string.Empty;
     
+    // Tech Zone fields (from user table)
+    public int? TechZoneId { get; set; }
+    public string TechZone { get; set; } = string.Empty;
+    
+    // Service Request Zone fields (from location/address/tax/zone lookup)
+    public int? ServiceRequestZoneId { get; set; }
+    public string ServiceRequestZone { get; set; } = string.Empty;
+    
     // Calculated properties for reporting
     public DateTime ParsedBeginTime => DateTime.TryParse(BeginTime, out var begin) ? begin : DateTime.MinValue;
     public DateTime ParsedEndTime => DateTime.TryParse(EndTime, out var end) ? end : DateTime.MinValue;

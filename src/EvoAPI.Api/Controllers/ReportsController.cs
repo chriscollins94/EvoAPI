@@ -295,7 +295,11 @@ public class ReportsController : BaseController
                 ServiceRequestNumber = CleanString(row["sr_requestnumber"]),
                 Trade = CleanString(row["t_trade"]),
                 CallCenter = CleanString(row["cc_name"]),
-                Company = CleanString(row["c_name"])
+                Company = CleanString(row["c_name"]),
+                TechZoneId = ConvertToNullableInt(row["techz_id"]),
+                TechZone = CleanString(row["techzone"]),
+                ServiceRequestZoneId = ConvertToNullableInt(row["srz_id"]),
+                ServiceRequestZone = CleanString(row["srzone"])
             });
         }
         

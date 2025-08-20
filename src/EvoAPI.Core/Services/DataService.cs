@@ -2002,7 +2002,17 @@ FROM DailyTechSummary;
                     sr.sr_requestnumber,
                     t.t_trade,
                     cc.cc_name,
-                    c.c_name
+                    c.c_name,
+                    z.z_id AS techz_id,
+                    z.z_number + '-'+ z.z_acronym AS techzone,
+                    CASE 
+                        WHEN cc.cc_name = 'Residential' THEN resz.z_id 
+                        ELSE srz.z_id 
+                    END AS srz_id,
+                    CASE 
+                        WHEN cc.cc_name = 'Residential' THEN resz.z_number + '-'+ resz.z_acronym 
+                        ELSE srz.z_number + '-'+ srz.z_acronym 
+                    END AS srzone
                 FROM timetracking tt
                     INNER JOIN TimeTrackingType ttt ON tt.ttt_id = ttt.ttt_id
                     INNER JOIN [user] u ON tt.u_id = u.u_id
@@ -2012,7 +2022,17 @@ FROM DailyTechSummary;
                     LEFT JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
                     LEFT JOIN callcenter cc ON xccc.cc_id = cc.cc_id
                     LEFT JOIN Company c ON xccc.c_id = c.c_id
-                WHERE tt.tt_begin >= DATEADD(DAY, -1200, GETDATE()) and ttt.ttt_id not in (1)
+                    LEFT JOIN Zone z ON u.z_id = z.z_id
+                    -- Service Request Zone joins
+                    LEFT JOIN location l ON sr.l_id = l.l_id
+                    LEFT JOIN address a ON l.a_id = a.a_id
+                    LEFT JOIN tax ON LEFT(a.a_zip, 5) = tax.tax_zip
+                    LEFT JOIN ZoneMicro zm ON tax.zm_id = zm.zm_id
+                    LEFT JOIN zone srz ON zm.z_id = srz.z_id
+                    -- Residential zone lookup
+                    LEFT JOIN zone resz ON resz.z_acronym = 'Residential'
+                WHERE tt.tt_begin >= DATEADD(DAY, -30, GETDATE()) 
+                    AND ttt.ttt_id NOT IN (1)
                 ORDER BY tt.tt_id DESC;
             ";
 
