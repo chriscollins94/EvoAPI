@@ -17,6 +17,9 @@ public interface IDataService
     Task<DataTable> GetAllAttackPointNotesAsync();
     Task<bool> UpdateAttackPointNoteAsync(UpdateAttackPointNoteRequest request);
     Task<int?> CreateAttackPointNoteAsync(CreateAttackPointNoteRequest request);
+    Task<DataTable> GetAllAttackPointActionableDatesAsync();
+    Task<bool> UpdateAttackPointActionableDateAsync(UpdateAttackPointActionableDateRequest request);
+    Task<int?> CreateAttackPointActionableDateAsync(CreateAttackPointActionableDateRequest request);
     Task<DataTable> GetAllAttackPointStatusAsync();
     Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
     Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);

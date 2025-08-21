@@ -81,3 +81,29 @@ public class CreateAttackPointStatusRequest
     public int DaysInStatus { get; set; }
     public int Attack { get; set; }
 }
+
+// Attack Point Actionable Date DTOs
+public class AttackPointActionableDateDto
+{
+    public int Id { get; set; }
+    public DateTime InsertDateTime { get; set; }
+    public DateTime? ModifiedDateTime { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public int Days { get; set; }
+    public int Attack { get; set; }
+}
+
+public class UpdateAttackPointActionableDateRequest
+{
+    public int Id { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public int Days { get; set; }
+    public int Attack { get; set; }
+}
+
+public class CreateAttackPointActionableDateRequest
+{
+    public string Description { get; set; } = string.Empty;
+    public int Days { get; set; }
+    public int Attack { get; set; }
+}

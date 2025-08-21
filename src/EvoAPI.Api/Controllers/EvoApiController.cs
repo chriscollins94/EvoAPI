@@ -573,6 +573,48 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("attackpointactionabledates")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointActionableDateDto>>>> GetAttackPointActionableDates()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point actionable dates");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointActionableDatesAsync();
+                var actionableDates = ConvertDataTableToAttackPointActionableDates(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointActionableDates", $"Retrieved {actionableDates.Count} attack point actionable dates", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointActionableDateDto>>
+                {
+                    Success = true,
+                    Message = "Attack point actionable dates retrieved successfully",
+                    Data = actionableDates,
+                    Count = actionableDates.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointActionableDates", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point actionable dates");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point actionable dates",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -1123,6 +1165,152 @@ public class EvoApiController : BaseController
             }
         }
 
+        // Attack Point Actionable Date endpoints
+        [HttpPut("attackpointactionabledates/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointActionableDate(int id, [FromBody] UpdateAttackPointActionableDateRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Description))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Description is required",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointActionableDateAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointActionableDate", $"Updated attack point actionable date {id} - {request.Description}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point actionable date updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointActionableDate", $"Failed to update attack point actionable date {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point actionable date",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointActionableDate", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point actionable date {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point actionable date",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointactionabledates")]
+        public async Task<ActionResult<ApiResponse<AttackPointActionableDateDto>>> CreateAttackPointActionableDate([FromBody] CreateAttackPointActionableDateRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point actionable date: {Description}", request.Description);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = false,
+                        Message = "Description must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointActionableDateAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newActionableDate = new AttackPointActionableDateDto
+                    {
+                        Id = newId.Value,
+                        Description = request.Description,
+                        Days = request.Days,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointActionableDate", $"Created attack point actionable date - {request.Description} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = true,
+                        Message = "Attack point actionable date created successfully",
+                        Data = newActionableDate,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointActionableDate", $"Failed to create attack point actionable date - {request.Description}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point actionable date",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointActionableDate", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point actionable date {Description}", request.Description);
+                
+                return StatusCode(500, new ApiResponse<AttackPointActionableDateDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point actionable date",
+                    Count = 0
+                });
+            }
+        }
+
         // Attack Point Status endpoints
         [HttpPut("attackpointstatus/{id}")]
         public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointStatus(int id, [FromBody] UpdateAttackPointStatusRequest request)
@@ -1475,6 +1663,28 @@ public class EvoApiController : BaseController
         }
 
         return attackPointNotes;
+    }
+
+    private static List<AttackPointActionableDateDto> ConvertDataTableToAttackPointActionableDates(DataTable dataTable)
+    {
+        var actionableDates = new List<AttackPointActionableDateDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var actionableDate = new AttackPointActionableDateDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Description = row["Description"]?.ToString() ?? string.Empty,
+                Days = Convert.ToInt32(row["Days"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            actionableDates.Add(actionableDate);
+        }
+
+        return actionableDates;
     }
 
     private static List<AttackPointStatusDto> ConvertDataTableToAttackPointStatus(DataTable dataTable)

@@ -1091,6 +1091,202 @@ public class DataService : IDataService
         }
     }
 
+    // Attack Point Actionable Date methods
+    public async Task<DataTable> GetAllAttackPointActionableDatesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    apad_id as Id,
+                    apad_insertdatetime as InsertDateTime,
+                    apad_modifieddatetime as ModifiedDateTime,
+                    apad_description as Description,
+                    apad_days as Days,
+                    apad_attack as Attack
+                FROM dbo.AttackPointActionableDate
+                ORDER BY apad_days";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllAttackPointActionableDates",
+                Detail = $"Retrieved {result.Rows.Count} attack point actionable dates",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllAttackPointActionableDates",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attack point actionable dates");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAttackPointActionableDateAsync(EvoAPI.Shared.DTOs.UpdateAttackPointActionableDateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.AttackPointActionableDate 
+                SET
+                    apad_description = @Description,
+                    apad_days = @Days,
+                    apad_attack = @Attack,
+                    apad_modifieddatetime = GETDATE()
+                WHERE apad_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Description", request.Description },
+                { "@Days", request.Days },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttackPointActionableDate",
+                Detail = $"Updated attack point actionable date {request.Id} - {request.Description}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttackPointActionableDate",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating attack point actionable date {Id}", request.Id);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateAttackPointActionableDateAsync(EvoAPI.Shared.DTOs.CreateAttackPointActionableDateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.AttackPointActionableDate 
+                (apad_description, apad_days, apad_attack, apad_insertdatetime, apad_modifieddatetime)
+                VALUES 
+                (@Description, @Days, @Attack, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Description", request.Description },
+                { "@Days", request.Days },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateAttackPointActionableDate",
+                    Detail = $"Created new attack point actionable date '{request.Description}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAttackPointActionableDate",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating attack point actionable date {Description}", request.Description);
+            throw;
+        }
+    }
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -1478,150 +1674,170 @@ public class DataService : IDataService
         {
             const string sql = @"
                 WITH ranked_results AS (
-                    select sr.sr_id, 
-                        sr.sr_insertdatetime, 
-                        sr.sr_totaldue,
-                        sr.sr_requestnumber,
-                        sr.sr_datenextstep,
-                        sr.sr_actionablenote,
-                        z.z_number + '-' + z.z_acronym zone, 
-                        cc.cc_name,
-                        c.c_name,
-                        p.p_priority,
-                        ss.ss_statussecondary,
-                        t.t_trade, 
-                        CASE 
-                            WHEN latest_note.won_insertdatetime IS NULL THEN NULL
-                            ELSE DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
-                        END as hours_since_last_note,
-                        CASE 
-                            WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
-                            ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
-                        END as days_in_current_status,
-                        cc.cc_attack as AttackCallCenter,
-                        p.p_attack AttackPriority, 
-                        ss.ss_attack AttackStatusSecondary,
-                        ISNULL(apn_lookup.apn_attack, 0) as AttackHoursSinceLastNote,
-                        ISNULL(aps_lookup.aps_attack, 0) as AttackDaysInStatus,
-                        (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack) as AttackPoints,
-                        admin_user.u_id as admin_u_id,
-                        admin_user.u_firstname as admin_firstname,
-                        admin_user.u_lastname as admin_lastname,
-                        ROW_NUMBER() OVER (PARTITION BY ISNULL(admin_user.u_id, -1) ORDER BY (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack) DESC) as rn
-                    from servicerequest sr
-                    inner join xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
-                    inner join Company c on xccc.c_id = c.c_id
-                    inner join callcenter cc on xccc.cc_id = cc.cc_id
-                    inner join workorder wo on sr.wo_id_primary = wo.wo_id
-                    inner join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id
-                    inner join [user] u on xwou.u_id = u.u_id
-                    -- New zone logic based on location-to-zone relationship
-                    inner join location l on sr.l_id = l.l_id
-                    inner join address a on l.a_id = a.a_id
-                    inner join tax on left(a.a_zip,5) = tax.tax_zip
-                    inner join ZoneMicro zm on tax.zm_id = zm.zm_id
-                    inner join zone z on CASE 
-                        WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
-                        ELSE zm.z_id 
-                    END = z.z_id
-                    inner join statussecondary ss on wo.ss_id = ss.ss_id
-                    inner join Priority p on sr.p_id = p.p_id
-                    left join trade t on sr.t_id = t.t_id
-                    inner join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
-                    inner join [user] admin_user on xazss.u_id = admin_user.u_id
-                    left join (
-                        -- Get the most recent note for any work order related to each service request
-                        select sr_inner.sr_id,
-                            won.won_insertdatetime,
-                            row_number() over (partition by sr_inner.sr_id order by won.won_insertdatetime desc) as rn
-                        from servicerequest sr_inner
-                        inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
-                        inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
-                        inner join workorder wo_inner on wo_inner.sr_id = sr_inner.sr_id
-                        inner join workordernote won on won.wo_id = wo_inner.wo_id
-                        where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
-                        and c_inner.c_name NOT IN ('Metro Pipe Program')
-                        and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            or wo_inner.wo_startdatetime is null)
-                    ) latest_note on latest_note.sr_id = sr.sr_id and latest_note.rn = 1
-                    left join (
-                        -- Get the most recent status change for the primary work order
-                        select sr_inner.sr_id,
-                            wo_inner.wo_id,
-                            ssc.ssc_insertdatetime,
-                            row_number() over (partition by wo_inner.wo_id order by ssc.ssc_insertdatetime desc) as rn
-                        from servicerequest sr_inner
-                        inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
-                        inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
-                        inner join workorder wo_inner on sr_inner.wo_id_primary = wo_inner.wo_id
-                        inner join statussecondarychange ssc on ssc.wo_id = wo_inner.wo_id
-                        where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
-                        and c_inner.c_name NOT IN ('Metro Pipe Program')
-                        and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            or wo_inner.wo_startdatetime is null)
-                    ) latest_status_change on latest_status_change.wo_id = wo.wo_id and latest_status_change.rn = 1
-                    -- Optimized AttackPointStatus lookup using OUTER APPLY
-                    OUTER APPLY (
-                        SELECT TOP 1 aps_attack
-                        FROM AttackPointStatus 
-                        WHERE CASE 
+                        select sr.sr_id, 
+                            sr.sr_insertdatetime, 
+                            sr.sr_totaldue,
+                            sr.sr_requestnumber,
+                            sr.sr_datenextstep,
+                            sr.sr_actionablenote,
+                            z.z_number + '-' + z.z_acronym zone, 
+                            cc.cc_name,
+                            c.c_name,
+                            p.p_priority,
+                            ss.ss_statussecondary,
+                            t.t_trade, 
+                            CASE 
+                                WHEN latest_note.won_insertdatetime IS NULL THEN NULL
+                                ELSE DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
+                            END as hours_since_last_note,
+                            CASE 
                                 WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
                                 ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
-                            END >= aps_daysinstatus
-                        ORDER BY aps_daysinstatus DESC, aps_id DESC  -- Get the highest threshold that applies
-                    ) aps_lookup
-                    -- Fixed AttackPointNote lookup using OUTER APPLY
-                    OUTER APPLY (
-                        SELECT TOP 1 apn_attack
-                        FROM AttackPointNote 
-                        WHERE 
-                            -- Case 1: Truly no notes exist 
-                            (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  
-                            OR 
-                            -- Case 2: Notes exist and meet the time threshold criteria
-                            (latest_note.won_insertdatetime IS NOT NULL 
-                            AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
-                            AND apn_id > 1)  
-                        ORDER BY 
-                            CASE
-                                WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets highest priority
-                                ELSE apn_hours  -- Otherwise order by hours threshold descending
-                            END DESC
-                    ) apn_lookup
-                    where 1=1
-                    and sr.s_id not in (9) --Paid
-                    and sr.s_id not in (6) --Rejected
-                    and c.c_name NOT IN ('Metro Pipe Program')
-                    and cc.cc_name NOT IN ('Administrative')
-                    and (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or wo.wo_startdatetime is null)
-                )
-                SELECT sr_id, 
-                    sr_insertdatetime, 
-                    sr_totaldue,
-                    sr_requestnumber,
-                    sr_datenextstep,
-                    sr_actionablenote,
-                    zone, 
-                    admin_u_id,
-                    admin_firstname,
-                    admin_lastname,
-                    cc_name,
-                    c_name,
-                    p_priority,
-                    ss_statussecondary,
-                    t_trade, 
-                    hours_since_last_note,
-                    days_in_current_status,
-                    AttackCallCenter,
-                    AttackPriority, 
-                    AttackStatusSecondary,
-                    AttackHoursSinceLastNote,
-                    AttackDaysInStatus,
-                    AttackPoints
-                FROM ranked_results 
-                WHERE rn <= @TopCount
-                ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC;
-";
+                            END as days_in_current_status,
+                            cc.cc_attack as AttackCallCenter,
+                            p.p_attack AttackPriority, 
+                            ss.ss_attack AttackStatusSecondary,
+                            ISNULL(apn_lookup.apn_attack, 0) as AttackHoursSinceLastNote,
+                            ISNULL(aps_lookup.aps_attack, 0) as AttackDaysInStatus,
+                            ISNULL(apad_lookup.apad_attack, 0) as AttackActionableDate,
+                            (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) as AttackPoints,
+                            admin_user.u_id as admin_u_id,
+                            admin_user.u_firstname as admin_firstname,
+                            admin_user.u_lastname as admin_lastname,
+                            ROW_NUMBER() OVER (PARTITION BY ISNULL(admin_user.u_id, -1) ORDER BY (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) DESC) as rn
+                        from servicerequest sr
+                        inner join xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
+                        inner join Company c on xccc.c_id = c.c_id
+                        inner join callcenter cc on xccc.cc_id = cc.cc_id
+                        inner join workorder wo on sr.wo_id_primary = wo.wo_id
+                        inner join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id
+                        inner join [user] u on xwou.u_id = u.u_id
+                        -- New zone logic based on location-to-zone relationship
+                        inner join location l on sr.l_id = l.l_id
+                        inner join address a on l.a_id = a.a_id
+                        inner join tax on left(a.a_zip,5) = tax.tax_zip
+                        inner join ZoneMicro zm on tax.zm_id = zm.zm_id
+                        inner join zone z on CASE 
+                            WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
+                            ELSE zm.z_id 
+                        END = z.z_id
+                        inner join statussecondary ss on wo.ss_id = ss.ss_id
+                        inner join Priority p on sr.p_id = p.p_id
+                        left join trade t on sr.t_id = t.t_id
+                        inner join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
+                        inner join [user] admin_user on xazss.u_id = admin_user.u_id
+                        left join (
+                            -- Get the most recent note for any work order related to each service request
+                            select sr_inner.sr_id,
+                                won.won_insertdatetime,
+                                row_number() over (partition by sr_inner.sr_id order by won.won_insertdatetime desc) as rn
+                            from servicerequest sr_inner
+                            inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
+                            inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
+                            inner join workorder wo_inner on wo_inner.sr_id = sr_inner.sr_id
+                            inner join workordernote won on won.wo_id = wo_inner.wo_id
+                            where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
+                            and c_inner.c_name NOT IN ('Metro Pipe Program')
+                            and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
+                                or wo_inner.wo_startdatetime is null)
+                        ) latest_note on latest_note.sr_id = sr.sr_id and latest_note.rn = 1
+                        left join (
+                            -- Get the most recent status change for the primary work order
+                            select sr_inner.sr_id,
+                                wo_inner.wo_id,
+                                ssc.ssc_insertdatetime,
+                                row_number() over (partition by wo_inner.wo_id order by ssc.ssc_insertdatetime desc) as rn
+                            from servicerequest sr_inner
+                            inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
+                            inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
+                            inner join workorder wo_inner on sr_inner.wo_id_primary = wo_inner.wo_id
+                            inner join statussecondarychange ssc on ssc.wo_id = wo_inner.wo_id
+                            where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
+                            and c_inner.c_name NOT IN ('Metro Pipe Program')
+                            and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
+                                or wo_inner.wo_startdatetime is null)
+                        ) latest_status_change on latest_status_change.wo_id = wo.wo_id and latest_status_change.rn = 1
+                        -- Optimized AttackPointStatus lookup using OUTER APPLY
+                        OUTER APPLY (
+                            SELECT TOP 1 aps_attack
+                            FROM AttackPointStatus 
+                            WHERE CASE 
+                                    WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
+                                    ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
+                                END >= aps_daysinstatus
+                            ORDER BY aps_daysinstatus DESC, aps_id DESC  -- Get the highest threshold that applies
+                        ) aps_lookup
+                        -- Fixed AttackPointNote lookup using OUTER APPLY
+                        OUTER APPLY (
+                            SELECT TOP 1 apn_attack
+                            FROM AttackPointNote 
+                            WHERE 
+                                -- Case 1: Truly no notes exist 
+                                (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  
+                                OR 
+                                -- Case 2: Notes exist and meet the time threshold criteria
+                                (latest_note.won_insertdatetime IS NOT NULL 
+                                AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
+                                AND apn_id > 1)  
+                            ORDER BY 
+                                CASE
+                                    WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets highest priority
+                                    ELSE apn_hours  -- Otherwise order by hours threshold descending
+                                END DESC
+                        ) apn_lookup
+                        -- New AttackPointActionableDate lookup using OUTER APPLY
+                        OUTER APPLY (
+                            SELECT TOP 1 apad_attack
+                            FROM AttackPointActionableDate 
+                            WHERE 
+                                -- Case 1: No next step date exists (NULL date)
+                                (sr.sr_datenextstep IS NULL AND apad_id = 1)  
+                                OR 
+                                -- Case 2: Next step date exists and meets the day threshold criteria
+                                (sr.sr_datenextstep IS NOT NULL 
+                                AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
+                                AND apad_id > 1)  
+                            ORDER BY 
+                                CASE
+                                    WHEN sr.sr_datenextstep IS NULL THEN 0  -- NULL DATE gets highest priority
+                                    ELSE apad_days  -- Otherwise order by days threshold ascending (since we're using <=)
+                                END ASC
+                        ) apad_lookup
+                        where 1=1
+                        and sr.s_id not in (9) --Paid
+                        and sr.s_id not in (6) --Rejected
+                        and c.c_name NOT IN ('Metro Pipe Program')
+                        and cc.cc_name NOT IN ('Administrative')
+                        and (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or wo.wo_startdatetime is null)
+                    )
+                    SELECT sr_id, 
+                        sr_insertdatetime, 
+                        sr_totaldue,
+                        sr_requestnumber,
+                        sr_datenextstep,
+                        sr_actionablenote,
+                        zone, 
+                        admin_u_id,
+                        admin_firstname,
+                        admin_lastname,
+                        cc_name,
+                        c_name,
+                        p_priority,
+                        ss_statussecondary,
+                        t_trade, 
+                        hours_since_last_note,
+                        days_in_current_status,
+                        AttackCallCenter,
+                        AttackPriority, 
+                        AttackStatusSecondary,
+                        AttackHoursSinceLastNote,
+                        AttackDaysInStatus,
+                        AttackActionableDate,
+                        AttackPoints
+                    FROM ranked_results 
+                    WHERE rn <= @TopCount
+                    ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC;
+            ";
 
             
             var parameters = new Dictionary<string, object>
