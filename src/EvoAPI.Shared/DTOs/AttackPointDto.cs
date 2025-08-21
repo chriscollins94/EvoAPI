@@ -24,6 +24,7 @@ public class AttackPointDto
     public int AttackStatusSecondary { get; set; }
     public int AttackHoursSinceLastNote { get; set; }
     public int AttackDaysInStatus { get; set; }
+    public int AttackActionableDate { get; set; }
     public int AttackPoints { get; set; }
 }
 
