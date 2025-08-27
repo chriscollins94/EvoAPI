@@ -462,6 +462,48 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("technicians")]
+        public async Task<ActionResult<ApiResponse<List<TechnicianDto>>>> GetTechnicians()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active technicians");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetActiveTechniciansAsync();
+                var technicians = ConvertDataTableToTechnicians(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetTechnicians", $"Retrieved {technicians.Count} active technicians", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<TechnicianDto>>
+                {
+                    Success = true,
+                    Message = "Active technicians retrieved successfully",
+                    Data = technicians,
+                    Count = technicians.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetTechnicians", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving active technicians");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving active technicians",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("statusassignments")]
         public async Task<ActionResult<ApiResponse<StatusAssignmentMatrixDto>>> GetStatusAssignments()
         {
@@ -1758,6 +1800,30 @@ public class EvoApiController : BaseController
         }
 
         return users;
+    }
+
+    private static List<TechnicianDto> ConvertDataTableToTechnicians(DataTable dataTable)
+    {
+        var technicians = new List<TechnicianDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var technician = new TechnicianDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                Email = row["Email"]?.ToString(),
+                Picture = row["Picture"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString()
+            };
+
+            technicians.Add(technician);
+        }
+
+        return technicians;
     }
 
     private static List<AdminZoneStatusAssignmentDto> ConvertDataTableToAdminZoneStatusAssignments(DataTable dataTable)

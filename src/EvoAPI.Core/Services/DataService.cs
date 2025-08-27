@@ -1463,6 +1463,60 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetActiveTechniciansAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_employeenumber as EmployeeNumber, 
+                    u.u_firstname as FirstName, 
+                    u.u_lastname as LastName, 
+                    u.u_username as Username, 
+                    u.u_email as Email, 
+                    u.u_picture as Picture, 
+                    u.u_phonemobile as PhoneMobile 
+                FROM [user] u, role r, xrefUserRole x 
+                WHERE u.u_id = x.u_id 
+                    AND r.r_id = x.r_id 
+                    AND r.r_role = 'Technician' 
+                    AND u.u_active = 1 
+                ORDER BY u_lastname";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveTechnicians",
+                Detail = $"Retrieved {result.Rows.Count} active technicians",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveTechnicians",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving active technicians");
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetAdminZoneStatusAssignmentsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

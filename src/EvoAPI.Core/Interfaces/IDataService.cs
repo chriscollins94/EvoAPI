@@ -29,6 +29,7 @@ public interface IDataService
     Task<DataTable> GetAllZonesAsync();
     Task<DataTable> GetAllUsersAsync();
     Task<DataTable> GetAdminUsersAsync();
+    Task<DataTable> GetActiveTechniciansAsync();
     Task<DataTable> GetAdminZoneStatusAssignmentsAsync();
     Task<int?> CreateAdminZoneStatusAssignmentAsync(CreateAdminZoneStatusAssignmentRequest request);
     Task<bool> UpdateAdminZoneStatusAssignmentAsync(UpdateAdminZoneStatusAssignmentRequest request);
