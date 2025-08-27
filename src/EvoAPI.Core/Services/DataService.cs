@@ -29,9 +29,11 @@ public class DataService : IDataService
             if (numberOfDays > 1500) numberOfDays = 180;
 
             const string sql = @" 
+
                 WITH RankedOrders AS (
                     SELECT 
                         sr.sr_id              AS sr_id,
+                        FORMAT(sr.sr_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') CreateDate,
                         cc.cc_name            AS CallCenter,
                         c.c_name              AS Company,
                         t.t_trade             AS Trade,
@@ -72,12 +74,13 @@ public class DataService : IDataService
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
                     WHERE 
-                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
+                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
                 SELECT
                     sr_id,
+                    CreateDate,
                     CallCenter,
                     Company,
                     Trade,
@@ -97,7 +100,7 @@ public class DataService : IDataService
                     Zone,
                     CreatedBy
                 FROM RankedOrders
-                ORDER BY CallCenter, Company, Trade, requestnumber;";
+                ORDER BY sr_id desc;";
 
             var parameters = new Dictionary<string, object> { { "@numberOfDays", numberOfDays } };
 
