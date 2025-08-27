@@ -8,6 +8,7 @@ public class AttackPointDto
     public decimal? sr_totaldue { get; set; }
     public DateTime? sr_datenextstep { get; set; }
     public string sr_actionablenote { get; set; } = string.Empty;
+    public DateTime? wo_startdatetime { get; set; }
     public string zone { get; set; } = string.Empty;
     public int? admin_u_id { get; set; }
     public string admin_firstname { get; set; } = string.Empty;

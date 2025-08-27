@@ -1734,6 +1734,7 @@ public class DataService : IDataService
                             sr.sr_requestnumber,
                             sr.sr_datenextstep,
                             sr.sr_actionablenote,
+                            wo.wo_startdatetime,
                             z.z_number + '-' + z.z_acronym zone, 
                             cc.cc_name,
                             c.c_name,
@@ -1823,7 +1824,11 @@ public class DataService : IDataService
                         ) aps_lookup
                         -- Fixed AttackPointNote lookup using OUTER APPLY
                         OUTER APPLY (
-                            SELECT TOP 1 apn_attack
+                            SELECT TOP 1 
+                                CASE 
+                                    WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0  -- If work order start is today or future in Central Time, return 0
+                                    ELSE apn_attack  -- Otherwise use normal attack points
+                                END as apn_attack
                             FROM AttackPointNote 
                             WHERE 
                                 -- Case 1: Truly no notes exist 
@@ -1870,6 +1875,7 @@ public class DataService : IDataService
                         sr_requestnumber,
                         sr_datenextstep,
                         sr_actionablenote,
+                        wo_startdatetime,
                         zone, 
                         admin_u_id,
                         admin_firstname,

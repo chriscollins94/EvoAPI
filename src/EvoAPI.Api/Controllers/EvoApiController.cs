@@ -1865,6 +1865,7 @@ public class EvoApiController : BaseController
                 sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
                 sr_datenextstep = row["sr_datenextstep"] != DBNull.Value ? Convert.ToDateTime(row["sr_datenextstep"]) : null,
                 sr_actionablenote = CleanString(row["sr_actionablenote"]),
+                wo_startdatetime = row["wo_startdatetime"] != DBNull.Value ? Convert.ToDateTime(row["wo_startdatetime"]) : null,
                 zone = CleanString(row["zone"]),
                 admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,
                 admin_firstname = CleanString(row["admin_firstname"]),
