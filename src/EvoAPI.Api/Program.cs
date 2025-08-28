@@ -100,6 +100,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireClaim("accesslevel", "ADMIN"));
+    options.AddPolicy("UserAdminOnly", policy => 
+    {
+        policy.RequireClaim("accesslevel", "ADMIN");
+        policy.RequireClaim("function", "Admin - User Admin Edit");
+    });
     options.AddPolicy("LoggedIn", policy => policy.RequireAuthenticatedUser());
 });
 

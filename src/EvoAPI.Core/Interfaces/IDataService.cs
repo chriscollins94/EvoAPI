@@ -36,6 +36,12 @@ public interface IDataService
     Task<bool> UpdateAdminZoneStatusAssignmentAsync(UpdateAdminZoneStatusAssignmentRequest request);
     Task<bool> DeleteAdminZoneStatusAssignmentAsync(DeleteAdminZoneStatusAssignmentRequest request);
     
+    // User Management methods
+    Task<DataTable> GetAllUsersForManagementAsync();
+    Task<DataTable> GetUserByIdAsync(int userId);
+    Task<int?> CreateUserAsync(CreateUserRequest request);
+    Task<bool> UpdateUserAsync(UpdateUserRequest request);
+    
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();

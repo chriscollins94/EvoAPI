@@ -1342,6 +1342,363 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetAllUsersForManagementAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT u_id as Id, o_id as OId, a_id as AId, v_id as VId, supervisor_id as SupervisorId,
+                       u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
+                       u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
+                       u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
+                       u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
+                       u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
+                       u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
+                       u_clothingshirt as ClothingShirt, u_clothingjacket as ClothingJacket, u_clothingpants as ClothingPants,
+                       u_wirelessprovider as WirelessProvider, u_preferrednotification as PreferredNotification,
+                       u_quickbooksname as QuickBooksName, u_passwordchanged as PasswordChanged, u_2fa as U_2FA,
+                       z_id as ZoneId, u_covidvaccinedate as CovidVaccineDate, u_note as Note, u_notedashboard as NoteDashboard
+                FROM dbo.[User]
+                ORDER BY u_firstname, u_lastname, u_username";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUsersForManagement",
+                Detail = $"Retrieved {result.Rows.Count} users for management",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUsersForManagement",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving users for management");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetUserByIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT u_id as Id, o_id as OId, a_id as AId, v_id as VId, supervisor_id as SupervisorId,
+                       u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
+                       u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
+                       u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
+                       u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
+                       u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
+                       u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
+                       u_clothingshirt as ClothingShirt, u_clothingjacket as ClothingJacket, u_clothingpants as ClothingPants,
+                       u_wirelessprovider as WirelessProvider, u_preferrednotification as PreferredNotification,
+                       u_quickbooksname as QuickBooksName, u_passwordchanged as PasswordChanged, u_2fa as U_2FA,
+                       z_id as ZoneId, u_covidvaccinedate as CovidVaccineDate, u_note as Note, u_notedashboard as NoteDashboard
+                FROM dbo.[User]
+                WHERE u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserById",
+                Detail = $"Retrieved user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserAsync(CreateUserRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.[User] 
+                (o_id, a_id, v_id, supervisor_id, u_insertdatetime, u_modifieddatetime, u_username, u_password, 
+                 u_firstname, u_lastname, u_employeenumber, u_email, u_phonehome, u_phonemobile, u_active, 
+                 u_picture, u_ssn, u_dateofhire, u_dateeligiblepto, u_dateeligiblevacation, u_daysavailablepto, 
+                 u_daysavailablevacation, u_clothingshirt, u_clothingjacket, u_clothingpants, u_wirelessprovider, 
+                 u_preferrednotification, u_quickbooksname, u_passwordchanged, u_2fa, z_id, u_covidvaccinedate, 
+                 u_note, u_notedashboard)
+                VALUES 
+                (@OId, @AId, @VId, @SupervisorId, GETDATE(), GETDATE(), @Username, @Password,
+                 @FirstName, @LastName, @EmployeeNumber, @Email, @PhoneHome, @PhoneMobile, @Active,
+                 @Picture, @SSN, @DateOfHire, @DateEligiblePTO, @DateEligibleVacation, @DaysAvailablePTO,
+                 @DaysAvailableVacation, @ClothingShirt, @ClothingJacket, @ClothingPants, @WirelessProvider,
+                 @PreferredNotification, @QuickBooksName, @PasswordChanged, @U_2FA, @ZoneId, @CovidVaccineDate,
+                 @Note, @NoteDashboard);
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@OId", request.OId },
+                { "@AId", request.AId ?? (object)DBNull.Value },
+                { "@VId", request.VId ?? (object)DBNull.Value },
+                { "@SupervisorId", request.SupervisorId ?? (object)DBNull.Value },
+                { "@Username", request.Username },
+                { "@Password", request.Password },
+                { "@FirstName", request.FirstName ?? (object)DBNull.Value },
+                { "@LastName", request.LastName ?? (object)DBNull.Value },
+                { "@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value },
+                { "@Email", request.Email ?? (object)DBNull.Value },
+                { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
+                { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@Active", request.Active },
+                { "@Picture", request.Picture ?? (object)DBNull.Value },
+                { "@SSN", request.SSN ?? (object)DBNull.Value },
+                { "@DateOfHire", request.DateOfHire ?? (object)DBNull.Value },
+                { "@DateEligiblePTO", request.DateEligiblePTO ?? (object)DBNull.Value },
+                { "@DateEligibleVacation", request.DateEligibleVacation ?? (object)DBNull.Value },
+                { "@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value },
+                { "@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value },
+                { "@ClothingShirt", request.ClothingShirt ?? (object)DBNull.Value },
+                { "@ClothingJacket", request.ClothingJacket ?? (object)DBNull.Value },
+                { "@ClothingPants", request.ClothingPants ?? (object)DBNull.Value },
+                { "@WirelessProvider", request.WirelessProvider ?? (object)DBNull.Value },
+                { "@PreferredNotification", request.PreferredNotification ?? (object)DBNull.Value },
+                { "@QuickBooksName", request.QuickBooksName ?? (object)DBNull.Value },
+                { "@PasswordChanged", DateTime.UtcNow },
+                { "@U_2FA", request.U_2FA },
+                { "@ZoneId", request.ZoneId ?? (object)DBNull.Value },
+                { "@CovidVaccineDate", request.CovidVaccineDate ?? (object)DBNull.Value },
+                { "@Note", request.Note ?? (object)DBNull.Value },
+                { "@NoteDashboard", request.NoteDashboard ?? (object)DBNull.Value }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUser",
+                    Detail = $"Created new user '{request.Username}' ({request.FirstName} {request.LastName}) with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUser",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user {Username}", request.Username);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserAsync(UpdateUserRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Build SQL dynamically to only update password if provided
+            var sql = @"
+                UPDATE dbo.[User] 
+                SET 
+                    o_id = @OId,
+                    a_id = @AId,
+                    v_id = @VId,
+                    supervisor_id = @SupervisorId,
+                    u_modifieddatetime = GETDATE(),
+                    u_username = @Username," +
+                    (string.IsNullOrEmpty(request.Password) ? "" : "u_password = @Password, u_passwordchanged = GETDATE(),") + @"
+                    u_firstname = @FirstName,
+                    u_lastname = @LastName,
+                    u_employeenumber = @EmployeeNumber,
+                    u_email = @Email,
+                    u_phonehome = @PhoneHome,
+                    u_phonemobile = @PhoneMobile,
+                    u_active = @Active,
+                    u_picture = @Picture,
+                    u_ssn = @SSN,
+                    u_dateofhire = @DateOfHire,
+                    u_dateeligiblepto = @DateEligiblePTO,
+                    u_dateeligiblevacation = @DateEligibleVacation,
+                    u_daysavailablepto = @DaysAvailablePTO,
+                    u_daysavailablevacation = @DaysAvailableVacation,
+                    u_clothingshirt = @ClothingShirt,
+                    u_clothingjacket = @ClothingJacket,
+                    u_clothingpants = @ClothingPants,
+                    u_wirelessprovider = @WirelessProvider,
+                    u_preferrednotification = @PreferredNotification,
+                    u_quickbooksname = @QuickBooksName,
+                    u_2fa = @U_2FA,
+                    z_id = @ZoneId,
+                    u_covidvaccinedate = @CovidVaccineDate,
+                    u_note = @Note,
+                    u_notedashboard = @NoteDashboard
+                WHERE u_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@OId", request.OId },
+                { "@AId", request.AId ?? (object)DBNull.Value },
+                { "@VId", request.VId ?? (object)DBNull.Value },
+                { "@SupervisorId", request.SupervisorId ?? (object)DBNull.Value },
+                { "@Username", request.Username },
+                { "@FirstName", request.FirstName ?? (object)DBNull.Value },
+                { "@LastName", request.LastName ?? (object)DBNull.Value },
+                { "@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value },
+                { "@Email", request.Email ?? (object)DBNull.Value },
+                { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
+                { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@Active", request.Active },
+                { "@Picture", request.Picture ?? (object)DBNull.Value },
+                { "@SSN", request.SSN ?? (object)DBNull.Value },
+                { "@DateOfHire", request.DateOfHire ?? (object)DBNull.Value },
+                { "@DateEligiblePTO", request.DateEligiblePTO ?? (object)DBNull.Value },
+                { "@DateEligibleVacation", request.DateEligibleVacation ?? (object)DBNull.Value },
+                { "@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value },
+                { "@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value },
+                { "@ClothingShirt", request.ClothingShirt ?? (object)DBNull.Value },
+                { "@ClothingJacket", request.ClothingJacket ?? (object)DBNull.Value },
+                { "@ClothingPants", request.ClothingPants ?? (object)DBNull.Value },
+                { "@WirelessProvider", request.WirelessProvider ?? (object)DBNull.Value },
+                { "@PreferredNotification", request.PreferredNotification ?? (object)DBNull.Value },
+                { "@QuickBooksName", request.QuickBooksName ?? (object)DBNull.Value },
+                { "@U_2FA", request.U_2FA },
+                { "@ZoneId", request.ZoneId ?? (object)DBNull.Value },
+                { "@CovidVaccineDate", request.CovidVaccineDate ?? (object)DBNull.Value },
+                { "@Note", request.Note ?? (object)DBNull.Value },
+                { "@NoteDashboard", request.NoteDashboard ?? (object)DBNull.Value }
+            };
+
+            // Only add password parameter if password is being updated
+            if (!string.IsNullOrEmpty(request.Password))
+            {
+                parameters.Add("@Password", request.Password);
+            }
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUser",
+                Detail = $"Updated user {request.Id} - {request.Username} ({request.FirstName} {request.LastName}). Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUser",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user {Id}", request.Id);
+            throw;
+        }
+    }
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");

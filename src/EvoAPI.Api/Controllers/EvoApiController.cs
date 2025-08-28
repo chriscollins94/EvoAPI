@@ -1,4 +1,5 @@
 using EvoAPI.Core.Interfaces;
+using EvoAPI.Shared.Attributes;
 using EvoAPI.Shared.DTOs;
 using EvoAPI.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -384,6 +385,108 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("users/management")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetUsersForManagement()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all users for management");
+                
+                var dataTable = await _dataService.GetAllUsersForManagementAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUsersForManagement", $"Retrieved {users.Count} users for management", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} users for management",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUsersForManagement", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving users for management");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving users for management",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users/{id:int}")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> GetUserById(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting user by ID: {UserId}", id);
+                
+                if (id <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid user ID is required",
+                        Count = 0
+                    });
+                }
+                
+                var dataTable = await _dataService.GetUserByIdAsync(id);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Count = 0
+                    });
+                }
+                
+                var users = ConvertDataTableToUsers(dataTable);
+                var user = users.First();
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUserById", $"Retrieved user {id} - {user.Username}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserDto>
+                {
+                    Success = true,
+                    Message = "User retrieved successfully",
+                    Data = user,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUserById", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving user {UserId}", id);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving the user",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("users")]
         public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetUsers()
         {
@@ -680,6 +783,99 @@ public class EvoApiController : BaseController
             return await GetAttackPoints(request.TopCount);
         }
 
+        [HttpPost("users")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new user: {Username}", request.Username);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Username must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 6)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Password must be at least 6 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (request.OId <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid Organization ID is required",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateUserAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Get the created user to return
+                    var userDataTable = await _dataService.GetUserByIdAsync(newId.Value);
+                    var users = ConvertDataTableToUsers(userDataTable);
+                    var newUser = users.First();
+                    
+                    // Don't return the password in the response
+                    newUser.Password = string.Empty;
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateUser", $"Created user - {request.Username} ({request.FirstName} {request.LastName}) with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<UserDto>
+                    {
+                        Success = true,
+                        Message = "User created successfully",
+                        Data = newUser,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateUser", $"Failed to create user - {request.Username}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create user",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateUser", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating user {Username}", request.Username);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the user",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpPost("statusassignments")]
         public async Task<ActionResult<ApiResponse<AdminZoneStatusAssignmentDto>>> CreateStatusAssignment([FromBody] CreateAdminZoneStatusAssignmentRequest request)
         {
@@ -764,7 +960,122 @@ public class EvoApiController : BaseController
 
 
     #region Put
-    [HttpPut("priorities/{id}")]
+    [HttpPut("users/{id}")]
+    [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> UpdateUser(int id, [FromBody] UpdateUserRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating user {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Username must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                // If password is provided, validate it
+                if (!string.IsNullOrEmpty(request.Password) && request.Password.Length < 6)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Password must be at least 6 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (request.OId <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid Organization ID is required",
+                        Count = 0
+                    });
+                }
+
+                // Update user
+                var success = await _dataService.UpdateUserAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Get the updated user to return
+                    var userDataTable = await _dataService.GetUserByIdAsync(id);
+                    if (userDataTable.Rows.Count > 0)
+                    {
+                        var users = ConvertDataTableToUsers(userDataTable);
+                        var updatedUser = users.First();
+                        
+                        // Don't return the password in the response
+                        updatedUser.Password = string.Empty;
+                        
+                        await LogOperationAsync("UpdateUser", $"Updated user {id} - {request.Username} ({request.FirstName} {request.LastName})", stopwatch.Elapsed);
+            
+                        return Ok(new ApiResponse<UserDto>
+                        {
+                            Success = true,
+                            Message = "User updated successfully",
+                            Data = updatedUser,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<UserDto>
+                        {
+                            Success = true,
+                            Message = "User updated successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateUser", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating user {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the user",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("priorities/{id}")]
         public async Task<ActionResult<ApiResponse<object>>> UpdatePriority(int id, [FromBody] UpdatePriorityRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -1854,11 +2165,33 @@ public class EvoApiController : BaseController
                 InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
                 ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
                 Username = row["Username"]?.ToString() ?? string.Empty,
+                Password = row["Password"]?.ToString() ?? string.Empty,
                 FirstName = row["FirstName"]?.ToString(),
                 LastName = row["LastName"]?.ToString(),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
                 Email = row["Email"]?.ToString(),
+                PhoneHome = row["PhoneHome"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
                 Active = Convert.ToBoolean(row["Active"]),
-                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null
+                Picture = row["Picture"]?.ToString(),
+                SSN = row["SSN"]?.ToString(),
+                DateOfHire = row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
+                DateEligiblePTO = row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
+                DateEligibleVacation = row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
+                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                ClothingShirt = row["ClothingShirt"]?.ToString(),
+                ClothingJacket = row["ClothingJacket"]?.ToString(),
+                ClothingPants = row["ClothingPants"]?.ToString(),
+                WirelessProvider = row["WirelessProvider"]?.ToString(),
+                PreferredNotification = row["PreferredNotification"]?.ToString(),
+                QuickBooksName = row["QuickBooksName"]?.ToString(),
+                PasswordChanged = row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
+                U_2FA = row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
+                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                CovidVaccineDate = row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
+                Note = row["Note"]?.ToString(),
+                NoteDashboard = row["NoteDashboard"]?.ToString()
             };
 
             users.Add(user);
