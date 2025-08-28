@@ -1567,6 +1567,69 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPut("workorders/{id}/escalated")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateWorkOrderEscalated(int id, [FromBody] UpdateWorkOrderEscalatedRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating escalated status for work order {Id} to {IsEscalated}", id, request.IsEscalated);
+                
+                // Validate input
+                if (id != request.ServiceRequestId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+
+                // Update escalated status
+                var success = await _dataService.UpdateWorkOrderEscalatedAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    var action = request.IsEscalated ? "escalated" : "un-escalated";
+                    await LogOperationAsync("UpdateWorkOrderEscalated", $"Work order {id} {action}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = $"Work order {action} successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Work order not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateWorkOrderEscalated", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating escalated status for work order {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the work order escalated status",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -1604,7 +1667,8 @@ public class EvoApiController : BaseController
                 Address = CleanString(row["Address"]),
                 City = CleanString(row["City"]),
                 Zone = CleanString(row["Zone"]),
-                CreatedBy = CleanString(row["CreatedBy"])
+                CreatedBy = CleanString(row["CreatedBy"]),
+                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null
             };
 
             workOrders.Add(workOrder);
@@ -1866,6 +1930,7 @@ public class EvoApiController : BaseController
                 sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
                 sr_datenextstep = row["sr_datenextstep"] != DBNull.Value ? Convert.ToDateTime(row["sr_datenextstep"]) : null,
                 sr_actionablenote = CleanString(row["sr_actionablenote"]),
+                sr_escalated = row["sr_escalated"] != DBNull.Value ? Convert.ToDateTime(row["sr_escalated"]) : null,
                 wo_startdatetime = row["wo_startdatetime"] != DBNull.Value ? Convert.ToDateTime(row["wo_startdatetime"]) : null,
                 zone = CleanString(row["zone"]),
                 admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,

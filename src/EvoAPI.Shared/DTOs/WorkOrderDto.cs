@@ -22,12 +22,19 @@ public class WorkOrderDto
     public string City { get; set; } = string.Empty;
     public string Zone { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public DateTime? Escalated { get; set; }
    
 }
 
 public class WorkOrderRequest
 {
     public int NumberOfDays { get; set; } = 30;
+}
+
+public class UpdateWorkOrderEscalatedRequest
+{
+    public int ServiceRequestId { get; set; }
+    public bool IsEscalated { get; set; }
 }
 
 public class ApiResponse<T>
