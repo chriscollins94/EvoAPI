@@ -526,6 +526,59 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("users/current/dashboard-note")]
+        public async Task<ActionResult<ApiResponse<string>>> GetCurrentUserDashboardNote()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting current user dashboard note for user {UserId}", UserId);
+                
+                var dataTable = await _dataService.GetUserByIdAsync(UserId);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+                
+                var row = dataTable.Rows[0];
+                var dashboardNote = row["NoteDashboard"]?.ToString() ?? string.Empty;
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetCurrentUserDashboardNote", $"Retrieved dashboard note for user {UserId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<string>
+                {
+                    Success = true,
+                    Message = "Dashboard note retrieved successfully",
+                    Data = dashboardNote,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCurrentUserDashboardNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving current user dashboard note");
+                
+                return StatusCode(500, new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving dashboard note",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("adminusers")]
         public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
         {
@@ -1029,7 +1082,8 @@ public class EvoApiController : BaseController
                         // Don't return the password in the response
                         updatedUser.Password = string.Empty;
                         
-                        await LogOperationAsync("UpdateUser", $"Updated user {id} - {request.Username} ({request.FirstName} {request.LastName})", stopwatch.Elapsed);
+                        // Log with JSON payload as detail object for better formatting
+                        await LogAuditAsync("UpdateUser", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
             
                         return Ok(new ApiResponse<UserDto>
                         {
