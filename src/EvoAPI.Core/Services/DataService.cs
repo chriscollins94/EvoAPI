@@ -1852,10 +1852,11 @@ public class DataService : IDataService
                         admin_user.u_lastname as admin_lastname,
                         -- Add escalated flag for prioritization
                         CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated,
+                        -- Separate ranking for non-escalated records only
                         ROW_NUMBER() OVER (
-                            PARTITION BY ISNULL(admin_user.u_id, -1) 
+                            PARTITION BY ISNULL(admin_user.u_id, -1), 
+                                        CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END
                             ORDER BY 
-                                CASE WHEN sr.sr_escalated IS NOT NULL THEN 0 ELSE 1 END, -- Escalated records first
                                 (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) DESC
                         ) as rn
                     from servicerequest sr
@@ -1863,8 +1864,8 @@ public class DataService : IDataService
                     inner join Company c on xccc.c_id = c.c_id
                     inner join callcenter cc on xccc.cc_id = cc.cc_id
                     inner join workorder wo on sr.wo_id_primary = wo.wo_id
-                    inner join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id
-                    inner join [user] u on xwou.u_id = u.u_id
+                    left join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
+                    left join [user] u on xwou.u_id = u.u_id
                     -- New zone logic based on location-to-zone relationship
                     inner join location l on sr.l_id = l.l_id
                     inner join address a on l.a_id = a.a_id
@@ -1964,7 +1965,7 @@ public class DataService : IDataService
                     and sr.s_id not in (9) --Paid
                     and sr.s_id not in (6) --Rejected
                     and c.c_name NOT IN ('Metro Pipe Program')
-                    and cc.cc_name NOT IN ('Administrative')
+                    and (cc.cc_name NOT IN ('Administrative') OR sr.sr_escalated IS NOT NULL) -- Include Administrative if escalated
                     and (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or wo.wo_startdatetime is null)
                 )
                 SELECT sr_id, 
@@ -1995,8 +1996,8 @@ public class DataService : IDataService
                     AttackPoints,
                     is_escalated
                 FROM ranked_results 
-                WHERE rn <= @TopCount OR is_escalated = 1  -- Include escalated records regardless of ranking
-                ORDER BY ISNULL(admin_u_id, -1), AttackPoints DESC;
+                WHERE (rn <= @TopCount AND is_escalated = 0) OR is_escalated = 1  -- Top 15 non-escalated + all escalated
+                ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
             ";
 
             
