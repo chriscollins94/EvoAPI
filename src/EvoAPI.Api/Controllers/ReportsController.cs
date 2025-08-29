@@ -176,6 +176,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("service-request-number-changes")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ServiceRequestNumberChangesDto>>>> GetServiceRequestNumberChanges()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetServiceRequestNumberChangesAsync();
+            var reportData = ConvertDataTableToServiceRequestNumberChanges(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetServiceRequestNumberChanges", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ServiceRequestNumberChangesDto>>
+            {
+                Success = true,
+                Message = "Service request number changes report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetServiceRequestNumberChanges", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ServiceRequestNumberChangesDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve service request number changes report data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -300,6 +336,26 @@ public class ReportsController : BaseController
                 TechZone = CleanString(row["techzone"]),
                 ServiceRequestZoneId = ConvertToNullableInt(row["srz_id"]),
                 ServiceRequestZone = CleanString(row["srzone"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<ServiceRequestNumberChangesDto> ConvertDataTableToServiceRequestNumberChanges(DataTable dataTable)
+    {
+        var result = new List<ServiceRequestNumberChangesDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ServiceRequestNumberChangesDto
+            {
+                SrId = ConvertToInt(row["sr_id"]),
+                CreatedDate = ConvertToDateTime(row["Created Date"]) ?? DateTime.MinValue,
+                CallCenter = CleanString(row["Call Center"]),
+                Company = CleanString(row["Company"]),
+                ServiceRequest = CleanString(row["Service Request"]),
+                PrimaryWorkOrder = CleanString(row["Primary Work Order"])
             });
         }
         

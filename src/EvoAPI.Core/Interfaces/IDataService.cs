@@ -47,6 +47,7 @@ public interface IDataService
     Task<DataTable> GetReceiptsDashboardAsync();
     Task<DataTable> GetTechDetailDashboardAsync();
     Task<DataTable> GetTechActivityDashboardAsync();
+    Task<DataTable> GetServiceRequestNumberChangesAsync();
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

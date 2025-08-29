@@ -2788,4 +2788,79 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<DataTable> GetServiceRequestNumberChangesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            const string sql = @"
+                SELECT
+                    sr.sr_id,
+                    sr.sr_insertdatetime AS 'Created Date',
+                    cc.cc_name AS 'Call Center', 
+                    c.c_name AS 'Company', 
+                    sr.sr_requestnumber AS 'Service Request', 
+                    wo.wo_workordernumber AS 'Primary Work Order'
+                FROM callcenter cc, 
+                     company c, 
+                     xrefcompanycallcenter xccc, 
+                     servicerequest sr, 
+                     workorder wo
+                WHERE cc.cc_id = xccc.cc_id
+                AND c.c_id = xccc.c_id
+                AND sr.xccc_id = xccc.xccc_id
+                AND sr.wo_id_primary = wo.wo_id
+                AND sr.sr_requestnumber != LEFT(wo.wo_workordernumber, LEN(wo.wo_workordernumber) - 2)
+                AND sr.sr_requestnumber NOT LIKE '%Parts Pickup%'
+                ORDER BY 1 DESC
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+                    
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetServiceRequestNumberChanges",
+                        Detail = $"Retrieved {dataTable.Rows.Count} service request number changes records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetServiceRequestNumberChanges",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving service request number changes dashboard data");
+            throw;
+        }
+    }
 }
