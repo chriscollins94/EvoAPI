@@ -552,7 +552,7 @@ public class EvoApiController : BaseController
                 var dashboardNote = row["NoteDashboard"]?.ToString() ?? string.Empty;
                 
                 stopwatch.Stop();
-                await LogOperationAsync("GetCurrentUserDashboardNote", $"Retrieved dashboard note for user {UserId}", stopwatch.Elapsed);
+                // await LogOperationAsync("GetCurrentUserDashboardNote", $"Retrieved dashboard note for user {UserId}", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<string>
                 {

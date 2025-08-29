@@ -2175,7 +2175,7 @@ public class DataService : IDataService
         {
             const string sql = @"
                 WITH ranked_results AS (
-                    select sr.sr_id, 
+                    SELECT sr.sr_id, 
                         sr.sr_insertdatetime, 
                         sr.sr_totaldue,
                         sr.sr_requestnumber,
@@ -2207,68 +2207,65 @@ public class DataService : IDataService
                         admin_user.u_id as admin_u_id,
                         admin_user.u_firstname as admin_firstname,
                         admin_user.u_lastname as admin_lastname,
-                        -- Add escalated flag for prioritization
                         CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated,
                         -- Separate ranking for non-escalated records only
-                        ROW_NUMBER() OVER (
-                            PARTITION BY ISNULL(admin_user.u_id, -1), 
-                                        CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END
-                            ORDER BY 
-                                (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) DESC
-                        ) as rn
-                    from servicerequest sr
-                    inner join xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
-                    inner join Company c on xccc.c_id = c.c_id
-                    inner join callcenter cc on xccc.cc_id = cc.cc_id
-                    inner join workorder wo on sr.wo_id_primary = wo.wo_id
-                    left join xrefWorkOrderUser xwou on xwou.wo_id = wo.wo_id AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
-                    left join [user] u on xwou.u_id = u.u_id
-                    -- New zone logic based on location-to-zone relationship
-                    inner join location l on sr.l_id = l.l_id
-                    inner join address a on l.a_id = a.a_id
-                    inner join tax on left(a.a_zip,5) = tax.tax_zip
-                    inner join ZoneMicro zm on tax.zm_id = zm.zm_id
-                    inner join zone z on CASE 
+                        CASE 
+                            WHEN sr.sr_escalated IS NOT NULL THEN NULL  -- Don't rank escalated records
+                            WHEN cc.cc_name = 'Administrative' THEN NULL  -- Don't rank Administrative non-escalated 
+                            ELSE ROW_NUMBER() OVER (
+                                PARTITION BY admin_user.u_id
+                                ORDER BY (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) DESC
+                            )
+                        END as rn_non_escalated
+                    FROM servicerequest sr
+                    INNER JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN Company c ON xccc.c_id = c.c_id
+                    INNER JOIN callcenter cc ON xccc.cc_id = cc.cc_id
+                    INNER JOIN workorder wo ON sr.wo_id_primary = wo.wo_id
+                    LEFT JOIN xrefWorkOrderUser xwou ON xwou.wo_id = wo.wo_id AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
+                    LEFT JOIN [user] u ON xwou.u_id = u.u_id
+                    INNER JOIN location l ON sr.l_id = l.l_id
+                    INNER JOIN address a ON l.a_id = a.a_id
+                    INNER JOIN tax ON LEFT(a.a_zip,5) = tax.tax_zip
+                    INNER JOIN ZoneMicro zm ON tax.zm_id = zm.zm_id
+                    INNER JOIN zone z ON CASE 
                         WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
                         ELSE zm.z_id 
                     END = z.z_id
-                    inner join statussecondary ss on wo.ss_id = ss.ss_id
-                    inner join Priority p on sr.p_id = p.p_id
-                    left join trade t on sr.t_id = t.t_id
-                    inner join xrefadminzonestatussecondary xazss on z.z_id = xazss.z_id and ss.ss_id = xazss.ss_id
-                    inner join [user] admin_user on xazss.u_id = admin_user.u_id
-                    left join (
-                        -- Get the most recent note for any work order related to each service request
-                        select sr_inner.sr_id,
+                    INNER JOIN statussecondary ss ON wo.ss_id = ss.ss_id
+                    INNER JOIN Priority p ON sr.p_id = p.p_id
+                    LEFT JOIN trade t ON sr.t_id = t.t_id
+                    INNER JOIN xrefadminzonestatussecondary xazss ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
+                    INNER JOIN [user] admin_user ON xazss.u_id = admin_user.u_id
+                    LEFT JOIN (
+                        SELECT sr_inner.sr_id,
                             won.won_insertdatetime,
-                            row_number() over (partition by sr_inner.sr_id order by won.won_insertdatetime desc) as rn
-                        from servicerequest sr_inner
-                        inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
-                        inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
-                        inner join workorder wo_inner on wo_inner.sr_id = sr_inner.sr_id
-                        inner join workordernote won on won.wo_id = wo_inner.wo_id
-                        where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
-                        and c_inner.c_name NOT IN ('Metro Pipe Program')
-                        and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            or wo_inner.wo_startdatetime is null)
-                    ) latest_note on latest_note.sr_id = sr.sr_id and latest_note.rn = 1
-                    left join (
-                        -- Get the most recent status change for the primary work order
-                        select sr_inner.sr_id,
+                            ROW_NUMBER() OVER (PARTITION BY sr_inner.sr_id ORDER BY won.won_insertdatetime DESC) as rn
+                        FROM servicerequest sr_inner
+                        INNER JOIN xrefCompanyCallCenter xccc_inner ON sr_inner.xccc_id = xccc_inner.xccc_id
+                        INNER JOIN Company c_inner ON xccc_inner.c_id = c_inner.c_id
+                        INNER JOIN workorder wo_inner ON wo_inner.sr_id = sr_inner.sr_id
+                        INNER JOIN workordernote won ON won.wo_id = wo_inner.wo_id
+                        WHERE sr_inner.s_id NOT IN (9, 6)
+                        AND c_inner.c_name NOT IN ('Metro Pipe Program')
+                        AND (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
+                            OR wo_inner.wo_startdatetime IS NULL)
+                    ) latest_note ON latest_note.sr_id = sr.sr_id AND latest_note.rn = 1
+                    LEFT JOIN (
+                        SELECT sr_inner.sr_id,
                             wo_inner.wo_id,
                             ssc.ssc_insertdatetime,
-                            row_number() over (partition by wo_inner.wo_id order by ssc.ssc_insertdatetime desc) as rn
-                        from servicerequest sr_inner
-                        inner join xrefCompanyCallCenter xccc_inner on sr_inner.xccc_id = xccc_inner.xccc_id
-                        inner join Company c_inner on xccc_inner.c_id = c_inner.c_id
-                        inner join workorder wo_inner on sr_inner.wo_id_primary = wo_inner.wo_id
-                        inner join statussecondarychange ssc on ssc.wo_id = wo_inner.wo_id
-                        where sr_inner.s_id not in (9, 6) -- Apply main filters in subquery
-                        and c_inner.c_name NOT IN ('Metro Pipe Program')
-                        and (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            or wo_inner.wo_startdatetime is null)
-                    ) latest_status_change on latest_status_change.wo_id = wo.wo_id and latest_status_change.rn = 1
-                    -- Optimized AttackPointStatus lookup using OUTER APPLY
+                            ROW_NUMBER() OVER (PARTITION BY wo_inner.wo_id ORDER BY ssc.ssc_insertdatetime DESC) as rn
+                        FROM servicerequest sr_inner
+                        INNER JOIN xrefCompanyCallCenter xccc_inner ON sr_inner.xccc_id = xccc_inner.xccc_id
+                        INNER JOIN Company c_inner ON xccc_inner.c_id = c_inner.c_id
+                        INNER JOIN workorder wo_inner ON sr_inner.wo_id_primary = wo_inner.wo_id
+                        INNER JOIN statussecondarychange ssc ON ssc.wo_id = wo_inner.wo_id
+                        WHERE sr_inner.s_id NOT IN (9, 6)
+                        AND c_inner.c_name NOT IN ('Metro Pipe Program')
+                        AND (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
+                            OR wo_inner.wo_startdatetime IS NULL)
+                    ) latest_status_change ON latest_status_change.wo_id = wo.wo_id AND latest_status_change.rn = 1
                     OUTER APPLY (
                         SELECT TOP 1 aps_attack
                         FROM AttackPointStatus 
@@ -2276,54 +2273,47 @@ public class DataService : IDataService
                                 WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
                                 ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
                             END >= aps_daysinstatus
-                        ORDER BY aps_daysinstatus DESC, aps_id DESC  -- Get the highest threshold that applies
+                        ORDER BY aps_daysinstatus DESC, aps_id DESC
                     ) aps_lookup
-                    -- Fixed AttackPointNote lookup using OUTER APPLY
                     OUTER APPLY (
                         SELECT TOP 1 
                             CASE 
-                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0  -- If work order start is today or future in Central Time, return 0
-                                ELSE apn_attack  -- Otherwise use normal attack points
+                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
+                                ELSE apn_attack
                             END as apn_attack
                         FROM AttackPointNote 
                         WHERE 
-                            -- Case 1: Truly no notes exist 
                             (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  
                             OR 
-                            -- Case 2: Notes exist and meet the time threshold criteria
                             (latest_note.won_insertdatetime IS NOT NULL 
                             AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
                             AND apn_id > 1)  
                         ORDER BY 
                             CASE
-                                WHEN latest_note.won_insertdatetime IS NULL THEN 0  -- NO NOTES gets highest priority
-                                ELSE apn_hours  -- Otherwise order by hours threshold descending
+                                WHEN latest_note.won_insertdatetime IS NULL THEN 0
+                                ELSE apn_hours
                             END DESC
                     ) apn_lookup
-                    -- New AttackPointActionableDate lookup using OUTER APPLY
                     OUTER APPLY (
                         SELECT TOP 1 apad_attack
                         FROM AttackPointActionableDate 
                         WHERE 
-                            -- Case 1: No next step date exists (NULL date)
                             (sr.sr_datenextstep IS NULL AND apad_id = 1)  
                             OR 
-                            -- Case 2: Next step date exists and meets the day threshold criteria
                             (sr.sr_datenextstep IS NOT NULL 
                             AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
                             AND apad_id > 1)  
                         ORDER BY 
                             CASE
-                                WHEN sr.sr_datenextstep IS NULL THEN 0  -- NULL DATE gets highest priority
-                                ELSE apad_days  -- Otherwise order by days threshold ascending (since we're using <=)
+                                WHEN sr.sr_datenextstep IS NULL THEN 0
+                                ELSE apad_days
                             END ASC
                     ) apad_lookup
-                    where 1=1
-                    and sr.s_id not in (9) --Paid
-                    and sr.s_id not in (6) --Rejected
-                    and c.c_name NOT IN ('Metro Pipe Program')
-                    and (cc.cc_name NOT IN ('Administrative') OR sr.sr_escalated IS NOT NULL) -- Include Administrative if escalated
-                    and (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or wo.wo_startdatetime is null)
+                    WHERE sr.s_id NOT IN (9, 6)  -- Exclude Paid, Rejected
+                    AND c.c_name NOT IN ('Metro Pipe Program')
+                    AND (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
+                        OR wo.wo_startdatetime IS NULL)
+                    -- NO call center filtering here - handled by ranking logic instead
                 )
                 SELECT sr_id, 
                     sr_insertdatetime, 
@@ -2353,7 +2343,7 @@ public class DataService : IDataService
                     AttackPoints,
                     is_escalated
                 FROM ranked_results 
-                WHERE (rn <= @TopCount AND is_escalated = 0) OR is_escalated = 1  -- Top 15 non-escalated + all escalated
+                WHERE (rn_non_escalated <= @TopCount) OR (is_escalated = 1)  -- Top 15 non-escalated per admin + ALL escalated
                 ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
             ";
 
