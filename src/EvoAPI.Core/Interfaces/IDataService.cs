@@ -50,7 +50,7 @@ public interface IDataService
     Task<DataTable> GetServiceRequestNumberChangesAsync();
     
     // Missing Receipts methods
-    Task<List<MissingReceiptDto>> GetMissingReceiptsAsync();
+    Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync();
     Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts);
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);

@@ -2864,17 +2864,22 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<List<MissingReceiptDto>> GetMissingReceiptsAsync()
+    public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             const string sql = @"
-                SELECT rm_id, rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber
-                FROM ReceiptMissing
-                WHERE rm_dateupload = CAST(GETDATE() AS DATE)
-                ORDER BY rm_id DESC";
+                SELECT u.u_id, rm.rm_id, rm_dateupload, rm_datereceipt, rm_description, rm_amount, 
+                       u.u_firstname, u.u_lastname, u.u_employeenumber
+                FROM receiptmissing rm
+                INNER JOIN [user] u ON u.u_employeenumber = rm.u_employeenumber
+                WHERE CAST(CAST(rm.rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) = (
+                    SELECT MAX(CAST(CAST(rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE)) 
+                    FROM receiptmissing
+                )
+                ORDER BY u.u_firstname, u.u_lastname, rm.rm_id DESC";
 
             using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
             using var command = new SqlCommand(sql, connection);
@@ -2882,17 +2887,20 @@ FROM DailyTechSummary;
             await connection.OpenAsync();
             using var reader = await command.ExecuteReaderAsync();
             
-            var receipts = new List<MissingReceiptDto>();
+            var receipts = new List<MissingReceiptDashboardDto>();
             
             while (await reader.ReadAsync())
             {
-                receipts.Add(new MissingReceiptDto
+                receipts.Add(new MissingReceiptDashboardDto
                 {
+                    UId = ConvertToInt(reader["u_id"]),
                     RmId = ConvertToInt(reader["rm_id"]),
                     RmDateUpload = reader["rm_dateupload"] as DateTime?,
                     RmDateReceipt = reader["rm_datereceipt"] as DateTime?,
                     RmDescription = reader["rm_description"]?.ToString(),
                     RmAmount = reader["rm_amount"] as decimal?,
+                    UFirstName = reader["u_firstname"]?.ToString(),
+                    ULastName = reader["u_lastname"]?.ToString(),
                     UEmployeeNumber = reader["u_employeenumber"]?.ToString()
                 });
             }
@@ -2902,7 +2910,7 @@ FROM DailyTechSummary;
             {
                 Name = "DataService",
                 Description = "GetMissingReceipts",
-                Detail = $"Retrieved {receipts.Count} missing receipts",
+                Detail = $"Retrieved {receipts.Count} missing receipts for all users",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
@@ -2939,15 +2947,25 @@ FROM DailyTechSummary;
             
             try
             {
-                // Delete existing records for today
-                const string deleteSql = "DELETE FROM ReceiptMissing WHERE rm_dateupload = CAST(GETDATE() AS DATE)";
+                // Delete existing records for today (Central Time) - simplified approach
+                const string deleteSql = @"
+                    DELETE FROM ReceiptMissing 
+                    WHERE DATEDIFF(day, rm_dateupload, CAST(GETDATE() AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE)) = 0";
                 using var deleteCommand = new SqlCommand(deleteSql, connection, transaction);
-                await deleteCommand.ExecuteNonQueryAsync();
+                var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
+                
+                _logger.LogInformation("Deleted {DeletedRows} existing records for today", deletedRows);
 
-                // Insert new records
+                // Insert new records with Central Time
                 const string insertSql = @"
                     INSERT INTO ReceiptMissing (rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber)
-                    VALUES (CAST(GETDATE() AS DATE), @RmDateReceipt, @RmDescription, @RmAmount, @UEmployeeNumber)";
+                    VALUES (
+                        CAST(GETDATE() AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE), 
+                        @RmDateReceipt, 
+                        @RmDescription, 
+                        @RmAmount, 
+                        @UEmployeeNumber
+                    )";
 
                 int insertedCount = 0;
                 foreach (var receipt in receipts)

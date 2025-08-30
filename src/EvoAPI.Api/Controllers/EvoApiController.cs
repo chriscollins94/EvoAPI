@@ -70,7 +70,7 @@ public class EvoApiController : BaseController
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                await LogErrorAsync("GetWorkOrders", ex, stopwatch.Elapsed);
+                await LogAuditErrorAsync("GetWorkOrders", ex);
                 
                 _logger.LogError(ex, "Error retrieving work orders for {NumberOfDays} days", numberOfDays);
                 
@@ -123,11 +123,9 @@ public class EvoApiController : BaseController
         catch (Exception ex)
         {
             stopwatch.Stop();
-            await LogErrorAsync("GetWorkOrdersSchedule", ex, stopwatch.Elapsed);
-
-            _logger.LogError(ex, "Error retrieving work orders schedule for {NumberOfDays} days", numberOfDays);
-
-            return StatusCode(500, new ApiResponse<object>
+            await LogAuditErrorAsync("GetWorkOrdersSchedule", ex);
+            
+            _logger.LogError(ex, "Error retrieving work orders schedule for {NumberOfDays} days", numberOfDays);            return StatusCode(500, new ApiResponse<object>
             {
                 Success = false,
                 Message = "An error occurred while retrieving work orders schedule",
@@ -2361,20 +2359,20 @@ public class EvoApiController : BaseController
 
     [HttpGet("missing-receipts")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<MissingReceiptDto>>>> GetMissingReceipts()
+    public async Task<ActionResult<ApiResponse<List<MissingReceiptDashboardDto>>>> GetMissingReceipts()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            _logger.LogInformation("Getting missing receipts for user {UserId}", UserId);
+            _logger.LogInformation("Getting missing receipts for all users");
             
             var receipts = await _dataService.GetMissingReceiptsAsync();
             
             stopwatch.Stop();
             await LogOperationAsync("GetMissingReceipts", $"Retrieved {receipts.Count} missing receipts", stopwatch.Elapsed);
             
-            return Ok(new ApiResponse<List<MissingReceiptDto>>
+            return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
             {
                 Success = true,
                 Message = "Missing receipts retrieved successfully",
@@ -2385,9 +2383,9 @@ public class EvoApiController : BaseController
         catch (Exception ex)
         {
             stopwatch.Stop();
-            await LogErrorAsync("GetMissingReceipts", ex, stopwatch.Elapsed);
+            await LogAuditErrorAsync("GetMissingReceipts", ex);
             
-            return StatusCode(500, new ApiResponse<List<MissingReceiptDto>>
+            return StatusCode(500, new ApiResponse<List<MissingReceiptDashboardDto>>
             {
                 Success = false,
                 Message = "Failed to retrieve missing receipts"
