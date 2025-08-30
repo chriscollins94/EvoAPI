@@ -2370,7 +2370,7 @@ public class EvoApiController : BaseController
             var receipts = await _dataService.GetMissingReceiptsAsync();
             
             stopwatch.Stop();
-            await LogOperationAsync("GetMissingReceipts", $"Retrieved {receipts.Count} missing receipts", stopwatch.Elapsed);
+            // await LogOperationAsync("GetMissingReceipts", $"Retrieved {receipts.Count} missing receipts", stopwatch.Elapsed);
             
             return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
             {
