@@ -2356,4 +2356,89 @@ public class EvoApiController : BaseController
     }
 
     #endregion
+
+    #region Missing Receipts
+
+    [HttpGet("missing-receipts")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<MissingReceiptDto>>>> GetMissingReceipts()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting missing receipts for user {UserId}", UserId);
+            
+            var receipts = await _dataService.GetMissingReceiptsAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetMissingReceipts", $"Retrieved {receipts.Count} missing receipts", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<MissingReceiptDto>>
+            {
+                Success = true,
+                Message = "Missing receipts retrieved successfully",
+                Data = receipts,
+                Count = receipts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetMissingReceipts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<MissingReceiptDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve missing receipts"
+            });
+        }
+    }
+
+    [HttpPost("missing-receipts/upload")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<int>>> UploadMissingReceipts([FromBody] List<MissingReceiptUploadDto> receipts)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Uploading {Count} missing receipts for user {UserId}", receipts.Count, UserId);
+            
+            if (!receipts.Any())
+            {
+                return BadRequest(new ApiResponse<int>
+                {
+                    Success = false,
+                    Message = "No receipt data provided"
+                });
+            }
+
+            var uploadedCount = await _dataService.UploadMissingReceiptsAsync(receipts);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UploadMissingReceipts", $"Uploaded {uploadedCount} missing receipts", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<int>
+            {
+                Success = true,
+                Message = $"Successfully uploaded {uploadedCount} missing receipts",
+                Data = uploadedCount,
+                Count = uploadedCount
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UploadMissingReceipts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<int>
+            {
+                Success = false,
+                Message = "Failed to upload missing receipts"
+            });
+        }
+    }
+
+    #endregion
 }

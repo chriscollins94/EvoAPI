@@ -2863,4 +2863,150 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<List<MissingReceiptDto>> GetMissingReceiptsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT rm_id, rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber
+                FROM ReceiptMissing
+                WHERE rm_dateupload = CAST(GETDATE() AS DATE)
+                ORDER BY rm_id DESC";
+
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            using var command = new SqlCommand(sql, connection);
+            
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+            
+            var receipts = new List<MissingReceiptDto>();
+            
+            while (await reader.ReadAsync())
+            {
+                receipts.Add(new MissingReceiptDto
+                {
+                    RmId = ConvertToInt(reader["rm_id"]),
+                    RmDateUpload = reader["rm_dateupload"] as DateTime?,
+                    RmDateReceipt = reader["rm_datereceipt"] as DateTime?,
+                    RmDescription = reader["rm_description"]?.ToString(),
+                    RmAmount = reader["rm_amount"] as decimal?,
+                    UEmployeeNumber = reader["u_employeenumber"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMissingReceipts",
+                Detail = $"Retrieved {receipts.Count} missing receipts",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return receipts;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMissingReceipts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving missing receipts");
+            throw;
+        }
+    }
+
+    public async Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            await connection.OpenAsync();
+            
+            using var transaction = connection.BeginTransaction();
+            
+            try
+            {
+                // Delete existing records for today
+                const string deleteSql = "DELETE FROM ReceiptMissing WHERE rm_dateupload = CAST(GETDATE() AS DATE)";
+                using var deleteCommand = new SqlCommand(deleteSql, connection, transaction);
+                await deleteCommand.ExecuteNonQueryAsync();
+
+                // Insert new records
+                const string insertSql = @"
+                    INSERT INTO ReceiptMissing (rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber)
+                    VALUES (CAST(GETDATE() AS DATE), @RmDateReceipt, @RmDescription, @RmAmount, @UEmployeeNumber)";
+
+                int insertedCount = 0;
+                foreach (var receipt in receipts)
+                {
+                    using var insertCommand = new SqlCommand(insertSql, connection, transaction);
+                    insertCommand.Parameters.AddWithValue("@RmDateReceipt", receipt.RmDateReceipt);
+                    insertCommand.Parameters.AddWithValue("@RmDescription", receipt.RmDescription ?? (object)DBNull.Value);
+                    insertCommand.Parameters.AddWithValue("@RmAmount", receipt.RmAmount);
+                    insertCommand.Parameters.AddWithValue("@UEmployeeNumber", receipt.UEmployeeNumber ?? (object)DBNull.Value);
+                    
+                    await insertCommand.ExecuteNonQueryAsync();
+                    insertedCount++;
+                }
+
+                transaction.Commit();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UploadMissingReceipts",
+                    Detail = $"Uploaded {insertedCount} missing receipts",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return insertedCount;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UploadMissingReceipts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error uploading missing receipts");
+            throw;
+        }
+    }
+
+    private static int ConvertToInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return 0;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return 0;
+    }
 }
