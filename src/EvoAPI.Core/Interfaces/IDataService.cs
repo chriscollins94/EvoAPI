@@ -53,5 +53,9 @@ public interface IDataService
     Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync();
     Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts);
     
+    // Work Order Scheduling Conflicts methods
+    Task<DataTable> GetWorkOrderSchedulingConflictsAsync();
+    Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync();
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

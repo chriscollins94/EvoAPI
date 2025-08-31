@@ -3017,6 +3017,304 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetWorkOrderSchedulingConflictsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                -- Query to identify potential scheduling conflicts based on geographic distance between consecutive work orders
+                WITH WorkOrderData AS (
+                    SELECT 
+                        cc.cc_name, 
+                        c.c_name, 
+                        sr.sr_id, 
+                        u.u_id, 
+                        u.u_firstname, 
+                        u.u_lastname,
+                        sr.sr_insertdatetime, 
+                        sr.sr_requestnumber, 
+                        ss.ss_statussecondary, 
+                        wo.wo_workordernumber, 
+                        wo.wo_description, 
+                        wo.wo_startdatetime, 
+                        wo.wo_enddatetime,
+                        l.l_location, 
+                        a.a_address1, 
+                        a.a_city, 
+                        a.a_state, 
+                        a.a_zip,
+                        -- Create full address for distance calculation
+                        RTRIM(LTRIM(ISNULL(a.a_address1, '') + ', ' + ISNULL(a.a_city, '') + ', ' + ISNULL(a.a_state, '') + ' ' + ISNULL(a.a_zip, ''))) as full_address,
+                        -- Add row number for each user's work orders ordered by start time
+                        ROW_NUMBER() OVER (PARTITION BY u.u_id ORDER BY wo.wo_startdatetime) as rn
+                    FROM workorder wo
+                    INNER JOIN servicerequest sr ON sr.sr_id = wo.sr_id
+                    INNER JOIN location l ON sr.l_id = l.l_id
+                    INNER JOIN address a ON l.a_id = a.a_id
+                    INNER JOIN statussecondary ss ON wo.ss_id = ss.ss_id
+                    INNER JOIN xrefcompanycallcenter xccc ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN callcenter cc ON xccc.cc_id = cc.cc_id
+                    INNER JOIN company c ON xccc.c_id = c.c_id
+                    INNER JOIN xrefWorkOrderUser xwou ON wo.wo_id = xwou.wo_id
+                    INNER JOIN [user] u ON xwou.u_id = u.u_id
+                    INNER JOIN xrefUserRole xur ON u.u_id = xur.u_id
+                    INNER JOIN role r ON xur.r_id = r.r_id
+                    WHERE wo.wo_startdatetime >= GETDATE()
+                    AND c.c_name NOT IN ('Metro Pipe Program Administration')
+                    AND c.c_name NOT LIKE '%time off%'
+                    AND wo.wo_description NOT LIKE '%Holiday%'
+                    AND r.r_role = 'Technician'
+                    AND wo.wo_enddatetime IS NOT NULL  -- Ensure we have end times
+                ),
+                ConsecutiveWorkOrders AS (
+                    SELECT 
+                        w1.u_id,
+                        w1.u_firstname,
+                        w1.u_lastname,
+                        
+                        -- Current work order details
+                        w1.wo_workordernumber as current_wo,
+                        w1.sr_id as current_sr_id,
+                        w1.wo_startdatetime as current_start,
+                        w1.wo_enddatetime as current_end,
+                        w1.wo_description as current_description,
+                        w1.full_address as current_address,
+                        w1.l_location as current_location,
+                        
+                        -- Next work order details  
+                        w2.wo_workordernumber as next_wo,
+                        w2.sr_id as next_sr_id,
+                        w2.wo_startdatetime as next_start,
+                        w2.wo_enddatetime as next_end,
+                        w2.wo_description as next_description,
+                        w2.full_address as next_address,
+                        w2.l_location as next_location,
+                        
+                        -- Time analysis
+                        DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) as travel_time_minutes,
+                        
+                        -- Basic distance estimation (you may want to replace this with actual geocoding)
+                        -- This is a rough approximation - for production use, consider integrating with a mapping service
+                        CASE 
+                            WHEN w1.a_zip = w2.a_zip THEN 'SAME_ZIP'
+                            WHEN w1.a_city = w2.a_city AND w1.a_state = w2.a_state THEN 'SAME_CITY'
+                            WHEN w1.a_state = w2.a_state THEN 'SAME_STATE'
+                            ELSE 'DIFFERENT_STATE'
+                        END as geographic_proximity,
+                        
+                        -- Current work order company and call center details
+                        w1.c_name as current_company,
+                        w1.cc_name as current_call_center,
+                        
+                        -- Next work order company and call center details
+                        w2.c_name as next_company,
+                        w2.cc_name as next_call_center
+                        
+                    FROM WorkOrderData w1
+                    INNER JOIN WorkOrderData w2 ON w1.u_id = w2.u_id AND w1.rn = w2.rn - 1
+                    WHERE DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) <= 120  -- Within 2 hours
+                ),
+                PotentialConflicts AS (
+                    SELECT *,
+                        -- Risk assessment based on time and distance
+                        CASE 
+                            WHEN travel_time_minutes < 0 THEN 'OVERLAPPING_ORDERS'
+                            WHEN travel_time_minutes = 0 AND geographic_proximity NOT IN ('SAME_ZIP', 'SAME_CITY') THEN 'IMPOSSIBLE_CONSECUTIVE'
+                            WHEN travel_time_minutes <= 15 AND geographic_proximity = 'DIFFERENT_STATE' THEN 'HIGH_RISK'
+                            WHEN travel_time_minutes <= 30 AND geographic_proximity = 'SAME_STATE' THEN 'MEDIUM_RISK'
+                            WHEN travel_time_minutes <= 30 AND geographic_proximity = 'SAME_CITY' THEN 'LOW_RISK'
+                            WHEN travel_time_minutes <= 60 AND geographic_proximity NOT IN ('SAME_ZIP', 'SAME_CITY') THEN 'REVIEW_NEEDED'
+                            ELSE 'PROBABLY_OK'
+                        END as conflict_risk
+                    FROM ConsecutiveWorkOrders
+                )
+                SELECT 
+                    u_firstname + ' ' + u_lastname as technician_name,
+                    conflict_risk,
+                    travel_time_minutes,
+                    geographic_proximity,
+                    
+                    -- Current work order
+                    current_wo,
+                    current_sr_id,
+                    FORMAT(current_start, 'MM/dd/yyyy hh:mm tt') as current_start_formatted,
+                    FORMAT(current_end, 'MM/dd/yyyy hh:mm tt') as current_end_formatted,
+                    current_description,
+                    current_address,
+                    current_location,
+                    
+                    -- Next work order
+                    next_wo,
+                    next_sr_id,
+                    FORMAT(next_start, 'MM/dd/yyyy hh:mm tt') as next_start_formatted,
+                    FORMAT(next_end, 'MM/dd/yyyy hh:mm tt') as next_end_formatted,
+                    next_description,
+                    next_address,
+                    next_location,
+                    
+                    -- Company and call center info
+                    current_company,
+                    current_call_center,
+                    next_company,
+                    next_call_center,
+                    
+                    -- Add indicator if switching companies/call centers
+                    CASE 
+                        WHEN current_company != next_company THEN 'COMPANY_SWITCH'
+                        WHEN current_call_center != next_call_center THEN 'CALL_CENTER_SWITCH' 
+                        ELSE 'SAME_ORGANIZATION'
+                    END as organization_change
+                    
+                FROM PotentialConflicts
+                WHERE conflict_risk IN ('OVERLAPPING_ORDERS', 'IMPOSSIBLE_CONSECUTIVE', 'HIGH_RISK', 'MEDIUM_RISK', 'REVIEW_NEEDED')
+                ORDER BY 
+                    CASE conflict_risk
+                        WHEN 'OVERLAPPING_ORDERS' THEN 1
+                        WHEN 'IMPOSSIBLE_CONSECUTIVE' THEN 2
+                        WHEN 'HIGH_RISK' THEN 3
+                        WHEN 'MEDIUM_RISK' THEN 4
+                        WHEN 'REVIEW_NEEDED' THEN 5
+                        ELSE 6
+                    END,
+                    u_id,
+                    current_start;";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetWorkOrderSchedulingConflicts",
+                Detail = $"Retrieved work order scheduling conflicts",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetWorkOrderSchedulingConflicts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving work order scheduling conflicts");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                -- Additional query to get summary statistics
+                WITH WorkOrderSummary AS (
+                    SELECT 
+                        u.u_id, 
+                        wo.wo_workordernumber, 
+                        wo.wo_startdatetime, 
+                        wo.wo_enddatetime,
+                        a.a_city, a.a_state, a.a_zip,
+                        ROW_NUMBER() OVER (PARTITION BY u.u_id ORDER BY wo.wo_startdatetime) as rn
+                    FROM workorder wo
+                    INNER JOIN servicerequest sr ON sr.sr_id = wo.sr_id
+                    INNER JOIN location l ON sr.l_id = l.l_id
+                    INNER JOIN address a ON l.a_id = a.a_id
+                    INNER JOIN xrefcompanycallcenter xccc ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN company c ON xccc.c_id = c.c_id
+                    INNER JOIN xrefWorkOrderUser xwou ON wo.wo_id = xwou.wo_id
+                    INNER JOIN [user] u ON xwou.u_id = u.u_id
+                    INNER JOIN xrefUserRole xur ON u.u_id = xur.u_id
+                    INNER JOIN role r ON xur.r_id = r.r_id
+                    WHERE wo.wo_startdatetime >= GETDATE()
+                    AND c.c_name NOT IN ('Metro Pipe Program Administration')
+                    AND c.c_name NOT LIKE '%time off%'
+                    AND wo.wo_description NOT LIKE '%Holiday%'
+                    AND r.r_role = 'Technician'
+                    AND wo.wo_enddatetime IS NOT NULL
+                ),
+                ConflictSummary AS (
+                    SELECT 
+                        DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) as travel_time_minutes,
+                        CASE 
+                            WHEN w1.a_zip = w2.a_zip THEN 'SAME_ZIP'
+                            WHEN w1.a_city = w2.a_city AND w1.a_state = w2.a_state THEN 'SAME_CITY'
+                            WHEN w1.a_state = w2.a_state THEN 'SAME_STATE'
+                            ELSE 'DIFFERENT_STATE'
+                        END as geographic_proximity,
+                        CASE 
+                            WHEN DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) < 0 THEN 'OVERLAPPING_ORDERS'
+                            WHEN DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) = 0 AND w1.a_zip != w2.a_zip THEN 'IMPOSSIBLE_CONSECUTIVE'
+                            WHEN DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) <= 15 AND w1.a_state != w2.a_state THEN 'HIGH_RISK'
+                            WHEN DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) <= 30 AND w1.a_state = w2.a_state AND w1.a_city != w2.a_city THEN 'MEDIUM_RISK'
+                            WHEN DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) <= 60 AND w1.a_zip != w2.a_zip THEN 'REVIEW_NEEDED'
+                            ELSE 'PROBABLY_OK'
+                        END as conflict_risk
+                    FROM WorkOrderSummary w1
+                    INNER JOIN WorkOrderSummary w2 ON w1.u_id = w2.u_id AND w1.rn = w2.rn - 1
+                    WHERE DATEDIFF(MINUTE, w1.wo_enddatetime, w2.wo_startdatetime) <= 120
+                )
+                SELECT 
+                    conflict_risk,
+                    COUNT(*) as conflict_count,
+                    AVG(CAST(travel_time_minutes as FLOAT)) as avg_travel_time,
+                    MIN(travel_time_minutes) as min_travel_time,
+                    MAX(travel_time_minutes) as max_travel_time
+                FROM ConflictSummary
+                GROUP BY conflict_risk
+                ORDER BY 
+                    CASE conflict_risk
+                        WHEN 'OVERLAPPING_ORDERS' THEN 1
+                        WHEN 'IMPOSSIBLE_CONSECUTIVE' THEN 2
+                        WHEN 'HIGH_RISK' THEN 3
+                        WHEN 'MEDIUM_RISK' THEN 4
+                        WHEN 'REVIEW_NEEDED' THEN 5
+                        ELSE 6
+                    END;";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetWorkOrderSchedulingConflictsSummary",
+                Detail = $"Retrieved work order scheduling conflicts summary",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetWorkOrderSchedulingConflictsSummary",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving work order scheduling conflicts summary");
+            throw;
+        }
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)

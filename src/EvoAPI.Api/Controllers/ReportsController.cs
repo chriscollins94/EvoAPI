@@ -212,6 +212,54 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("work-order-scheduling-conflicts")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<WorkOrderSchedulingConflictsReportDto>>> GetWorkOrderSchedulingConflicts()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            // Get both conflicts and summary data
+            var conflictsTask = _dataService.GetWorkOrderSchedulingConflictsAsync();
+            var summaryTask = _dataService.GetWorkOrderSchedulingConflictsSummaryAsync();
+            
+            await Task.WhenAll(conflictsTask, summaryTask);
+            
+            var conflicts = ConvertDataTableToWorkOrderSchedulingConflicts(await conflictsTask);
+            var summary = ConvertDataTableToWorkOrderSchedulingConflictsSummary(await summaryTask);
+            
+            var reportData = new WorkOrderSchedulingConflictsReportDto
+            {
+                Conflicts = conflicts,
+                Summary = summary
+            };
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetWorkOrderSchedulingConflicts", $"Retrieved {conflicts.Count} conflicts and {summary.Count} summary records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<WorkOrderSchedulingConflictsReportDto>
+            {
+                Success = true,
+                Message = "Work order scheduling conflicts report data retrieved successfully",
+                Data = reportData,
+                Count = conflicts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetWorkOrderSchedulingConflicts", ex);
+            
+            return StatusCode(500, new ApiResponse<WorkOrderSchedulingConflictsReportDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve work order scheduling conflicts report data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -356,6 +404,70 @@ public class ReportsController : BaseController
                 Company = CleanString(row["Company"]),
                 ServiceRequest = CleanString(row["Service Request"]),
                 PrimaryWorkOrder = CleanString(row["Primary Work Order"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<WorkOrderSchedulingConflictsDto> ConvertDataTableToWorkOrderSchedulingConflicts(DataTable dataTable)
+    {
+        var result = new List<WorkOrderSchedulingConflictsDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new WorkOrderSchedulingConflictsDto
+            {
+                TechnicianName = CleanString(row["technician_name"]),
+                ConflictRisk = CleanString(row["conflict_risk"]),
+                TravelTimeMinutes = ConvertToInt(row["travel_time_minutes"]),
+                GeographicProximity = CleanString(row["geographic_proximity"]),
+                
+                // Current work order
+                CurrentWorkOrder = CleanString(row["current_wo"]),
+                CurrentSrId = ConvertToInt(row["current_sr_id"]),
+                CurrentStartFormatted = CleanString(row["current_start_formatted"]),
+                CurrentEndFormatted = CleanString(row["current_end_formatted"]),
+                CurrentDescription = CleanString(row["current_description"]),
+                CurrentAddress = CleanString(row["current_address"]),
+                CurrentLocation = CleanString(row["current_location"]),
+                
+                // Next work order
+                NextWorkOrder = CleanString(row["next_wo"]),
+                NextSrId = ConvertToInt(row["next_sr_id"]),
+                NextStartFormatted = CleanString(row["next_start_formatted"]),
+                NextEndFormatted = CleanString(row["next_end_formatted"]),
+                NextDescription = CleanString(row["next_description"]),
+                NextAddress = CleanString(row["next_address"]),
+                NextLocation = CleanString(row["next_location"]),
+                
+                // Company and call center
+                CurrentCompany = CleanString(row["current_company"]),
+                CurrentCallCenter = CleanString(row["current_call_center"]),
+                NextCompany = CleanString(row["next_company"]),
+                NextCallCenter = CleanString(row["next_call_center"]),
+                
+                // Organization change
+                OrganizationChange = CleanString(row["organization_change"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<WorkOrderSchedulingConflictsSummaryDto> ConvertDataTableToWorkOrderSchedulingConflictsSummary(DataTable dataTable)
+    {
+        var result = new List<WorkOrderSchedulingConflictsSummaryDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new WorkOrderSchedulingConflictsSummaryDto
+            {
+                ConflictRisk = CleanString(row["conflict_risk"]),
+                ConflictCount = ConvertToInt(row["conflict_count"]),
+                AverageTravelTime = ConvertToDecimal(row["avg_travel_time"]),
+                MinTravelTime = ConvertToInt(row["min_travel_time"]),
+                MaxTravelTime = ConvertToInt(row["max_travel_time"])
             });
         }
         
