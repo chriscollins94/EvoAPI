@@ -142,18 +142,22 @@ public class ReportsController : BaseController
 
     [HttpGet("tech-activity")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport()
+    public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport([FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null)
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetTechActivityDashboardAsync();
+            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate);
             var reportData = ConvertDataTableToTechActivityReport(dataTable);
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var dateRangeInfo = startDate.HasValue && endDate.HasValue ? 
+                $"from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}" : 
+                "for last 90 days (default)";
+            
+            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechActivityReportDto>>
             {

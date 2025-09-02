@@ -2688,13 +2688,17 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTechActivityDashboardAsync()
+    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            
+            // Default to 90 days if no dates provided
+            var effectiveStartDate = startDate ?? DateTime.Now.AddDays(-90);
+            var effectiveEndDate = endDate ?? DateTime.Now;
             
             const string sql = @"
                 SELECT 
@@ -2743,7 +2747,8 @@ FROM DailyTechSummary;
                     LEFT JOIN zone srz ON zm.z_id = srz.z_id
                     -- Residential zone lookup
                     LEFT JOIN zone resz ON resz.z_acronym = 'Residential'
-                WHERE tt.tt_begin >= DATEADD(DAY, -30, GETDATE()) 
+                WHERE tt.tt_begin >= @StartDate 
+                    AND tt.tt_begin <= @EndDate
                     AND ttt.ttt_id NOT IN (1)
                 ORDER BY tt.tt_id DESC;
             ";
@@ -2753,6 +2758,8 @@ FROM DailyTechSummary;
                 await connection.OpenAsync();
                 using (var command = new SqlCommand(sql, connection))
                 {
+                    command.Parameters.AddWithValue("@StartDate", effectiveStartDate);
+                    command.Parameters.AddWithValue("@EndDate", effectiveEndDate);
                     command.CommandTimeout = 60;
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();
@@ -2763,7 +2770,7 @@ FROM DailyTechSummary;
                     {
                         Name = "DataService",
                         Description = "GetTechActivityDashboard",
-                        Detail = $"Retrieved {dataTable.Rows.Count} tech activity records",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech activity records from {effectiveStartDate:yyyy-MM-dd} to {effectiveEndDate:yyyy-MM-dd}",
                         ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                         MachineName = Environment.MachineName
                     });
