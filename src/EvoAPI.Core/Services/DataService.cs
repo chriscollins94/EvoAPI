@@ -3146,8 +3146,8 @@ FROM DailyTechSummary;
                     -- Current work order
                     current_wo,
                     current_sr_id,
-                    FORMAT(current_start, 'MM/dd/yyyy hh:mm tt') as current_start_formatted,
-                    FORMAT(current_end, 'MM/dd/yyyy hh:mm tt') as current_end_formatted,
+                    FORMAT(current_start AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as current_start_formatted,
+                    FORMAT(current_end AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as current_end_formatted,
                     current_description,
                     current_address,
                     current_location,
@@ -3155,8 +3155,8 @@ FROM DailyTechSummary;
                     -- Next work order
                     next_wo,
                     next_sr_id,
-                    FORMAT(next_start, 'MM/dd/yyyy hh:mm tt') as next_start_formatted,
-                    FORMAT(next_end, 'MM/dd/yyyy hh:mm tt') as next_end_formatted,
+                    FORMAT(next_start AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as next_start_formatted,
+                    FORMAT(next_end AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as next_end_formatted,
                     next_description,
                     next_address,
                     next_location,

@@ -4,6 +4,7 @@ using System.Text;
 using EvoAPI.Api.Middleware;
 using EvoAPI.Core.Interfaces;
 using EvoAPI.Core.Services;
+using EvoAPI.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,13 @@ var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Test")
 {
     builder.Configuration.AddUserSecrets<Program>();
+}
+
+// Add secrets file if it exists (for local development in any environment)
+var secretsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.secrets.json");
+if (File.Exists(secretsPath))
+{
+    builder.Configuration.AddJsonFile("appsettings.secrets.json", optional: true, reloadOnChange: true);
 }
 
 // Log the current environment and connection string for debugging
@@ -64,6 +72,10 @@ builder.Services.AddControllers();
 // Register application services
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IDataService, DataService>();
+
+// Register HttpClient for Google Maps service
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IGoogleMapsService, GoogleMapsService>();
 
 // Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

@@ -16,14 +16,17 @@ public class ReportsController : BaseController
     #region Initialize
 
     private readonly IDataService _dataService;
+    private readonly IGoogleMapsService _googleMapsService;
     private readonly ILogger<ReportsController> _logger;
 
     public ReportsController(
         IDataService dataService, 
+        IGoogleMapsService googleMapsService,
         IAuditService auditService,
         ILogger<ReportsController> logger)
     {
         _dataService = dataService;
+        _googleMapsService = googleMapsService;
         _logger = logger;
         InitializeAuditService(auditService);
     }
@@ -233,6 +236,9 @@ public class ReportsController : BaseController
             var conflicts = ConvertDataTableToWorkOrderSchedulingConflicts(await conflictsTask);
             var summary = ConvertDataTableToWorkOrderSchedulingConflictsSummary(await summaryTask);
             
+            // Enhance conflicts with Google Maps travel data
+            await EnhanceWithGoogleMapsTravelDataAsync(conflicts);
+            
             var reportData = new WorkOrderSchedulingConflictsReportDto
             {
                 Conflicts = conflicts,
@@ -267,6 +273,87 @@ public class ReportsController : BaseController
     #endregion
 
     #region Helper Methods
+
+    private async Task EnhanceWithGoogleMapsTravelDataAsync(List<WorkOrderSchedulingConflictsDto> conflicts)
+    {
+        try
+        {
+            // Filter conflicts that have valid addresses
+            var conflictsWithAddresses = conflicts
+                .Where(c => !string.IsNullOrWhiteSpace(c.CurrentAddress) && !string.IsNullOrWhiteSpace(c.NextAddress))
+                .ToList();
+
+            if (!conflictsWithAddresses.Any())
+            {
+                _logger.LogInformation("No conflicts with valid addresses found for Google Maps processing");
+                return;
+            }
+
+            _logger.LogInformation("Processing {Count} conflicts with Google Maps API", conflictsWithAddresses.Count);
+
+            // Process in batches to avoid hitting Google Maps API limits
+            const int batchSize = 25; // Google Maps API limit is 25 origins x 25 destinations per request
+            
+            for (int i = 0; i < conflictsWithAddresses.Count; i += batchSize)
+            {
+                var batch = conflictsWithAddresses.Skip(i).Take(batchSize).ToList();
+                
+                var origins = batch.Select(c => c.CurrentAddress).ToList();
+                var destinations = batch.Select(c => c.NextAddress).ToList();
+                
+                var travelResults = await _googleMapsService.GetDistanceMatrixAsync(origins, destinations);
+                
+                // Map results back to conflicts (assumes 1:1 correspondence)
+                for (int j = 0; j < batch.Count && j < travelResults.Count; j++)
+                {
+                    var conflict = batch[j];
+                    var travelResult = travelResults[j];
+                    
+                    if (travelResult.IsSuccess)
+                    {
+                        conflict.GoogleMapsTravelData = new GoogleMapsTravelData
+                        {
+                            DistanceMeters = travelResult.DistanceMeters,
+                            DistanceText = travelResult.DistanceText,
+                            DurationSeconds = travelResult.DurationSeconds,
+                            DurationText = travelResult.DurationText,
+                            DurationInTrafficSeconds = travelResult.DurationInTrafficSeconds,
+                            DurationInTrafficText = travelResult.DurationInTrafficText,
+                            IsSuccess = true,
+                            Status = travelResult.Status
+                        };
+                        
+                        _logger.LogDebug("Enhanced conflict {TechnicianName} with travel data: {Duration} ({Distance})", 
+                            conflict.TechnicianName, travelResult.DurationInTrafficText, travelResult.DistanceText);
+                    }
+                    else
+                    {
+                        conflict.GoogleMapsTravelData = new GoogleMapsTravelData
+                        {
+                            IsSuccess = false,
+                            Status = travelResult.Status
+                        };
+                        
+                        _logger.LogWarning("Failed to get travel data for conflict {TechnicianName}: {Status}", 
+                            conflict.TechnicianName, travelResult.Status);
+                    }
+                }
+                
+                // Add a small delay between batches to be respectful to Google's API
+                if (i + batchSize < conflictsWithAddresses.Count)
+                {
+                    await Task.Delay(100);
+                }
+            }
+            
+            _logger.LogInformation("Completed Google Maps processing for {Count} conflicts", conflictsWithAddresses.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enhancing conflicts with Google Maps travel data");
+            // Don't throw - we want the report to work even if Google Maps fails
+        }
+    }
 
     private static List<HighVolumeReportDto> ConvertDataTableToHighVolumeReport(DataTable dataTable)
     {
