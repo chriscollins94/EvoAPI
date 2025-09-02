@@ -1,0 +1,2442 @@
+using EvoAPI.Core.Interfaces;
+using EvoAPI.Shared.Attributes;
+using EvoAPI.Shared.DTOs;
+using EvoAPI.Shared.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Data;
+
+namespace EvoAPI.Api.Controllers;
+
+[ApiController]
+[Route("[controller]")]
+[Authorize]
+public class EvoApiController : BaseController
+{
+    #region Initialize
+
+    private readonly IDataService _dataService;
+        private readonly ILogger<EvoApiController> _logger;
+    
+        public EvoApiController(
+            IDataService dataService, 
+            IAuditService auditService,
+            ILogger<EvoApiController> logger)
+        {
+            _dataService = dataService;
+            _logger = logger;
+            InitializeAuditService(auditService);
+        }
+    #endregion
+
+    #region Get
+        [HttpGet("workorders")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrders([FromQuery] int numberOfDays = 30)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting work orders for {NumberOfDays} days", numberOfDays);
+                
+                // Validate input
+                if (numberOfDays <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "NumberOfDays must be greater than 0",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetWorkOrdersAsync(numberOfDays);
+                var workOrders = ConvertDataTableToWorkOrders(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetWorkOrders", $"Retrieved {workOrders.Count} work orders for {numberOfDays} days", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<WorkOrderDto>>
+                {
+                    Success = true,
+                    Message = "Work orders retrieved successfully",
+                    Data = workOrders,
+                    Count = workOrders.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetWorkOrders", ex);
+                
+                _logger.LogError(ex, "Error retrieving work orders for {NumberOfDays} days", numberOfDays);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving work orders",
+                    Count = 0
+                });
+            }
+        }
+
+    [HttpGet("workorders/schedule")]
+    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            // _logger.LogInformation("Getting work orders schedule for {NumberOfDays} days", numberOfDays);
+
+            // Validate input
+            if (numberOfDays <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "NumberOfDays must be greater than 0",
+                    Count = 0
+                });
+            }
+
+            // Get data from service
+            var dataTable = await _dataService.GetWorkOrdersScheduleAsync(numberOfDays);
+            var workOrders = ConvertDataTableToWorkOrders(dataTable);
+
+            stopwatch.Stop();
+
+            // Log successful operation
+            await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<WorkOrderDto>>
+            {
+                Success = true,
+                Message = "Work orders schedule retrieved successfully",
+                Data = workOrders,
+                Count = workOrders.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetWorkOrdersSchedule", ex);
+            
+            _logger.LogError(ex, "Error retrieving work orders schedule for {NumberOfDays} days", numberOfDays);            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving work orders schedule",
+                Count = 0
+            });
+        }
+    }
+
+        [HttpGet("priorities")]
+        public async Task<ActionResult<ApiResponse<List<PriorityDto>>>> GetPriorities()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all priorities");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllPrioritiesAsync();
+                var priorities = ConvertDataTableToPriorities(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetPriorities", $"Retrieved {priorities.Count} priorities", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<PriorityDto>>
+                {
+                    Success = true,
+                    Message = "Priorities retrieved successfully",
+                    Data = priorities,
+                    Count = priorities.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetPriorities", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving priorities");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving priorities",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("statussecondaries")]
+        public async Task<ActionResult<ApiResponse<List<StatusSecondaryDto>>>> GetStatusSecondaries()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all status secondaries");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllStatusSecondariesAsync();
+                var statusSecondaries = ConvertDataTableToStatusSecondaries(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetStatusSecondaries", $"Retrieved {statusSecondaries.Count} status secondaries", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<StatusSecondaryDto>>
+                {
+                    Success = true,
+                    Message = "Status secondaries retrieved successfully",
+                    Data = statusSecondaries,
+                    Count = statusSecondaries.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetStatusSecondaries", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving status secondaries");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving status secondaries",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("callcenters")]
+        public async Task<ActionResult<ApiResponse<List<CallCenterDto>>>> GetCallCenters()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all call centers");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllCallCentersAsync();
+                var callCenters = ConvertDataTableToCallCenters(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetCallCenters", $"Retrieved {callCenters.Count} call centers", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<CallCenterDto>>
+                {
+                    Success = true,
+                    Message = "Call centers retrieved successfully",
+                    Data = callCenters,
+                    Count = callCenters.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCallCenters", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving call centers");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving call centers",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("attackpointnotes")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointNoteDto>>>> GetAttackPointNotes()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point notes");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointNotesAsync();
+                var attackPointNotes = ConvertDataTableToAttackPointNotes(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointNotes", $"Retrieved {attackPointNotes.Count} attack point notes", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointNoteDto>>
+                {
+                    Success = true,
+                    Message = "Attack point notes retrieved successfully",
+                    Data = attackPointNotes,
+                    Count = attackPointNotes.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointNotes", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point notes");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point notes",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("attackpointstatus")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointStatusDto>>>> GetAttackPointStatus()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point status records");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointStatusAsync();
+                var attackPointStatus = ConvertDataTableToAttackPointStatus(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointStatus", $"Retrieved {attackPointStatus.Count} attack point status records", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointStatusDto>>
+                {
+                    Success = true,
+                    Message = "Attack point status records retrieved successfully",
+                    Data = attackPointStatus,
+                    Count = attackPointStatus.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point status records");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point status records",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("zones")]
+        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZones()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting zones");
+                
+                var dataTable = await _dataService.GetAllZonesAsync();
+                var zones = ConvertDataTableToZones(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetZones", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<ZoneDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {zones.Count} zones",
+                    Data = zones,
+                    Count = zones.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetZones", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving zones");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving zones",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users/management")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetUsersForManagement()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all users for management");
+                
+                var dataTable = await _dataService.GetAllUsersForManagementAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUsersForManagement", $"Retrieved {users.Count} users for management", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} users for management",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUsersForManagement", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving users for management");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving users for management",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users/{id:int}")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> GetUserById(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting user by ID: {UserId}", id);
+                
+                if (id <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid user ID is required",
+                        Count = 0
+                    });
+                }
+                
+                var dataTable = await _dataService.GetUserByIdAsync(id);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Count = 0
+                    });
+                }
+                
+                var users = ConvertDataTableToUsers(dataTable);
+                var user = users.First();
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUserById", $"Retrieved user {id} - {user.Username}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserDto>
+                {
+                    Success = true,
+                    Message = "User retrieved successfully",
+                    Data = user,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUserById", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving user {UserId}", id);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving the user",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users")]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetUsers()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active users");
+                
+                var dataTable = await _dataService.GetAllUsersAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetUsers", $"Retrieved {users.Count} active users", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} active users",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetUsers", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving users");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving users",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users/current/dashboard-note")]
+        public async Task<ActionResult<ApiResponse<string>>> GetCurrentUserDashboardNote()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting current user dashboard note for user {UserId}", UserId);
+                
+                var dataTable = await _dataService.GetUserByIdAsync(UserId);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+                
+                var row = dataTable.Rows[0];
+                var dashboardNote = row["NoteDashboard"]?.ToString() ?? string.Empty;
+                
+                stopwatch.Stop();
+                // await LogOperationAsync("GetCurrentUserDashboardNote", $"Retrieved dashboard note for user {UserId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<string>
+                {
+                    Success = true,
+                    Message = "Dashboard note retrieved successfully",
+                    Data = dashboardNote,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCurrentUserDashboardNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving current user dashboard note");
+                
+                return StatusCode(500, new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving dashboard note",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("adminusers")]
+        public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active admin users");
+                
+                var dataTable = await _dataService.GetAdminUsersAsync();
+                var users = ConvertDataTableToUsers(dataTable);
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetAdminUsers", $"Retrieved {users.Count} active admin users", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<List<UserDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {users.Count} active admin users",
+                    Data = users,
+                    Count = users.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAdminUsers", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving admin users");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving admin users",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("technicians")]
+        public async Task<ActionResult<ApiResponse<List<TechnicianDto>>>> GetTechnicians()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting active technicians");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetActiveTechniciansAsync();
+                var technicians = ConvertDataTableToTechnicians(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetTechnicians", $"Retrieved {technicians.Count} active technicians", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<TechnicianDto>>
+                {
+                    Success = true,
+                    Message = "Active technicians retrieved successfully",
+                    Data = technicians,
+                    Count = technicians.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetTechnicians", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving active technicians");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving active technicians",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("statusassignments")]
+        public async Task<ActionResult<ApiResponse<StatusAssignmentMatrixDto>>> GetStatusAssignments()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting status assignment matrix");
+                
+                // Get all the data in parallel
+                var zonesTask = _dataService.GetAllZonesAsync();
+                var usersTask = _dataService.GetAdminUsersAsync();
+                var statusSecondariesTask = _dataService.GetAllStatusSecondariesAsync();
+                var assignmentsTask = _dataService.GetAdminZoneStatusAssignmentsAsync();
+                
+                await Task.WhenAll(zonesTask, usersTask, statusSecondariesTask, assignmentsTask);
+                
+                var zones = ConvertDataTableToZones(await zonesTask);
+                var users = ConvertDataTableToUsers(await usersTask);
+                var statusSecondaries = ConvertDataTableToStatusSecondaries(await statusSecondariesTask);
+                var assignments = ConvertDataTableToAdminZoneStatusAssignments(await assignmentsTask);
+                
+                var matrix = new StatusAssignmentMatrixDto
+                {
+                    Zones = zones,
+                    Users = users,
+                    StatusSecondaries = statusSecondaries,
+                    Assignments = assignments
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("GetStatusAssignments", 
+                    $"Retrieved matrix with {zones.Count} zones, {users.Count} users, {statusSecondaries.Count} status secondaries, {assignments.Count} assignments", 
+                    stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<StatusAssignmentMatrixDto>
+                {
+                    Success = true,
+                    Message = "Status assignment matrix retrieved successfully",
+                    Data = matrix,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetStatusAssignments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving status assignment matrix");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving status assignment matrix",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("attackpoints")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointDto>>>> GetAttackPoints([FromQuery] int topCount = 15)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attack points with top {TopCount} per admin", topCount);
+                
+                // Validate input
+                if (topCount <= 0 || topCount > 100)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "TopCount must be between 1 and 100",
+                        Count = 0
+                    });
+                }
+
+                // Get data from service
+                var dataTable = await _dataService.GetAttackPointsAsync(topCount);
+                var attackPoints = ConvertDataTableToAttackPoints(dataTable);
+
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPoints", $"Retrieved {attackPoints.Count} attack points with top {topCount} per admin", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<List<AttackPointDto>>
+                {
+                    Success = true,
+                    Message = "Attack points retrieved successfully",
+                    Data = attackPoints,
+                    Count = attackPoints.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPoints", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack points with top {TopCount} per admin", topCount);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack points",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("attackpointactionabledates")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointActionableDateDto>>>> GetAttackPointActionableDates()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all attack point actionable dates");
+                
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointActionableDatesAsync();
+                var actionableDates = ConvertDataTableToAttackPointActionableDates(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointActionableDates", $"Retrieved {actionableDates.Count} attack point actionable dates", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttackPointActionableDateDto>>
+                {
+                    Success = true,
+                    Message = "Attack point actionable dates retrieved successfully",
+                    Data = actionableDates,
+                    Count = actionableDates.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointActionableDates", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attack point actionable dates");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point actionable dates",
+                    Count = 0
+                });
+            }
+        }
+    #endregion
+
+
+
+    #region Post
+    [HttpPost("workorders")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersPost([FromBody] WorkOrderRequest request)
+        {
+            return await GetWorkOrders(request.NumberOfDays);
+        }
+    
+        [HttpPost("workorders/schedule")]
+        public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedulePost([FromBody] WorkOrderRequest request)
+        {
+            return await GetWorkOrdersSchedule(request.NumberOfDays);
+        }
+
+        [HttpPost("attackpoints")]
+        public async Task<ActionResult<ApiResponse<List<AttackPointDto>>>> GetAttackPointsPost([FromBody] AttackPointRequest request)
+        {
+            return await GetAttackPoints(request.TopCount);
+        }
+
+        [HttpPost("users")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> CreateUser([FromBody] CreateUserRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new user: {Username}", request.Username);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Username must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 6)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Password must be at least 6 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (request.OId <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid Organization ID is required",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateUserAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Get the created user to return
+                    var userDataTable = await _dataService.GetUserByIdAsync(newId.Value);
+                    var users = ConvertDataTableToUsers(userDataTable);
+                    var newUser = users.First();
+                    
+                    // Don't return the password in the response
+                    newUser.Password = string.Empty;
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateUser", $"Created user - {request.Username} ({request.FirstName} {request.LastName}) with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<UserDto>
+                    {
+                        Success = true,
+                        Message = "User created successfully",
+                        Data = newUser,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateUser", $"Failed to create user - {request.Username}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create user",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateUser", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating user {Username}", request.Username);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the user",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("statusassignments")]
+        public async Task<ActionResult<ApiResponse<AdminZoneStatusAssignmentDto>>> CreateStatusAssignment([FromBody] CreateAdminZoneStatusAssignmentRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                // Validate input
+                if (request.UserId <= 0 || request.ZoneId <= 0 || request.StatusSecondaryId <= 0)
+                {
+                    return BadRequest(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = false,
+                        Message = "Valid User ID, Zone ID, and Status Secondary ID are required",
+                        Count = 0
+                    });
+                }
+
+                // Create assignment
+                var newId = await _dataService.CreateAdminZoneStatusAssignmentAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (newId.HasValue)
+                {
+                    var newAssignment = new AdminZoneStatusAssignmentDto
+                    {
+                        Id = newId.Value,
+                        UserId = request.UserId,
+                        ZoneId = request.ZoneId,
+                        StatusSecondaryId = request.StatusSecondaryId,
+                        InsertDateTime = DateTime.UtcNow
+                    };
+                    
+                    await LogOperationAsync("CreateStatusAssignment", 
+                        $"Created assignment {newId} for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = true,
+                        Message = "Status assignment created successfully",
+                        Data = newAssignment,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogErrorAsync("CreateStatusAssignment", 
+                        new Exception("Failed to create status assignment - no ID returned"), 
+                        stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AdminZoneStatusAssignmentDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create status assignment",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateStatusAssignment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                return StatusCode(500, new ApiResponse<AdminZoneStatusAssignmentDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the status assignment",
+                    Count = 0
+                });
+            }
+        }
+    #endregion
+
+
+
+    #region Put
+    [HttpPut("users/{id}")]
+    [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<UserDto>>> UpdateUser(int id, [FromBody] UpdateUserRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating user {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Username must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                // If password is provided, validate it
+                if (!string.IsNullOrEmpty(request.Password) && request.Password.Length < 6)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Password must be at least 6 characters long",
+                        Count = 0
+                    });
+                }
+                
+                if (request.OId <= 0)
+                {
+                    return BadRequest(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "Valid Organization ID is required",
+                        Count = 0
+                    });
+                }
+
+                // Update user
+                var success = await _dataService.UpdateUserAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Get the updated user to return
+                    var userDataTable = await _dataService.GetUserByIdAsync(id);
+                    if (userDataTable.Rows.Count > 0)
+                    {
+                        var users = ConvertDataTableToUsers(userDataTable);
+                        var updatedUser = users.First();
+                        
+                        // Don't return the password in the response
+                        updatedUser.Password = string.Empty;
+                        
+                        // Log with JSON payload as detail object for better formatting
+                        await LogAuditAsync("UpdateUser", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+            
+                        return Ok(new ApiResponse<UserDto>
+                        {
+                            Success = true,
+                            Message = "User updated successfully",
+                            Data = updatedUser,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<UserDto>
+                        {
+                            Success = true,
+                            Message = "User updated successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<UserDto>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateUser", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating user {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<UserDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the user",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("priorities/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdatePriority(int id, [FromBody] UpdatePriorityRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating priority {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.PriorityName))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Priority name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update priority
+                var success = await _dataService.UpdatePriorityAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdatePriority", $"Updated priority {id} - {request.PriorityName}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Priority updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Priority not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdatePriority", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating priority {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the priority",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("statussecondaries/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateStatusSecondary(int id, [FromBody] UpdateStatusSecondaryRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating status secondary {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.StatusSecondary))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Status secondary name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update status secondary
+                var success = await _dataService.UpdateStatusSecondaryAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdateStatusSecondary", $"Updated status secondary {id} - {request.StatusSecondary}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Status secondary updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Status secondary not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateStatusSecondary", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating status secondary {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the status secondary",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("callcenters/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateCallCenter(int id, [FromBody] UpdateCallCenterRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating call center {Id}", id);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Name))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Call center name is required",
+                        Count = 0
+                    });
+                }
+
+                // Update call center
+                var success = await _dataService.UpdateCallCenterAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Log successful operation
+                    await LogOperationAsync("UpdateCallCenter", $"Updated call center {id} - {request.Name}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Call center updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Call center not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateCallCenter", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating call center {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the call center",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("callcenters")]
+        public async Task<ActionResult<ApiResponse<CallCenterDto>>> CreateCallCenter([FromBody] CreateCallCenterRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new call center: {Name}", request.Name);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<CallCenterDto>
+                    {
+                        Success = false,
+                        Message = "Call center name must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateCallCenterAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newCallCenter = new CallCenterDto
+                    {
+                        Id = newId.Value,
+                        OId = request.O_id,
+                        Name = request.Name,
+                        Active = request.Active,
+                        TempId = null,
+                        Note = request.Note,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateCallCenter", $"Created call center - {request.Name} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<CallCenterDto>
+                    {
+                        Success = true,
+                        Message = "Call center created successfully",
+                        Data = newCallCenter,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateCallCenter", $"Failed to create call center - {request.Name}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<CallCenterDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create call center",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateCallCenter", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating call center {Name}", request.Name);
+                
+                return StatusCode(500, new ApiResponse<CallCenterDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the call center",
+                    Count = 0
+                });
+            }
+        }
+
+        // Attack Point Notes endpoints
+        [HttpPut("attackpointnotes/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointNote(int id, [FromBody] UpdateAttackPointNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Description))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Description is required",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointNoteAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointNote", $"Updated attack point note {id} - {request.Description}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point note updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointNote", $"Failed to update attack point note {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point note",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point note {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point note",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointnotes")]
+        public async Task<ActionResult<ApiResponse<AttackPointNoteDto>>> CreateAttackPointNote([FromBody] CreateAttackPointNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point note: {Description}", request.Description);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = false,
+                        Message = "Description must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointNoteAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newAttackPointNote = new AttackPointNoteDto
+                    {
+                        Id = newId.Value,
+                        Description = request.Description,
+                        Hours = request.Hours,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointNote", $"Created attack point note - {request.Description} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = true,
+                        Message = "Attack point note created successfully",
+                        Data = newAttackPointNote,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointNote", $"Failed to create attack point note - {request.Description}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointNoteDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point note",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointNote", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point note {Description}", request.Description);
+                
+                return StatusCode(500, new ApiResponse<AttackPointNoteDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point note",
+                    Count = 0
+                });
+            }
+        }
+
+        // Attack Point Actionable Date endpoints
+        [HttpPut("attackpointactionabledates/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointActionableDate(int id, [FromBody] UpdateAttackPointActionableDateRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (string.IsNullOrWhiteSpace(request.Description))
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Description is required",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointActionableDateAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointActionableDate", $"Updated attack point actionable date {id} - {request.Description}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point actionable date updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointActionableDate", $"Failed to update attack point actionable date {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point actionable date",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointActionableDate", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point actionable date {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point actionable date",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointactionabledates")]
+        public async Task<ActionResult<ApiResponse<AttackPointActionableDateDto>>> CreateAttackPointActionableDate([FromBody] CreateAttackPointActionableDateRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point actionable date: {Description}", request.Description);
+                
+                // Validate the request
+                if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Length < 3)
+                {
+                    return BadRequest(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = false,
+                        Message = "Description must be at least 3 characters long",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointActionableDateAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newActionableDate = new AttackPointActionableDateDto
+                    {
+                        Id = newId.Value,
+                        Description = request.Description,
+                        Days = request.Days,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointActionableDate", $"Created attack point actionable date - {request.Description} with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = true,
+                        Message = "Attack point actionable date created successfully",
+                        Data = newActionableDate,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointActionableDate", $"Failed to create attack point actionable date - {request.Description}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointActionableDateDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point actionable date",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointActionableDate", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point actionable date {Description}", request.Description);
+                
+                return StatusCode(500, new ApiResponse<AttackPointActionableDateDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point actionable date",
+                    Count = 0
+                });
+            }
+        }
+
+        // Attack Point Status endpoints
+        [HttpPut("attackpointstatus/{id}")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointStatus(int id, [FromBody] UpdateAttackPointStatusRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+                
+                if (request.DaysInStatus < 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Days in status must be non-negative",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateAttackPointStatusAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointStatus", $"Updated attack point status {id} - {request.DaysInStatus} days", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point status updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointStatus", $"Failed to update attack point status {id}", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point status",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attack point status {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point status",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointstatus")]
+        public async Task<ActionResult<ApiResponse<AttackPointStatusDto>>> CreateAttackPointStatus([FromBody] CreateAttackPointStatusRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new attack point status: {DaysInStatus} days", request.DaysInStatus);
+                
+                // Validate the request
+                if (request.DaysInStatus < 0)
+                {
+                    return BadRequest(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = false,
+                        Message = "Days in status must be non-negative",
+                        Count = 0
+                    });
+                }
+                
+                var newId = await _dataService.CreateAttackPointStatusAsync(request);
+                
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newAttackPointStatus = new AttackPointStatusDto
+                    {
+                        Id = newId.Value,
+                        DaysInStatus = request.DaysInStatus,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+                    
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointStatus", $"Created attack point status - {request.DaysInStatus} days with ID {newId.Value}", stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = true,
+                        Message = "Attack point status created successfully",
+                        Data = newAttackPointStatus,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointStatus", $"Failed to create attack point status - {request.DaysInStatus} days", stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<AttackPointStatusDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point status",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointStatus", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error creating attack point status {DaysInStatus}", request.DaysInStatus);
+                
+                return StatusCode(500, new ApiResponse<AttackPointStatusDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point status",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpDelete("statusassignments")]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteStatusAssignment([FromBody] DeleteAdminZoneStatusAssignmentRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Deleting status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                // Validate input
+                if (request.UserId <= 0 || request.ZoneId <= 0 || request.StatusSecondaryId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid User ID, Zone ID, and Status Secondary ID are required",
+                        Count = 0
+                    });
+                }
+
+                // Delete assignment
+                var success = await _dataService.DeleteAdminZoneStatusAssignmentAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogOperationAsync("DeleteStatusAssignment", 
+                        $"Deleted assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Status assignment deleted successfully",
+                        Count = 0
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("DeleteStatusAssignment", 
+                        $"Failed to delete assignment for User {request.UserId}, Zone {request.ZoneId}, Status {request.StatusSecondaryId}", 
+                        stopwatch.Elapsed);
+                    
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to delete status assignment",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteStatusAssignment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error deleting status assignment for User {UserId}, Zone {ZoneId}, Status {StatusSecondaryId}", 
+                    request.UserId, request.ZoneId, request.StatusSecondaryId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting the status assignment",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("workorders/{id}/escalated")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateWorkOrderEscalated(int id, [FromBody] UpdateWorkOrderEscalatedRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating escalated status for work order {Id} to {IsEscalated}", id, request.IsEscalated);
+                
+                // Validate input
+                if (id != request.ServiceRequestId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+
+                // Update escalated status
+                var success = await _dataService.UpdateWorkOrderEscalatedAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    var action = request.IsEscalated ? "escalated" : "un-escalated";
+                    await LogOperationAsync("UpdateWorkOrderEscalated", $"Work order {id} {action}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = $"Work order {action} successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Work order not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateWorkOrderEscalated", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating escalated status for work order {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the work order escalated status",
+                    Count = 0
+                });
+            }
+        }
+    #endregion
+
+
+    #region Helper Methods
+
+    private static string CleanString(object value)
+    {
+        return value?.ToString()?.Trim()?.Replace("\r\n", "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+    }
+
+    private static List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
+    {
+        var workOrders = new List<WorkOrderDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var workOrder = new WorkOrderDto
+            {
+                sr_id = Convert.ToInt32(row["sr_id"]),
+                CreateDate = row["CreateDate"]?.ToString() ?? string.Empty,
+                CallCenter = CleanString(row["CallCenter"]),
+                Company = CleanString(row["Company"]),
+                Trade = CleanString(row["Trade"]),
+                StartDate = row["StartDate"]?.ToString() ?? string.Empty,
+                EndDate = row["EndDate"]?.ToString() ?? string.Empty,
+                RequestNumber = CleanString(row["RequestNumber"]),
+                TotalDue = row["TotalDue"] != DBNull.Value ? Convert.ToDecimal(row["TotalDue"]) : null,
+                Priority = CleanString(row["Priority"]),
+                Status = CleanString(row["Status"]),
+                SecondaryStatus = CleanString(row["SecondaryStatus"]),
+                StatusColor = CleanString(row["StatusColor"]),
+                AssignedFirstName = CleanString(row["AssignedFirstName"]),
+                AssignedLastName = CleanString(row["AssignedLastName"]),
+                Location = CleanString(row["Location"]),
+                Address = CleanString(row["Address"]),
+                City = CleanString(row["City"]),
+                Zone = CleanString(row["Zone"]),
+                CreatedBy = CleanString(row["CreatedBy"]),
+                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null
+            };
+
+            workOrders.Add(workOrder);
+        }
+
+        return workOrders;
+    }
+
+    private static List<PriorityDto> ConvertDataTableToPriorities(DataTable dataTable)
+    {
+        var priorities = new List<PriorityDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var priority = new PriorityDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                PriorityName = CleanString(row["PriorityName"]),
+                Order = row["Order"] != DBNull.Value ? Convert.ToInt32(row["Order"]) : null,
+                Color = CleanString(row["Color"]),
+                ArrivalTimeInHours = row["ArrivalTimeInHours"] != DBNull.Value ? Convert.ToDecimal(row["ArrivalTimeInHours"]) : null,
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            priorities.Add(priority);
+        }
+
+        return priorities;
+    }
+
+    private static List<StatusSecondaryDto> ConvertDataTableToStatusSecondaries(DataTable dataTable)
+    {
+        var statusSecondaries = new List<StatusSecondaryDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var statusSecondary = new StatusSecondaryDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                StatusId = Convert.ToInt32(row["StatusId"]),
+                StatusSecondary = CleanString(row["StatusSecondary"]),
+                Color = CleanString(row["Color"]),
+                Code = CleanString(row["Code"]),
+                Attack = row["Attack"] != DBNull.Value ? Convert.ToInt32(row["Attack"]) : 0
+            };
+
+            statusSecondaries.Add(statusSecondary);
+        }
+
+        return statusSecondaries;
+    }
+
+    private static List<CallCenterDto> ConvertDataTableToCallCenters(DataTable dataTable)
+    {
+        var callCenters = new List<CallCenterDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var callCenter = new CallCenterDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                OId = Convert.ToInt32(row["OId"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Name = row["Name"]?.ToString() ?? string.Empty,
+                Active = Convert.ToBoolean(row["Active"]),
+                TempId = row["TempId"]?.ToString(),
+                Note = row["Note"]?.ToString(),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            callCenters.Add(callCenter);
+        }
+
+        return callCenters;
+    }
+
+    private static List<AttackPointNoteDto> ConvertDataTableToAttackPointNotes(DataTable dataTable)
+    {
+        var attackPointNotes = new List<AttackPointNoteDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPointNote = new AttackPointNoteDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Description = row["Description"]?.ToString() ?? string.Empty,
+                Hours = Convert.ToInt32(row["Hours"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            attackPointNotes.Add(attackPointNote);
+        }
+
+        return attackPointNotes;
+    }
+
+    private static List<AttackPointActionableDateDto> ConvertDataTableToAttackPointActionableDates(DataTable dataTable)
+    {
+        var actionableDates = new List<AttackPointActionableDateDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var actionableDate = new AttackPointActionableDateDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Description = row["Description"]?.ToString() ?? string.Empty,
+                Days = Convert.ToInt32(row["Days"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            actionableDates.Add(actionableDate);
+        }
+
+        return actionableDates;
+    }
+
+    private static List<AttackPointStatusDto> ConvertDataTableToAttackPointStatus(DataTable dataTable)
+    {
+        var attackPointStatus = new List<AttackPointStatusDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPointStatusItem = new AttackPointStatusDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                DaysInStatus = Convert.ToInt32(row["DaysInStatus"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            attackPointStatus.Add(attackPointStatusItem);
+        }
+
+        return attackPointStatus;
+    }
+
+    private static List<ZoneDto> ConvertDataTableToZones(DataTable dataTable)
+    {
+        var zones = new List<ZoneDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var zone = new ZoneDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Number = row["Number"]?.ToString() ?? string.Empty,
+                Description = row["Description"]?.ToString(),
+                Acronym = row["Acronym"]?.ToString(),
+                UserId = Convert.ToInt32(row["UserId"])
+            };
+
+            zones.Add(zone);
+        }
+
+        return zones;
+    }
+
+    private static List<UserDto> ConvertDataTableToUsers(DataTable dataTable)
+    {
+        var users = new List<UserDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var user = new UserDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                OId = Convert.ToInt32(row["OId"]),
+                AId = row["AId"] != DBNull.Value ? Convert.ToInt32(row["AId"]) : null,
+                VId = row["VId"] != DBNull.Value ? Convert.ToInt32(row["VId"]) : null,
+                SupervisorId = row["SupervisorId"] != DBNull.Value ? Convert.ToInt32(row["SupervisorId"]) : null,
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                Password = row["Password"]?.ToString() ?? string.Empty,
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                PhoneHome = row["PhoneHome"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"]),
+                Picture = row["Picture"]?.ToString(),
+                SSN = row["SSN"]?.ToString(),
+                DateOfHire = row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
+                DateEligiblePTO = row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
+                DateEligibleVacation = row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
+                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                ClothingShirt = row["ClothingShirt"]?.ToString(),
+                ClothingJacket = row["ClothingJacket"]?.ToString(),
+                ClothingPants = row["ClothingPants"]?.ToString(),
+                WirelessProvider = row["WirelessProvider"]?.ToString(),
+                PreferredNotification = row["PreferredNotification"]?.ToString(),
+                QuickBooksName = row["QuickBooksName"]?.ToString(),
+                PasswordChanged = row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
+                U_2FA = row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
+                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                CovidVaccineDate = row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
+                Note = row["Note"]?.ToString(),
+                NoteDashboard = row["NoteDashboard"]?.ToString()
+            };
+
+            users.Add(user);
+        }
+
+        return users;
+    }
+
+    private static List<TechnicianDto> ConvertDataTableToTechnicians(DataTable dataTable)
+    {
+        var technicians = new List<TechnicianDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var technician = new TechnicianDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                Email = row["Email"]?.ToString(),
+                Picture = row["Picture"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString()
+            };
+
+            technicians.Add(technician);
+        }
+
+        return technicians;
+    }
+
+    private static List<AdminZoneStatusAssignmentDto> ConvertDataTableToAdminZoneStatusAssignments(DataTable dataTable)
+    {
+        var assignments = new List<AdminZoneStatusAssignmentDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var assignment = new AdminZoneStatusAssignmentDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                UserId = Convert.ToInt32(row["UserId"]),
+                ZoneId = Convert.ToInt32(row["ZoneId"]),
+                StatusSecondaryId = Convert.ToInt32(row["StatusSecondaryId"]),
+                UserDisplayName = row["UserDisplayName"]?.ToString(),
+                ZoneName = row["ZoneName"]?.ToString(),
+                StatusSecondaryName = row["StatusSecondaryName"]?.ToString()
+            };
+
+            assignments.Add(assignment);
+        }
+
+        return assignments;
+    }
+
+    private static List<AttackPointDto> ConvertDataTableToAttackPoints(DataTable dataTable)
+    {
+        var attackPoints = new List<AttackPointDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPoint = new AttackPointDto
+            {
+                sr_id = Convert.ToInt32(row["sr_id"]),
+                sr_requestnumber = CleanString(row["sr_requestnumber"]),
+                sr_insertdatetime = Convert.ToDateTime(row["sr_insertdatetime"]),
+                sr_totaldue = row["sr_totaldue"] != DBNull.Value ? Convert.ToDecimal(row["sr_totaldue"]) : null,
+                sr_datenextstep = row["sr_datenextstep"] != DBNull.Value ? Convert.ToDateTime(row["sr_datenextstep"]) : null,
+                sr_actionablenote = CleanString(row["sr_actionablenote"]),
+                sr_escalated = row["sr_escalated"] != DBNull.Value ? Convert.ToDateTime(row["sr_escalated"]) : null,
+                wo_startdatetime = row["wo_startdatetime"] != DBNull.Value ? Convert.ToDateTime(row["wo_startdatetime"]) : null,
+                zone = CleanString(row["zone"]),
+                admin_u_id = row["admin_u_id"] != DBNull.Value ? Convert.ToInt32(row["admin_u_id"]) : null,
+                admin_firstname = CleanString(row["admin_firstname"]),
+                admin_lastname = CleanString(row["admin_lastname"]),
+                cc_name = CleanString(row["cc_name"]),
+                c_name = CleanString(row["c_name"]),
+                p_priority = CleanString(row["p_priority"]),
+                ss_statussecondary = CleanString(row["ss_statussecondary"]),
+                t_trade = CleanString(row["t_trade"]),
+                hours_since_last_note = row["hours_since_last_note"] != DBNull.Value ? Convert.ToInt32(row["hours_since_last_note"]) : 0,
+                days_in_current_status = row["days_in_current_status"] != DBNull.Value ? Convert.ToInt32(row["days_in_current_status"]) : 0,
+                AttackCallCenter = row["AttackCallCenter"] != DBNull.Value ? Convert.ToInt32(row["AttackCallCenter"]) : 0,
+                AttackPriority = row["AttackPriority"] != DBNull.Value ? Convert.ToInt32(row["AttackPriority"]) : 0,
+                AttackStatusSecondary = row["AttackStatusSecondary"] != DBNull.Value ? Convert.ToInt32(row["AttackStatusSecondary"]) : 0,
+                AttackHoursSinceLastNote = row["AttackHoursSinceLastNote"] != DBNull.Value ? Convert.ToInt32(row["AttackHoursSinceLastNote"]) : 0,
+                AttackDaysInStatus = row["AttackDaysInStatus"] != DBNull.Value ? Convert.ToInt32(row["AttackDaysInStatus"]) : 0,
+                AttackActionableDate = row["AttackActionableDate"] != DBNull.Value ? Convert.ToInt32(row["AttackActionableDate"]) : 0,
+                AttackPoints = row["AttackPoints"] != DBNull.Value ? Convert.ToInt32(row["AttackPoints"]) : 0
+            };
+
+            attackPoints.Add(attackPoint);
+        }
+
+        return attackPoints;
+    }
+
+    private async Task LogOperationAsync(string operation, string detail, TimeSpan elapsed)
+    {
+        await LogAuditAsync(operation, detail, elapsed.TotalSeconds.ToString("F3"));
+    }
+
+    private async Task LogErrorAsync(string operation, Exception ex, TimeSpan elapsed)
+    {
+        await LogAuditErrorAsync(operation, ex, new { ResponseTime = elapsed.TotalSeconds.ToString("F3") });
+    }
+
+    #endregion
+
+    #region Missing Receipts
+
+    [HttpGet("missing-receipts")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<MissingReceiptDashboardDto>>>> GetMissingReceipts()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting missing receipts for all users");
+            
+            var receipts = await _dataService.GetMissingReceiptsAsync();
+            
+            stopwatch.Stop();
+            // await LogOperationAsync("GetMissingReceipts", $"Retrieved {receipts.Count} missing receipts", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = true,
+                Message = "Missing receipts retrieved successfully",
+                Data = receipts,
+                Count = receipts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetMissingReceipts", ex);
+            
+            return StatusCode(500, new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve missing receipts"
+            });
+        }
+    }
+
+    [HttpPost("missing-receipts/upload")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<int>>> UploadMissingReceipts([FromBody] List<MissingReceiptUploadDto> receipts)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Uploading {Count} missing receipts for user {UserId}", receipts.Count, UserId);
+            
+            if (!receipts.Any())
+            {
+                return BadRequest(new ApiResponse<int>
+                {
+                    Success = false,
+                    Message = "No receipt data provided"
+                });
+            }
+
+            var uploadedCount = await _dataService.UploadMissingReceiptsAsync(receipts);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UploadMissingReceipts", $"Uploaded {uploadedCount} missing receipts", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<int>
+            {
+                Success = true,
+                Message = $"Successfully uploaded {uploadedCount} missing receipts",
+                Data = uploadedCount,
+                Count = uploadedCount
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UploadMissingReceipts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<int>
+            {
+                Success = false,
+                Message = "Failed to upload missing receipts"
+            });
+        }
+    }
+
+    #endregion
+}
