@@ -14,15 +14,23 @@ public class GoogleMapsService : IGoogleMapsService
     private readonly HttpClient _httpClient;
     private readonly ILogger<GoogleMapsService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IAuditService _auditService;
     private readonly string _apiKey;
     private const string DISTANCE_MATRIX_BASE_URL = "https://maps.googleapis.com/maps/api/distancematrix/json";
 
-    public GoogleMapsService(HttpClient httpClient, IConfiguration configuration, ILogger<GoogleMapsService> logger)
+    public GoogleMapsService(HttpClient httpClient, IConfiguration configuration, ILogger<GoogleMapsService> logger, IAuditService auditService)
     {
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
-        _apiKey = configuration["GoogleMaps:ApiKey"] ?? throw new ArgumentException("Google Maps API key not configured");
+        _auditService = auditService;
+        
+        // Try multiple configuration sources to get the API key
+        var configApiKey = configuration["GoogleMaps:ApiKey"];
+        var envVar1 = configuration["GOOGLE_MAPS_API_KEY"];
+        
+        // Use the first available key, prioritizing environment variables
+        _apiKey = envVar1 ?? configApiKey ?? throw new ArgumentException("Google Maps API key not configured");
     }
 
     public async Task<GoogleMapsDistanceResult?> GetDistanceAndDurationAsync(string origin, string destination)
@@ -69,6 +77,19 @@ public class GoogleMapsService : IGoogleMapsService
         if (!origins.Any() || !destinations.Any())
         {
             _logger.LogWarning("Origins or destinations list is empty");
+            
+            // Log empty request to audit table
+            await _auditService.LogAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "GoogleMapsService",
+                Description = "GetDistanceMatrixAsync - Empty Request",
+                Detail = $"Origins count: {origins.Count}, Destinations count: {destinations.Count}",
+                IPAddress = "System",
+                UserAgent = "EvoAPI GoogleMapsService",
+                MachineName = Environment.MachineName
+            });
+            
             return results;
         }
 
@@ -118,6 +139,18 @@ public class GoogleMapsService : IGoogleMapsService
 
             _logger.LogInformation("Returned {TotalCount} results ({CachedCount} cached, {ApiCount} from API)", 
                 results.Count, cachedResults.Count, results.Count - cachedResults.Count);
+                
+            // Log final results summary to audit table
+            await _auditService.LogAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "GoogleMapsService",
+                Description = "GetDistanceMatrixAsync - Results Summary",
+                Detail = $"Total results: {results.Count}, Cached: {cachedResults.Count}, From API: {results.Count - cachedResults.Count}",
+                IPAddress = "System",
+                UserAgent = "EvoAPI GoogleMapsService",
+                MachineName = Environment.MachineName
+            });
         }
         catch (Exception ex)
         {
@@ -231,6 +264,7 @@ public class GoogleMapsService : IGoogleMapsService
     private async Task<List<GoogleMapsDistanceResult>> CallGoogleMapsApiAsync(List<string> origins, List<string> destinations)
     {
         var results = new List<GoogleMapsDistanceResult>();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
@@ -248,6 +282,18 @@ public class GoogleMapsService : IGoogleMapsService
             _logger.LogInformation("Calling Google Maps API for {OriginCount} origins and {DestinationCount} destinations", 
                 origins.Count, destinations.Count);
 
+            // Log API call to audit table
+            await _auditService.LogAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "GoogleMapsService",
+                Description = "Google Maps Distance Matrix API Call",
+                Detail = $"Origins: {origins.Count}, Destinations: {destinations.Count}",
+                IPAddress = "System",
+                UserAgent = "EvoAPI GoogleMapsService",
+                MachineName = Environment.MachineName
+            });
+
             var response = await _httpClient.GetAsync(url);
             response.EnsureSuccessStatusCode();
 
@@ -257,11 +303,41 @@ public class GoogleMapsService : IGoogleMapsService
                 PropertyNameCaseInsensitive = true
             });
 
+            stopwatch.Stop();
+
             if (apiResponse == null || apiResponse.Status != "OK")
             {
                 _logger.LogWarning("Google Maps API returned status: {Status}", apiResponse?.Status ?? "null");
+                
+                // Log API failure to audit table
+                await _auditService.LogErrorAsync(new AuditEntry
+                {
+                    Username = "SYSTEM",
+                    Name = "GoogleMapsService",
+                    Description = "Google Maps API Error Response",
+                    Detail = $"Status: {apiResponse?.Status ?? "null"}, Response: {jsonContent}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00"),
+                    IPAddress = "System",
+                    UserAgent = "EvoAPI GoogleMapsService",
+                    MachineName = Environment.MachineName,
+                    IsError = true
+                });
+                
                 return results;
             }
+
+            // Log successful API call
+            await _auditService.LogAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "GoogleMapsService",
+                Description = "Google Maps API Success",
+                Detail = $"Retrieved distance matrix data successfully. Response status: {apiResponse.Status}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00"),
+                IPAddress = "System",
+                UserAgent = "EvoAPI GoogleMapsService",
+                MachineName = Environment.MachineName
+            });
 
             // Parse the response matrix
             for (int originIndex = 0; originIndex < origins.Count && originIndex < apiResponse.Rows.Count; originIndex++)
@@ -297,7 +373,22 @@ public class GoogleMapsService : IGoogleMapsService
         }
         catch (Exception ex)
         {
+            stopwatch?.Stop();
             _logger.LogError(ex, "Error calling Google Maps Distance Matrix API");
+            
+            // Log API error to audit table
+            await _auditService.LogErrorAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "GoogleMapsService",
+                Description = "Google Maps API Exception",
+                Detail = $"Error calling Distance Matrix API: {ex.Message}. Origins: {origins.Count}, Destinations: {destinations.Count}",
+                ResponseTime = stopwatch?.Elapsed.TotalSeconds.ToString("0.00") ?? "0",
+                IPAddress = "System",
+                UserAgent = "EvoAPI GoogleMapsService",
+                MachineName = Environment.MachineName,
+                IsError = true
+            });
         }
 
         return results;
