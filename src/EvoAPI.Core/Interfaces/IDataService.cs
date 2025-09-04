@@ -57,5 +57,8 @@ public interface IDataService
     Task<DataTable> GetWorkOrderSchedulingConflictsAsync();
     Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync();
     
+    // Attachments methods
+    Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

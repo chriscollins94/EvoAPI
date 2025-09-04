@@ -3322,6 +3322,65 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    att_id,
+                    att_insertdatetime,
+                    att_filename,
+                    att_description,
+                    att_active,
+                    att_receipt,
+                    att_public,
+                    att_signoff,
+                    att_submittedby,
+                    att_receiptamount,
+                    sr_id
+                FROM attachment 
+                WHERE sr_id = @sr_id
+                ORDER BY att_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@sr_id"] = srId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByServiceRequest",
+                Detail = $"Retrieved {result.Rows.Count} attachments for service request {srId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByServiceRequest",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachments for service request {SrId}", srId);
+            throw;
+        }
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)

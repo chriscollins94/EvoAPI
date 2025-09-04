@@ -811,6 +811,59 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("attachments")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetAttachments([FromQuery] int srId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attachments for service request {SrId}", srId);
+                
+                // Validate input
+                if (srId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid service request ID is required",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetAttachmentsByServiceRequestAsync(srId);
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttachments", $"Retrieved {attachments.Count} attachments for service request {srId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attachments for service request {SrId}", srId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -2351,6 +2404,33 @@ public class EvoApiController : BaseController
     private async Task LogErrorAsync(string operation, Exception ex, TimeSpan elapsed)
     {
         await LogAuditErrorAsync(operation, ex, new { ResponseTime = elapsed.TotalSeconds.ToString("F3") });
+    }
+
+    private static List<AttachmentDto> ConvertDataTableToAttachments(DataTable dataTable)
+    {
+        var attachments = new List<AttachmentDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attachment = new AttachmentDto
+            {
+                att_id = Convert.ToInt32(row["att_id"]),
+                att_insertdatetime = Convert.ToDateTime(row["att_insertdatetime"]),
+                att_filename = CleanString(row["att_filename"]),
+                att_description = CleanString(row["att_description"]),
+                att_active = Convert.ToBoolean(row["att_active"]),
+                att_receipt = Convert.ToBoolean(row["att_receipt"]),
+                att_public = Convert.ToBoolean(row["att_public"]),
+                att_signoff = Convert.ToBoolean(row["att_signoff"]),
+                att_submittedby = CleanString(row["att_submittedby"]),
+                att_receiptamount = row["att_receiptamount"] != DBNull.Value ? Convert.ToDecimal(row["att_receiptamount"]) : null,
+                sr_id = Convert.ToInt32(row["sr_id"])
+            };
+
+            attachments.Add(attachment);
+        }
+
+        return attachments;
     }
 
     #endregion
