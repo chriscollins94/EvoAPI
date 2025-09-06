@@ -23,6 +23,7 @@ public class WorkOrderDto
     public string Zone { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? Escalated { get; set; }
+    public string ActionableNote { get; set; } = string.Empty;
    
 }
 

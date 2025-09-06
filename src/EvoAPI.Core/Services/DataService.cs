@@ -53,6 +53,7 @@ public class DataService : IDataService
                         z.z_number            AS Zone,
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -75,7 +76,7 @@ public class DataService : IDataService
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
                     WHERE 
-                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected','Paid', 'Invoiced')))
+                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
@@ -100,7 +101,8 @@ public class DataService : IDataService
                     City,
                     Zone,
                     CreatedBy,
-                    Escalated
+                    Escalated,
+                    ActionableNote
                 FROM RankedOrders
                 ORDER BY sr_id desc;";
 
@@ -169,6 +171,7 @@ public class DataService : IDataService
                         z.z_number            AS Zone,
                             u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -216,7 +219,8 @@ public class DataService : IDataService
                     City,
                     Zone,
                     CreatedBy,
-                    Escalated
+                    Escalated,
+                    ActionableNote
                 FROM RankedOrders
                 ORDER BY CallCenter, Company, Trade, requestnumber;";
 

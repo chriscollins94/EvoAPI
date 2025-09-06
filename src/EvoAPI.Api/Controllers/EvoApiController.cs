@@ -2056,7 +2056,7 @@ public class EvoApiController : BaseController
         return value?.ToString()?.Trim()?.Replace("\r\n", "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
     }
 
-    private static List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
+    private List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
     {
         var workOrders = new List<WorkOrderDto>();
 
@@ -2084,7 +2084,8 @@ public class EvoApiController : BaseController
                 City = CleanString(row["City"]),
                 Zone = CleanString(row["Zone"]),
                 CreatedBy = CleanString(row["CreatedBy"]),
-                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null
+                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
+                ActionableNote = CleanString(row["ActionableNote"])
             };
 
             workOrders.Add(workOrder);
