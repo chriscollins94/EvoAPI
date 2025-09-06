@@ -6,7 +6,7 @@ namespace EvoAPI.Core.Interfaces;
 public interface IDataService
 {
     Task<DataTable> GetWorkOrdersAsync(int numberOfDays);
-    Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays);
+    Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays, int? technicianId = null);
     Task<bool> UpdateWorkOrderEscalatedAsync(UpdateWorkOrderEscalatedRequest request);
     Task<DataTable> GetAllPrioritiesAsync();
     Task<bool> UpdatePriorityAsync(UpdatePriorityRequest request);

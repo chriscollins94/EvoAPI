@@ -139,7 +139,7 @@ public class DataService : IDataService
         }
     }
 
-    public async Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays)
+    public async Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays, int? technicianId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -147,7 +147,9 @@ public class DataService : IDataService
         {
             if (numberOfDays > 1500) numberOfDays = 180;
 
-            const string sql = @" 
+            var technicianFilter = technicianId.HasValue ? "AND u.u_id = @technicianId" : "";
+
+            const string sqlTemplate = @" 
                 WITH RankedOrders AS (
                     SELECT
                         sr.sr_id              AS sr_id,
@@ -197,6 +199,7 @@ public class DataService : IDataService
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
+                        {technicianFilter}
                 )
                 SELECT
                     sr_id,
@@ -224,7 +227,13 @@ public class DataService : IDataService
                 FROM RankedOrders
                 ORDER BY CallCenter, Company, Trade, requestnumber;";
 
+            var sql = sqlTemplate.Replace("{technicianFilter}", technicianFilter);
             var parameters = new Dictionary<string, object> { { "@numberOfDays", numberOfDays } };
+            
+            if (technicianId.HasValue)
+            {
+                parameters.Add("@technicianId", technicianId.Value);
+            }
 
             var result = await ExecuteQueryAsync(sql, parameters);
             

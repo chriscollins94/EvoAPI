@@ -84,7 +84,7 @@ public class EvoApiController : BaseController
         }
 
     [HttpGet("workorders/schedule")]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
+    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30, [FromQuery] int? technicianId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -104,13 +104,14 @@ public class EvoApiController : BaseController
             }
 
             // Get data from service
-            var dataTable = await _dataService.GetWorkOrdersScheduleAsync(numberOfDays);
+            var dataTable = await _dataService.GetWorkOrdersScheduleAsync(numberOfDays, technicianId);
             var workOrders = ConvertDataTableToWorkOrders(dataTable);
 
             stopwatch.Stop();
 
             // Log successful operation
-            await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days", stopwatch.Elapsed);
+            var technicianInfo = technicianId.HasValue ? $" for technician {technicianId.Value}" : " for all technicians";
+            await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days{technicianInfo}", stopwatch.Elapsed);
 
             return Ok(new ApiResponse<List<WorkOrderDto>>
             {
