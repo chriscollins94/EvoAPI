@@ -126,6 +126,56 @@ dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi
 
 **Important Note**: The `dotnet run` command to start the EvoAPI will be run manually by Chris. AI systems should not attempt to run or automate this command.
 
+## Local Development Configuration
+
+### Secrets Management
+For local development, EvoAPI uses `appsettings.secrets.json` to store sensitive configuration values like API keys and database passwords. This file is **NOT** committed to version control.
+
+**Location**: `src/EvoAPI.Api/appsettings.secrets.json`
+
+**Structure**:
+```json
+{
+  "GoogleMaps": {
+    "ApiKey": "AIzaSy..."
+  },
+  "DB_PASSWORD": "actual_password_here"
+}
+```
+
+### Configuration Hierarchy
+The configuration system loads values in this order (later sources override earlier ones):
+1. `appsettings.json` (base settings)
+2. `appsettings.{Environment}.json` (environment-specific settings)
+3. `appsettings.secrets.json` (local secrets - **only for local development**)
+4. Environment variables (for Test/Production Azure deployments)
+
+### Environment-Specific Configuration
+- **Local Development**: Uses `appsettings.secrets.json` for sensitive values
+- **Test Environment (Azure)**: Uses environment variables (`GOOGLE_MAPS_API_KEY`, `DB_PASSWORD`)
+- **Production Environment (Azure)**: Uses environment variables (`GOOGLE_MAPS_API_KEY`, `DB_PASSWORD`)
+
+### Configuration Loading (Program.cs)
+The `Program.cs` automatically loads the secrets file for local development:
+```csharp
+// Add secrets file if it exists (for local development in any environment)
+var secretsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.secrets.json");
+if (File.Exists(secretsPath))
+{
+    builder.Configuration.AddJsonFile("appsettings.secrets.json", optional: true, reloadOnChange: true);
+}
+```
+
+### Adding New Secrets
+1. **For local development**: Add to `appsettings.secrets.json`
+2. **For Test/Production**: Set as environment variables in Azure
+3. **Configuration files**: Use placeholder format `"ApiKey": "${ENVIRONMENT_VARIABLE_NAME}"`
+
+### Important Security Notes
+- `appsettings.secrets.json` is in `.gitignore` and **never** committed to source control
+- Environment-specific config files (`appsettings.Test.json`, etc.) use placeholders like `${GOOGLE_MAPS_API_KEY}`
+- Real values are only in the secrets file (local) or environment variables (Azure)
+
 ### Adding New Endpoints
 1. **Create controller** inheriting from `BaseController`
 2. **Use appropriate authorization** attributes
@@ -199,6 +249,7 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 
 - `Controllers/BaseController.cs` - **Authentication base class**
 - `Controllers/EvoApiController.cs` - Main business endpoints
+- `Controllers/MappingController.cs` - **Google Maps API proxy and caching**
 - `Shared/Attributes/` - `EvoAuthorize`, `AdminOnly` attributes
 - `Shared/Models/ApiResponse.cs` - Standard response wrapper
 - `Shared/DTOs/` - Data transfer objects for API responses

@@ -20,6 +20,8 @@ public class WorkOrderDto
     public string Location { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string Zip { get; set; } = string.Empty;
     public string Zone { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? Escalated { get; set; }
@@ -45,31 +47,4 @@ public class ApiResponse<T>
     public T? Data { get; set; }
     public int Count { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-}
-
-public class GoogleMapsDistanceDto
-{
-    public DistanceDto Distance { get; set; } = new DistanceDto();
-    public DurationDto Duration { get; set; } = new DurationDto();
-    public DurationDto? DurationInTraffic { get; set; }
-    public bool Success { get; set; }
-    public string Message { get; set; } = string.Empty;
-    public string Source { get; set; } = string.Empty;
-    public string FromAddress { get; set; } = string.Empty;
-    public string ToAddress { get; set; } = string.Empty;
-    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-}
-
-public class DistanceDto
-{
-    public int Meters { get; set; }
-    public double Miles { get; set; }
-    public string Text { get; set; } = string.Empty;
-}
-
-public class DurationDto
-{
-    public int Seconds { get; set; }
-    public double Minutes { get; set; }
-    public string Text { get; set; } = string.Empty;
 }

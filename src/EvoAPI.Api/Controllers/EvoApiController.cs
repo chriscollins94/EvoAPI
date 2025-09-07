@@ -2083,6 +2083,8 @@ public class EvoApiController : BaseController
                 Location = CleanString(row["Location"]),
                 Address = CleanString(row["Address"]),
                 City = CleanString(row["City"]),
+                State = CleanString(row["State"]),
+                Zip = CleanString(row["Zip"]),
                 Zone = CleanString(row["Zone"]),
                 CreatedBy = CleanString(row["CreatedBy"]),
                 Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
