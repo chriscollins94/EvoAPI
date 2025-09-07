@@ -1938,13 +1938,19 @@ public class DataService : IDataService
                     u.u_username as Username, 
                     u.u_email as Email, 
                     u.u_picture as Picture, 
-                    u.u_phonemobile as PhoneMobile 
-                FROM [user] u, role r, xrefUserRole x 
-                WHERE u.u_id = x.u_id 
-                    AND r.r_id = x.r_id 
-                    AND r.r_role = 'Technician' 
+                    u.u_phonemobile as PhoneMobile,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM [user] u
+                INNER JOIN xrefUserRole x ON u.u_id = x.u_id
+                INNER JOIN role r ON r.r_id = x.r_id
+                LEFT JOIN address a ON u.a_id = a.a_id
+                WHERE r.r_role = 'Technician' 
                     AND u.u_active = 1 
-                ORDER BY u_lastname";
+                ORDER BY u.u_lastname";
 
             var result = await ExecuteQueryAsync(sql);
             
@@ -3390,6 +3396,271 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error retrieving attachments for service request {SrId}", srId);
+            throw;
+        }
+    }
+
+    public async Task<MapDistanceDto?> GetCachedDistanceAsync(string fromAddress, string toAddress)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Normalize addresses for consistent caching
+            var normalizedFrom = fromAddress.Trim().ToLowerInvariant();
+            var normalizedTo = toAddress.Trim().ToLowerInvariant();
+
+            const string sql = @"
+                SELECT TOP 1
+                    md_id,
+                    md_address1,
+                    md_address2,
+                    md_distance_miles,
+                    md_distance_text,
+                    md_traveltime_minutes,
+                    md_traveltime_text,
+                    md_traveltime_traffic_minutes,
+                    md_traveltime_traffic_text,
+                    md_insertdatetime,
+                    md_modifieddatetime
+                FROM MapDistance
+                WHERE LOWER(LTRIM(RTRIM(md_address1))) = @fromAddress
+                AND LOWER(LTRIM(RTRIM(md_address2))) = @toAddress
+                ORDER BY ISNULL(md_modifieddatetime, md_insertdatetime) DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@fromAddress", normalizedFrom },
+                { "@toAddress", normalizedTo }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCachedDistance",
+                Detail = $"Retrieved cached distance from '{fromAddress}' to '{toAddress}', found: {result.Rows.Count > 0}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            if (result.Rows.Count == 0)
+                return null;
+
+            var row = result.Rows[0];
+            return new MapDistanceDto
+            {
+                md_id = ConvertToInt(row["md_id"]),
+                md_address1 = row["md_address1"]?.ToString() ?? string.Empty,
+                md_address2 = row["md_address2"]?.ToString() ?? string.Empty,
+                md_distance_miles = row["md_distance_miles"] != DBNull.Value ? Convert.ToDecimal(row["md_distance_miles"]) : null,
+                md_distance_meters = null, // Not available in database
+                md_distance_text = row["md_distance_text"]?.ToString(),
+                md_traveltime_minutes = row["md_traveltime_minutes"] != DBNull.Value ? ConvertToInt(row["md_traveltime_minutes"]) : null,
+                md_traveltime_seconds = null, // Not available in database  
+                md_traveltime_text = row["md_traveltime_text"]?.ToString(),
+                md_traveltime_traffic_minutes = row["md_traveltime_traffic_minutes"] != DBNull.Value ? ConvertToInt(row["md_traveltime_traffic_minutes"]) : null,
+                md_traveltime_traffic_seconds = null, // Not available in database
+                md_traveltime_traffic_text = row["md_traveltime_traffic_text"]?.ToString(),
+                md_created_date = row["md_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_insertdatetime"]) : DateTime.MinValue,
+                md_last_updated = row["md_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_modifieddatetime"]) : 
+                                 (row["md_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_insertdatetime"]) : DateTime.MinValue)
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving cached distance from '{FromAddress}' to '{ToAddress}'", fromAddress, toAddress);
+            throw;
+        }
+    }
+
+    public async Task<int> SaveCachedDistanceAsync(SaveMapDistanceRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Normalize addresses for consistent caching
+            var normalizedFrom = request.FromAddress.Trim().ToLowerInvariant();
+            var normalizedTo = request.ToAddress.Trim().ToLowerInvariant();
+
+            // Check if entry already exists
+            const string checkSql = @"
+                SELECT md_id 
+                FROM MapDistance
+                WHERE LOWER(LTRIM(RTRIM(md_address1))) = @fromAddress
+                AND LOWER(LTRIM(RTRIM(md_address2))) = @toAddress";
+
+            var checkParams = new Dictionary<string, object>
+            {
+                { "@fromAddress", normalizedFrom },
+                { "@toAddress", normalizedTo }
+            };
+
+            var existingResult = await ExecuteQueryAsync(checkSql, checkParams);
+
+            string sql;
+            Dictionary<string, object> parameters;
+
+            if (existingResult.Rows.Count > 0)
+            {
+                // Update existing record
+                var existingId = ConvertToInt(existingResult.Rows[0]["md_id"]);
+                
+                sql = @"
+                    UPDATE MapDistance 
+                    SET 
+                        md_distance_miles = @distanceMiles,
+                        md_distance_text = @distanceText,
+                        md_traveltime_minutes = @travelTimeMinutes,
+                        md_traveltime_text = @travelTimeText,
+                        md_traveltime_traffic_minutes = @travelTimeTrafficMinutes,
+                        md_traveltime_traffic_text = @travelTimeTrafficText,
+                        md_modifieddatetime = GETUTCDATE()
+                    WHERE md_id = @id";
+
+                parameters = new Dictionary<string, object>
+                {
+                    { "@id", existingId },
+                    { "@distanceMiles", (object?)request.DistanceMiles ?? DBNull.Value },
+                    { "@distanceText", (object?)request.DistanceText ?? DBNull.Value },
+                    { "@travelTimeMinutes", (object?)request.TravelTimeMinutes ?? DBNull.Value },
+                    { "@travelTimeText", (object?)request.TravelTimeText ?? DBNull.Value },
+                    { "@travelTimeTrafficMinutes", (object?)request.TravelTimeTrafficMinutes ?? DBNull.Value },
+                    { "@travelTimeTrafficText", (object?)request.TravelTimeTrafficText ?? DBNull.Value }
+                };
+
+                await ExecuteNonQueryAsync(sql, parameters);
+                
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "SaveCachedDistance",
+                    Detail = $"Updated cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return existingId;
+            }
+            else
+            {
+                // Insert new record
+                sql = @"
+                    INSERT INTO MapDistance (
+                        md_address1, md_address2, md_distance_miles, md_distance_text,
+                        md_traveltime_minutes, md_traveltime_text,
+                        md_traveltime_traffic_minutes, md_traveltime_traffic_text,
+                        md_insertdatetime
+                    ) 
+                    OUTPUT INSERTED.md_id
+                    VALUES (
+                        @fromAddress, @toAddress, @distanceMiles, @distanceText,
+                        @travelTimeMinutes, @travelTimeText,
+                        @travelTimeTrafficMinutes, @travelTimeTrafficText,
+                        GETUTCDATE()
+                    )";
+
+                parameters = new Dictionary<string, object>
+                {
+                    { "@fromAddress", request.FromAddress.Trim() },
+                    { "@toAddress", request.ToAddress.Trim() },
+                    { "@distanceMiles", (object?)request.DistanceMiles ?? DBNull.Value },
+                    { "@distanceText", (object?)request.DistanceText ?? DBNull.Value },
+                    { "@travelTimeMinutes", (object?)request.TravelTimeMinutes ?? DBNull.Value },
+                    { "@travelTimeText", (object?)request.TravelTimeText ?? DBNull.Value },
+                    { "@travelTimeTrafficMinutes", (object?)request.TravelTimeTrafficMinutes ?? DBNull.Value },
+                    { "@travelTimeTrafficText", (object?)request.TravelTimeTrafficText ?? DBNull.Value }
+                };
+
+                var insertResult = await ExecuteQueryAsync(sql, parameters);
+                var newId = ConvertToInt(insertResult.Rows[0][0]);
+                
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "SaveCachedDistance",
+                    Detail = $"Inserted new cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return newId;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "SaveCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error saving cached distance from '{FromAddress}' to '{ToAddress}'", request.FromAddress, request.ToAddress);
+            throw;
+        }
+    }
+
+    public async Task<int> CleanupCachedDistanceAsync(int olderThanDays)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM MapDistance 
+                WHERE md_created_date < DATEADD(DAY, -@olderThanDays, GETUTCDATE())";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@olderThanDays", olderThanDays }
+            };
+
+            var deletedCount = await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CleanupCachedDistance",
+                Detail = $"Deleted {deletedCount} cached distance entries older than {olderThanDays} days",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return deletedCount;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CleanupCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error cleaning up cached distance data older than {OlderThanDays} days", olderThanDays);
             throw;
         }
     }

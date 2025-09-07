@@ -60,5 +60,10 @@ public interface IDataService
     // Attachments methods
     Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId);
     
+    // Mapping/Distance Cache methods
+    Task<MapDistanceDto?> GetCachedDistanceAsync(string fromAddress, string toAddress);
+    Task<int> SaveCachedDistanceAsync(SaveMapDistanceRequest request);
+    Task<int> CleanupCachedDistanceAsync(int olderThanDays);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

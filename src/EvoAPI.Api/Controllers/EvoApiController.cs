@@ -2322,7 +2322,12 @@ public class EvoApiController : BaseController
                 Username = row["Username"]?.ToString() ?? string.Empty,
                 Email = row["Email"]?.ToString(),
                 Picture = row["Picture"]?.ToString(),
-                PhoneMobile = row["PhoneMobile"]?.ToString()
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                Address1 = row["Address1"] == DBNull.Value ? null : row["Address1"]?.ToString(),
+                Address2 = row["Address2"] == DBNull.Value ? null : row["Address2"]?.ToString(),
+                City = row["City"] == DBNull.Value ? null : row["City"]?.ToString(),
+                State = row["State"] == DBNull.Value ? null : row["State"]?.ToString(),
+                Zip = row["Zip"] == DBNull.Value ? null : row["Zip"]?.ToString()
             };
 
             technicians.Add(technician);

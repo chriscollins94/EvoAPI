@@ -54,8 +54,11 @@ if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PA
 logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
-// Configure Kestrel for HTTPS only in local development
-if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local" || builder.Environment.EnvironmentName == "Test")
+// Configure Kestrel for HTTPS in local development environments
+// Skip HTTPS configuration only when running in actual Azure cloud environment
+var isAzureEnvironment = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME"));
+
+if (!isAzureEnvironment && (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local" || builder.Environment.EnvironmentName == "Test"))
 {
     builder.WebHost.ConfigureKestrel(options =>
     {
