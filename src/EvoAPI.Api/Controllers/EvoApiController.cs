@@ -865,6 +865,51 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("pending-tech-info")]
+        public async Task<ActionResult<ApiResponse<List<PendingTechInfoDto>>>> GetPendingTechInfo([FromQuery] int? userId = null)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                // Use current user ID if none provided
+                var targetUserId = userId ?? UserId;
+                
+                _logger.LogInformation("Getting pending tech info for user {UserId}", targetUserId);
+    
+                // Get data from service
+                var dataTable = await _dataService.GetPendingTechInfoAsync(targetUserId);
+                var pendingTechInfo = ConvertDataTableToPendingTechInfo(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetPendingTechInfo", $"Retrieved {pendingTechInfo.Count} pending tech info records for user {targetUserId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<PendingTechInfoDto>>
+                {
+                    Success = true,
+                    Message = "Pending tech info retrieved successfully",
+                    Data = pendingTechInfo,
+                    Count = pendingTechInfo.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetPendingTechInfo", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving pending tech info for user {UserId}", userId ?? UserId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving pending tech info",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -2440,6 +2485,53 @@ public class EvoApiController : BaseController
         }
 
         return attachments;
+    }
+
+    private static List<PendingTechInfoDto> ConvertDataTableToPendingTechInfo(DataTable dataTable)
+    {
+        var pendingTechInfo = new List<PendingTechInfoDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var info = new PendingTechInfoDto
+            {
+                sr_id = ConvertToInt(row["sr_id"]),
+                xwou_id = ConvertToInt(row["xwou_id"]),
+                sr_requestnumber = CleanString(row["sr_requestnumber"]),
+                u_firstname = CleanString(row["u_firstname"]),
+                u_lastname = CleanString(row["u_lastname"]),
+                wo_insertdatetime = ConvertToDateTime(row["wo_insertdatetime"]),
+                t_trade = CleanString(row["t_trade"]),
+                c_name = CleanString(row["c_name"]),
+                wo_startdatetime = ConvertToDateTime(row["wo_startdatetime"])
+            };
+
+            pendingTechInfo.Add(info);
+        }
+
+        return pendingTechInfo;
+    }
+
+    private static int ConvertToInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return 0;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return 0;
+    }
+
+    private static DateTime ConvertToDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return DateTime.MinValue;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return DateTime.MinValue;
     }
 
     #endregion

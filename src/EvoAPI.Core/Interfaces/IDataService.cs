@@ -60,6 +60,9 @@ public interface IDataService
     // Attachments methods
     Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId);
     
+    // Pending Tech Info methods
+    Task<DataTable> GetPendingTechInfoAsync(int userId);
+    
     // Mapping/Distance Cache methods
     Task<MapDistanceDto?> GetCachedDistanceAsync(string fromAddress, string toAddress);
     Task<int> SaveCachedDistanceAsync(SaveMapDistanceRequest request);

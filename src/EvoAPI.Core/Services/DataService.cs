@@ -3404,6 +3404,78 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetPendingTechInfoAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    wo.sr_id, 
+                    xwou.xwou_id, 
+                    sr.sr_requestnumber, 
+                    u.u_firstname, 
+                    u.u_lastname, 
+                    wo.wo_insertdatetime, 
+                    t.t_trade, 
+                    c.c_name, 
+                    wo.wo_startdatetime
+                FROM servicerequest sr, 
+                     workorder wo, 
+                     statussecondary ss, 
+                     xrefworkorderuser xwou, 
+                     [user] u, 
+                     trade t, 
+                     xrefcompanycallcenter xccc, 
+                     company c
+                WHERE ss.ss_statussecondary LIKE 'Pending Tech Info%'
+                AND wo.sr_id = sr.sr_id
+                AND sr.xccc_id = xccc.xccc_id
+                AND xccc.c_id = c.c_id
+                AND wo.ss_id = ss.ss_id
+                AND wo.wo_id = xwou.wo_id
+                AND xwou.u_id = u.u_id
+                AND sr.t_id = t.t_id
+                AND xwou.u_id = @u_id 
+                ORDER BY wo.wo_insertdatetime";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@u_id"] = userId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfo",
+                Detail = $"Retrieved {result.Rows.Count} pending tech info records for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfo",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving pending tech info for user {UserId}", userId);
+            throw;
+        }
+    }
+
     public async Task<MapDistanceDto?> GetCachedDistanceAsync(string fromAddress, string toAddress)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
