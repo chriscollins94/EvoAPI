@@ -6,6 +6,7 @@ public class TechDetailReportDto
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string FullName => $"{FirstName} {LastName}".Trim();
+    public string TechnicianName => FullName; // Alias for frontend compatibility
     public int PerformanceId { get; set; }
     public DateTime? PerformanceDate { get; set; }
     public string Utilization { get; set; } = string.Empty;
@@ -23,6 +24,26 @@ public class TechDetailReportDto
     public string ZoneDisplay => !string.IsNullOrWhiteSpace(ZoneNumber) ? 
         $"Zone {ZoneNumber}" : 
         "No Zone";
+    public string Zone => ZoneDisplay; // Alias for frontend compatibility
+    
+    // Calculated percentage properties for frontend display
+    public double? UtilizationPercentage => ParsePercentage(Utilization);
+    public double? ProfitabilityPercentage => ParsePercentage(Profitability);
+    public double? AttendancePercentage => ParsePercentage(Attendance);
+    
+    private double? ParsePercentage(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+            
+        // Remove % symbol if present and try to parse
+        var cleanValue = value.Replace("%", "").Trim();
+        
+        if (double.TryParse(cleanValue, out var result))
+            return result;
+            
+        return null;
+    }
     
     private string BuildFullAddress()
     {

@@ -143,6 +143,60 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("tech-detail/{technicianId}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechDetailReportDto>>>> GetTechDetailReportByTechnician(int technicianId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechDetailDashboardAsync();
+            var allReportData = ConvertDataTableToTechDetailReport(dataTable);
+            
+            // Filter to get only the specific technician's data and get the 5 most recent records
+            var technicianData = allReportData
+                .Where(t => t.UserId == technicianId)
+                .OrderByDescending(t => t.PerformanceDate)
+                .Take(5)
+                .ToList();
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechDetailReportByTechnician", $"Retrieved {technicianData.Count} performance records for technician {technicianId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            if (technicianData == null || !technicianData.Any())
+            {
+                return NotFound(new ApiResponse<List<TechDetailReportDto>>
+                {
+                    Success = false,
+                    Message = "Performance data not found for this technician",
+                    Data = new List<TechDetailReportDto>(),
+                    Count = 0
+                });
+            }
+            
+            return Ok(new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = true,
+                Message = "Tech performance data retrieved successfully",
+                Data = technicianData,
+                Count = technicianData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechDetailReportByTechnician", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech performance data"
+            });
+        }
+    }
+
     [HttpGet("tech-activity")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport([FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null)
