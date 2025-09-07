@@ -51,6 +51,7 @@ public interface IDataService
     
     // Missing Receipts methods
     Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync();
+    Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsByUserAsync(int userId);
     Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts);
     
     // Work Order Scheduling Conflicts methods

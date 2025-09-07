@@ -2574,6 +2574,42 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("missing-receipts/user")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<MissingReceiptDashboardDto>>>> GetMissingReceiptsByUser()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting missing receipts for user {UserId}", UserId);
+            
+            var receipts = await _dataService.GetMissingReceiptsByUserAsync(UserId);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetMissingReceiptsByUser", $"Retrieved {receipts.Count} missing receipts for user {UserId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = true,
+                Message = "Missing receipts retrieved successfully",
+                Data = receipts,
+                Count = receipts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetMissingReceiptsByUser", ex);
+            
+            return StatusCode(500, new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve missing receipts"
+            });
+        }
+    }
+
     [HttpPost("missing-receipts/upload")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<int>>> UploadMissingReceipts([FromBody] List<MissingReceiptUploadDto> receipts)

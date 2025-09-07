@@ -2964,6 +2964,78 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsByUserAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT u.u_id, rm.rm_id, rm_dateupload, rm_datereceipt, rm_description, rm_amount, 
+                       u.u_firstname, u.u_lastname, u.u_employeenumber
+                FROM receiptmissing rm
+                INNER JOIN [user] u ON u.u_employeenumber = rm.u_employeenumber
+                WHERE u.u_id = @userId
+                  AND CAST(CAST(rm.rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) = (
+                    SELECT MAX(CAST(CAST(rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE)) 
+                    FROM receiptmissing
+                )
+                ORDER BY rm.rm_id DESC";
+
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@userId", userId);
+            
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+            
+            var receipts = new List<MissingReceiptDashboardDto>();
+            
+            while (await reader.ReadAsync())
+            {
+                receipts.Add(new MissingReceiptDashboardDto
+                {
+                    UId = ConvertToInt(reader["u_id"]),
+                    RmId = ConvertToInt(reader["rm_id"]),
+                    RmDateUpload = reader["rm_dateupload"] as DateTime?,
+                    RmDateReceipt = reader["rm_datereceipt"] as DateTime?,
+                    RmDescription = reader["rm_description"]?.ToString(),
+                    RmAmount = reader["rm_amount"] as decimal?,
+                    UFirstName = reader["u_firstname"]?.ToString(),
+                    ULastName = reader["u_lastname"]?.ToString(),
+                    UEmployeeNumber = reader["u_employeenumber"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMissingReceiptsByUser",
+                Detail = $"Retrieved {receipts.Count} missing receipts for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return receipts;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMissingReceiptsByUser",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving missing receipts for user {UserId}", userId);
+            throw;
+        }
+    }
+
     public async Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
