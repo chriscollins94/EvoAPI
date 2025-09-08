@@ -223,6 +223,9 @@ public class MappingController : BaseController
             var apiKey = _configuration["GoogleMaps:ApiKey"];
             if (string.IsNullOrWhiteSpace(apiKey))
             {
+                await LogAuditErrorAsync("CalculateDistance", 
+                    new Exception("Google Maps API key not configured or empty"));
+                
                 return StatusCode(500, new ApiResponse<GoogleMapsDistanceDto>
                 {
                     Success = false,
@@ -255,20 +258,26 @@ public class MappingController : BaseController
                 });
             }
 
-            var googleResponse = JsonSerializer.Deserialize<EvoAPI.Shared.Models.GoogleMapsApiResponse>(jsonContent, new JsonSerializerOptions
+            var googleResponse = JsonSerializer.Deserialize<EvoAPI.Shared.DTOs.GoogleMapsApiResponse>(jsonContent, new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
             });
 
             if (googleResponse?.Status != "OK")
             {
+                var errorMessage = $"Google Maps API error: {googleResponse?.Status}";
+                if (!string.IsNullOrEmpty(googleResponse?.ErrorMessage))
+                {
+                    errorMessage += $" - {googleResponse.ErrorMessage}";
+                }
+                
                 await LogAuditErrorAsync("CalculateDistance", 
-                    new Exception($"Google Maps API error: {googleResponse?.Status}"));
+                    new Exception($"{errorMessage}. API Key starts with: {apiKey.Substring(0, Math.Min(8, apiKey.Length))}..."));
 
                 return StatusCode(500, new ApiResponse<GoogleMapsDistanceDto>
                 {
                     Success = false,
-                    Message = $"Google Maps API error: {googleResponse?.Status}"
+                    Message = errorMessage
                 });
             }
 
@@ -298,11 +307,11 @@ public class MappingController : BaseController
                     Minutes = (int)Math.Ceiling((element.Duration?.Value ?? 0) / 60.0),
                     Text = element.Duration?.Text ?? ""
                 },
-                DurationInTraffic = element.Duration_in_traffic != null ? new DurationDto
+                DurationInTraffic = element.DurationInTraffic != null ? new DurationDto
                 {
-                    Seconds = element.Duration_in_traffic.Value,
-                    Minutes = (int)Math.Ceiling(element.Duration_in_traffic.Value / 60.0),
-                    Text = element.Duration_in_traffic.Text
+                    Seconds = element.DurationInTraffic.Value,
+                    Minutes = (int)Math.Ceiling(element.DurationInTraffic.Value / 60.0),
+                    Text = element.DurationInTraffic.Text
                 } : null,
                 FromAddress = fromAddress,
                 ToAddress = toAddress,

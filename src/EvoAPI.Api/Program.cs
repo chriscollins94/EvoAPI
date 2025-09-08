@@ -51,6 +51,46 @@ if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PA
     }
 }
 
+// Replace Google Maps API key placeholder with actual key from environment variables
+var googleMapsApiKey = builder.Configuration["GoogleMaps:ApiKey"];
+logger.LogInformation("Original Google Maps API Key: {ApiKey}", 
+    !string.IsNullOrEmpty(googleMapsApiKey) ? $"{googleMapsApiKey.Substring(0, Math.Min(10, googleMapsApiKey.Length))}..." : "NOT FOUND");
+
+if (!string.IsNullOrEmpty(googleMapsApiKey) && googleMapsApiKey.Contains("${GOOGLE_MAPS_API_KEY}"))
+{
+    var envApiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
+    if (!string.IsNullOrEmpty(envApiKey))
+    {
+        builder.Configuration["GoogleMaps:ApiKey"] = envApiKey;
+        logger.LogInformation("Google Maps API key replacement successful from environment variable");
+    }
+    else
+    {
+        logger.LogError("GOOGLE_MAPS_API_KEY environment variable not found");
+    }
+}
+else if (string.IsNullOrEmpty(googleMapsApiKey) || googleMapsApiKey.Contains("your-google-maps-api-key"))
+{
+    // Try to get from environment variable as fallback
+    var envApiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
+    if (!string.IsNullOrEmpty(envApiKey))
+    {
+        builder.Configuration["GoogleMaps:ApiKey"] = envApiKey;
+        logger.LogInformation("Google Maps API key set from environment variable");
+    }
+    else
+    {
+        logger.LogError("Google Maps API key not configured properly - check appsettings or environment variables");
+    }
+}
+
+// Final validation of Google Maps API key
+var finalApiKey = builder.Configuration["GoogleMaps:ApiKey"];
+logger.LogInformation("Final Google Maps API Key status: {Status}", 
+    !string.IsNullOrEmpty(finalApiKey) && !finalApiKey.Contains("$") && !finalApiKey.Contains("your-google-maps") 
+        ? "CONFIGURED" 
+        : "NOT CONFIGURED");
+
 logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
