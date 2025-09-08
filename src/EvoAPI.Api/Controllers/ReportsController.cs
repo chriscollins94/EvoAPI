@@ -151,15 +151,8 @@ public class ReportsController : BaseController
         
         try
         {
-            var dataTable = await _dataService.GetTechDetailDashboardAsync();
-            var allReportData = ConvertDataTableToTechDetailReport(dataTable);
-            
-            // Filter to get only the specific technician's data and get the 5 most recent records
-            var technicianData = allReportData
-                .Where(t => t.UserId == technicianId)
-                .OrderByDescending(t => t.PerformanceDate)
-                .Take(5)
-                .ToList();
+            var dataTable = await _dataService.GetTechDetailByTechnicianAsync(technicianId);
+            var technicianData = ConvertDataTableToTechDetailReport(dataTable);
             
             stopwatch.Stop();
             

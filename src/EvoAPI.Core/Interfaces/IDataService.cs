@@ -46,6 +46,7 @@ public interface IDataService
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
     Task<DataTable> GetTechDetailDashboardAsync();
+    Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId);
     Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null);
     Task<DataTable> GetServiceRequestNumberChangesAsync();
     

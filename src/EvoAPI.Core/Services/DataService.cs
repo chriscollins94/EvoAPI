@@ -2720,6 +2720,81 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            var sql = @"
+                SELECT TOP 5
+                    u.u_id, 
+                    u.u_firstname, 
+                    u.u_lastname, 
+                    perf.perf_id, 
+                    CONVERT(DATE, perf.perf_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time') AS perf_insertdate, 
+                    perf.perf_utilization, 
+                    perf.perf_profitability, 
+                    perf.perf_attendance, 
+                    perf.perf_comment,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    z.z_id,
+                    z.z_number
+                FROM performance perf
+                JOIN [user] u ON perf.u_id = u.u_id
+                LEFT JOIN address a ON u.a_id = a.a_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE u.u_active = 1 
+                    AND perf.u_id = @technicianId
+                ORDER BY perf.perf_insertdatetime DESC;
+            ";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@technicianId", technicianId }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechDetailByTechnician",
+                Detail = $"Retrieved {result.Rows.Count} performance records for technician {technicianId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechDetailByTechnician",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving tech detail data for technician {TechnicianId}", technicianId);
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
