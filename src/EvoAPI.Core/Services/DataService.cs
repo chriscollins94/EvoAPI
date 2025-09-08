@@ -3594,14 +3594,14 @@ FROM DailyTechSummary;
             var result = await ExecuteQueryAsync(sql, parameters);
             
             stopwatch.Stop();
-            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
-            {
-                Name = "DataService",
-                Description = "GetCachedDistance",
-                Detail = $"Retrieved cached distance from '{fromAddress}' to '{toAddress}', found: {result.Rows.Count > 0}",
-                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
-                MachineName = Environment.MachineName
-            });
+            // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            // {
+            //     Name = "DataService",
+            //     Description = "GetCachedDistance",
+            //     Detail = $"Retrieved cached distance from '{fromAddress}' to '{toAddress}', found: {result.Rows.Count > 0}",
+            //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+            //     MachineName = Environment.MachineName
+            // });
 
             if (result.Rows.Count == 0)
                 return null;
@@ -3702,14 +3702,14 @@ FROM DailyTechSummary;
                 await ExecuteNonQueryAsync(sql, parameters);
                 
                 stopwatch.Stop();
-                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
-                {
-                    Name = "DataService",
-                    Description = "SaveCachedDistance",
-                    Detail = $"Updated cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
-                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
-                    MachineName = Environment.MachineName
-                });
+                // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                // {
+                //     Name = "DataService",
+                //     Description = "SaveCachedDistance",
+                //     Detail = $"Updated cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                //     MachineName = Environment.MachineName
+                // });
 
                 return existingId;
             }

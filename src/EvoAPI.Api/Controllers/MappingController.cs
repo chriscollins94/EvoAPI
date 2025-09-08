@@ -319,9 +319,9 @@ public class MappingController : BaseController
             };
 
             stopwatch.Stop();
-            await LogAuditAsync("CalculateDistance", 
-                $"Calculated distance from '{fromAddress}' to '{toAddress}'", 
-                stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            // await LogAuditAsync("CalculateDistance", 
+            //     $"Calculated distance from '{fromAddress}' to '{toAddress}'", 
+            //     stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
 
             return Ok(new ApiResponse<GoogleMapsDistanceDto>
             {
