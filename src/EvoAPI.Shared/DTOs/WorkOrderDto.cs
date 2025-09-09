@@ -29,6 +29,17 @@ public class WorkOrderDto
    
 }
 
+public class ActiveServiceRequestDto
+{
+    public int SrId { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    public DateTime InsertDateTime { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string TechFirstName { get; set; } = string.Empty;
+    public string TechLastName { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+}
+
 public class WorkOrderRequest
 {
     public int NumberOfDays { get; set; } = 30;

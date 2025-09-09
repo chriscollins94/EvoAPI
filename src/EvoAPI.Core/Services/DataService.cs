@@ -2978,6 +2978,76 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetActiveServiceRequestsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            const string sql = @"
+                select sr.sr_id, sr.sr_requestnumber, sr.sr_insertdatetime, s.s_status, u.u_firstname, u.u_lastname, u.u_active
+                from servicerequest sr, workorder wo, xrefworkorderuser x, status s, [user] u, xrefWorkOrderUser xwou
+                where wo.wo_id = x.wo_id
+                and sr.sr_id = wo.sr_id
+                and sr.s_id = s.s_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and s.s_id not in (
+                    select cast(value as int) 
+                    from configsetting cs
+                    cross apply string_split(cs.cs_value, ',')
+                    where cs.cs_identifier = 'WorkOrderStatusActive'
+                )
+                order by u_lastname
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+                    
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetActiveServiceRequests",
+                        Detail = $"Retrieved {dataTable.Rows.Count} active service requests records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveServiceRequests",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving active service requests data");
+            throw;
+        }
+    }
+
     public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

@@ -49,6 +49,7 @@ public interface IDataService
     Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId);
     Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null);
     Task<DataTable> GetServiceRequestNumberChangesAsync();
+    Task<DataTable> GetActiveServiceRequestsAsync();
     
     // Missing Receipts methods
     Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync();

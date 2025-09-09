@@ -317,6 +317,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("active-service-requests")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ActiveServiceRequestDto>>>> GetActiveServiceRequests()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetActiveServiceRequestsAsync();
+            var reportData = ConvertDataTableToActiveServiceRequests(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetActiveServiceRequests", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ActiveServiceRequestDto>>
+            {
+                Success = true,
+                Message = "Active service requests data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetActiveServiceRequests", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ActiveServiceRequestDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve active service requests data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -621,6 +657,27 @@ public class ReportsController : BaseController
                 AverageTravelTime = ConvertToDecimal(row["avg_travel_time"]),
                 MinTravelTime = ConvertToInt(row["min_travel_time"]),
                 MaxTravelTime = ConvertToInt(row["max_travel_time"])
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<ActiveServiceRequestDto> ConvertDataTableToActiveServiceRequests(DataTable dataTable)
+    {
+        var result = new List<ActiveServiceRequestDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ActiveServiceRequestDto
+            {
+                SrId = ConvertToInt(row["sr_id"]),
+                RequestNumber = CleanString(row["sr_requestnumber"]),
+                InsertDateTime = ConvertToDateTime(row["sr_insertdatetime"]) ?? DateTime.MinValue,
+                Status = CleanString(row["s_status"]),
+                TechFirstName = CleanString(row["u_firstname"]),
+                TechLastName = CleanString(row["u_lastname"]),
+                IsActive = ConvertToInt(row["u_active"]) == 1
             });
         }
         
