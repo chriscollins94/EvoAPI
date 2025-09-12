@@ -55,6 +55,7 @@ public class DataService : IDataService
                         z.z_number            AS Zone,
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
@@ -106,6 +107,7 @@ public class DataService : IDataService
                     Zone,
                     CreatedBy,
                     Escalated,
+                    ScheduleLock,
                     ActionableNote
                 FROM RankedOrders
                 ORDER BY sr_id desc;";
@@ -179,6 +181,7 @@ public class DataService : IDataService
                         z.z_number            AS Zone,
                             u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
@@ -231,6 +234,7 @@ public class DataService : IDataService
                     Zone,
                     CreatedBy,
                     Escalated,
+                    ScheduleLock,
                     ActionableNote
                 FROM RankedOrders
                 ORDER BY CallCenter, Company, Trade, requestnumber;";
@@ -316,6 +320,51 @@ public class DataService : IDataService
             });
             
             _logger.LogError(ex, "Error updating escalated status for service request {Id}", request.ServiceRequestId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateWorkOrderScheduleLockAsync(UpdateWorkOrderScheduleLockRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var sql = "UPDATE servicerequest SET sr_schedulelock = @isScheduleLocked WHERE sr_id = @serviceRequestId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@serviceRequestId", request.ServiceRequestId },
+                { "@isScheduleLocked", request.IsScheduleLocked ? 1 : 0 }
+            };
+
+            var result = await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateWorkOrderScheduleLock",
+                Detail = $"Updated schedule lock status for service request {request.ServiceRequestId} to {request.IsScheduleLocked}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateWorkOrderScheduleLock",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating schedule lock status for service request {Id}", request.ServiceRequestId);
             throw;
         }
     }

@@ -2145,6 +2145,70 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPut("workorders/{id}/schedulelock")]
+        [AdminOnly]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateWorkOrderScheduleLock(int id, [FromBody] UpdateWorkOrderScheduleLockRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating schedule lock status for work order {Id} to {IsScheduleLocked}", id, request.IsScheduleLocked);
+                
+                // Validate input
+                if (id != request.ServiceRequestId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+
+                // Update schedule lock status
+                var success = await _dataService.UpdateWorkOrderScheduleLockAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    var action = request.IsScheduleLocked ? "locked" : "unlocked";
+                    await LogOperationAsync("UpdateWorkOrderScheduleLock", $"Work order {id} schedule {action}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = $"Work order schedule {action} successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Work order not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateWorkOrderScheduleLock", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating schedule lock status for work order {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the work order schedule lock status",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -2186,6 +2250,7 @@ public class EvoApiController : BaseController
                 Zone = CleanString(row["Zone"]),
                 CreatedBy = CleanString(row["CreatedBy"]),
                 Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
+                ScheduleLock = row["ScheduleLock"] != DBNull.Value && Convert.ToBoolean(row["ScheduleLock"]),
                 ActionableNote = CleanString(row["ActionableNote"])
             };
 
