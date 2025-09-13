@@ -4098,6 +4098,98 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<List<DrivingScorecardWithTechnicianInfo>> GetAllDrivingScorecardsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var sql = @"
+                SELECT 
+                    u.u_id,
+                    u.u_firstname,
+                    u.u_lastname,
+                    u.u_employeenumber,
+                    COALESCE(violations.SpeedingOver10, 0) AS SpeedingOver10,
+                    COALESCE(violations.SpeedingOver20, 0) AS SpeedingOver20,
+                    COALESCE(violations.HardBreaking, 0) AS HardBreaking,
+                    COALESCE(violations.HardBreakingSevere, 0) AS HardBreakingSevere,
+                    COALESCE(violations.HardAcceleratingSevere, 0) AS HardAcceleratingSevere,
+                    COALESCE(violations.HarshCorneringSevere, 0) AS HarshCorneringSevere
+                FROM [user] u
+                INNER JOIN xrefUserRole x ON u.u_id = x.u_id
+                INNER JOIN role r ON r.r_id = x.r_id
+                LEFT JOIN (
+                    SELECT 
+                        u.u_id,
+                        SUM(CASE WHEN ag.ag_name = 'Speeding over 10' THEN 1 ELSE 0 END) AS SpeedingOver10,
+                        SUM(CASE WHEN ag.ag_name = 'Speeding over 20' THEN 1 ELSE 0 END) AS SpeedingOver20,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Breaking' THEN 1 ELSE 0 END) AS HardBreaking,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Breaking Severe' THEN 1 ELSE 0 END) AS HardBreakingSevere,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Accelerating Severe' THEN 1 ELSE 0 END) AS HardAcceleratingSevere,
+                        SUM(CASE WHEN ag.ag_name = 'Harsh Cornering Severe' THEN 1 ELSE 0 END) AS HarshCorneringSevere
+                    FROM alertgps ag
+                    JOIN [user] u ON u.u_employeenumber = ag.u_employeenumber
+                    WHERE ag.ag_name NOT IN ('Tech Home', 'Driver Home')
+                      AND ag.ag_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' 
+                            >= DATEADD(DAY, -7, GETDATE())
+                    GROUP BY u.u_id
+                ) violations ON u.u_id = violations.u_id
+                WHERE r.r_role = 'Technician' 
+                    AND u.u_active = 1 
+                ORDER BY u.u_lastname, u.u_firstname
+            ";
+
+            var result = await ExecuteQueryAsync(sql);
+            var scorecards = new List<DrivingScorecardWithTechnicianInfo>();
+
+            foreach (DataRow row in result.Rows)
+            {
+                var scorecard = new DrivingScorecardWithTechnicianInfo
+                {
+                    UserId = ConvertToInt(row["u_id"]),
+                    FirstName = row["u_firstname"]?.ToString() ?? "",
+                    LastName = row["u_lastname"]?.ToString() ?? "",
+                    EmployeeNumber = row["u_employeenumber"]?.ToString() ?? "",
+                    SpeedingOver10 = ConvertToInt(row["SpeedingOver10"]),
+                    SpeedingOver20 = ConvertToInt(row["SpeedingOver20"]),
+                    HardBreaking = ConvertToInt(row["HardBreaking"]),
+                    HardBreakingSevere = ConvertToInt(row["HardBreakingSevere"]),
+                    HardAcceleratingSevere = ConvertToInt(row["HardAcceleratingSevere"]),
+                    HarshCorneringSevere = ConvertToInt(row["HarshCorneringSevere"])
+                };
+                
+                scorecards.Add(scorecard);
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllDrivingScorecard",
+                Detail = $"Retrieved driving scorecards for all technicians. Count: {scorecards.Count}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return scorecards;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllDrivingScorecard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving all driving scorecards");
+            throw;
+        }
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)

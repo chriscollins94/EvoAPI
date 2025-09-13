@@ -2815,5 +2815,38 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("driving-scorecards")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<DrivingScorecardWithTechnicianInfo>>>> GetAllDrivingScorecard()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var drivingData = await _dataService.GetAllDrivingScorecardsAsync();
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetAllDrivingScorecard", $"Retrieved driving scorecards for all technicians. Count: {drivingData.Count}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<DrivingScorecardWithTechnicianInfo>>
+            {
+                Success = true,
+                Message = "All driving scorecards retrieved successfully",
+                Data = drivingData,
+                Count = drivingData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAllDrivingScorecard", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<DrivingScorecardWithTechnicianInfo>>
+            {
+                Success = false,
+                Message = "Failed to retrieve all driving scorecards"
+            });
+        }
+    }
+
     #endregion
 }

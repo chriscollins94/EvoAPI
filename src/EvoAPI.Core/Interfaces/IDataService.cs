@@ -74,6 +74,7 @@ public interface IDataService
     
     // Driving Scorecard methods
     Task<DrivingScorecard> GetDrivingScorecardAsync(int userId);
+    Task<List<DrivingScorecardWithTechnicianInfo>> GetAllDrivingScorecardsAsync();
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }
