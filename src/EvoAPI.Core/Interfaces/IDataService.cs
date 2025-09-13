@@ -72,5 +72,8 @@ public interface IDataService
     Task<int> SaveCachedDistanceAsync(SaveMapDistanceRequest request);
     Task<int> CleanupCachedDistanceAsync(int olderThanDays);
     
+    // Driving Scorecard methods
+    Task<DrivingScorecard> GetDrivingScorecardAsync(int userId);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

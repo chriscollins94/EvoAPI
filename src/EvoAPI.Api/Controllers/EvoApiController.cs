@@ -2774,4 +2774,46 @@ public class EvoApiController : BaseController
     }
 
     #endregion
+
+    #region Driving Scorecard
+
+    /// <summary>
+    /// Get driving scorecard data for a specific technician
+    /// </summary>
+    /// <param name="userId">User ID of the technician</param>
+    /// <returns>Driving scorecard data for the past 7 days</returns>
+    [HttpGet("driving-scorecard/{userId}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<DrivingScorecard>>> GetDrivingScorecard(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var drivingData = await _dataService.GetDrivingScorecardAsync(userId);
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetDrivingScorecard", $"Retrieved driving scorecard for user {userId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<DrivingScorecard>
+            {
+                Success = true,
+                Message = "Driving scorecard retrieved successfully",
+                Data = drivingData,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetDrivingScorecard", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<DrivingScorecard>
+            {
+                Success = false,
+                Message = "Failed to retrieve driving scorecard"
+            });
+        }
+    }
+
+    #endregion
 }
