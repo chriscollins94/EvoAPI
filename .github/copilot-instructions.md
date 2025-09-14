@@ -250,9 +250,123 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 - `Controllers/BaseController.cs` - **Authentication base class**
 - `Controllers/EvoApiController.cs` - Main business endpoints
 - `Controllers/MappingController.cs` - **Google Maps API proxy and caching**
+- `Controllers/FleetmaticsController.cs` - **Fleetmatics API integration and vehicle assignment sync**
 - `Shared/Attributes/` - `EvoAuthorize`, `AdminOnly` attributes
 - `Shared/Models/ApiResponse.cs` - Standard response wrapper
 - `Shared/DTOs/` - Data transfer objects for API responses
+
+## Fleetmatics Integration
+
+### Fleetmatics API Architecture
+The Fleetmatics integration provides automated vehicle assignment synchronization with the following components:
+- **FleetmaticsService** - Core API integration with token management and driver lookups
+- **FleetmaticsSyncService** - Daily background service for automated synchronization
+- **FleetmaticsController** - Admin-only REST endpoints for manual operations
+
+### Authentication Flow
+Fleetmatics uses a **two-step authentication process**:
+1. **Token Endpoint**: `POST /token` with Basic Auth → Returns JWT token directly (not JSON wrapped)
+2. **API Calls**: Use special "Atmosphere" authorization format with app ID + Bearer token
+
+```csharp
+// Step 1: Get JWT token (returns raw JWT string, not JSON)
+var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+httpClient.DefaultRequestHeaders.Authorization = 
+    new AuthenticationHeaderValue("Basic", credentials);
+var tokenResponse = await httpClient.PostAsync("/token", content);
+var jwtToken = await tokenResponse.Content.ReadAsStringAsync(); // Direct JWT string
+
+// Step 2: Use Atmosphere authorization for API calls
+httpClient.DefaultRequestHeaders.Authorization = 
+    new AuthenticationHeaderValue("Atmosphere", 
+        $"atmosphere_app_id={atmosphereAppId}, Bearer {jwtToken}");
+```
+
+### Configuration Requirements
+```json
+{
+  "Fleetmatics": {
+    "BaseUrl": "${FLEETMATICS__BASEURL}",           // https://fim.api.us.fleetmatics.com
+    "Username": "${FLEETMATICS__USERNAME}",         // REST_EvoTrakkerAPI_XXXX@XXXXXXX.com
+    "Password": "${FLEETMATICS__PASSWORD}",         // API password
+    "AtmosphereAppId": "${FLEETMATICS__ATMOSPHEREAPPID}", // fleetmatics-p-us-XXXXXXXXXX
+    "SyncHour": 2                                   // Daily sync time (2:00 AM)
+  }
+}
+```
+
+### Environment Variables (Azure)
+- `Fleetmatics__BaseUrl` - Fleetmatics API base URL
+- `Fleetmatics__Username` - API username
+- `Fleetmatics__Password` - API password  
+- `Fleetmatics__AtmosphereAppId` - Required for Atmosphere authorization format
+
+### API Endpoints Structure
+```csharp
+[ApiController]
+[Route("EvoApi/fleetmatics")]  // Note: Azure maps /api/EvoApi/fleetmatics to this route
+public class FleetmaticsController : BaseController
+{
+    [HttpPost("sync-vehicle-assignments")]  // Manual sync all users
+    [HttpGet("driver-assignment/{employeeNumber}")]  // Individual lookup
+    [HttpGet("test-connection")]  // Connection test
+    [HttpGet("sync-service-status")]  // Background service status
+}
+```
+
+### Data Mapping Pattern
+Fleetmatics API returns employee-based vehicle assignments:
+```json
+{
+  "DriverNumber": "099",
+  "VehicleNumber": "82651H2", 
+  "StartDateUTC": "2022-01-20T21:34:00"
+}
+```
+
+Maps to EvoAPI user table updates:
+```sql
+UPDATE [user] 
+SET u_vehiclenumber = @VehicleNumber
+WHERE u_id = @UserId
+-- Note: u_lastmodified handled by database trigger
+```
+
+### Background Service Pattern
+```csharp
+public class FleetmaticsSyncService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var now = DateTime.Now;
+            var nextRun = DateTime.Today.AddHours(_syncHour);
+            
+            if (now >= nextRun)
+                nextRun = nextRun.AddDays(1);
+                
+            var delay = nextRun - now;
+            await Task.Delay(delay, stoppingToken);
+            
+            // Daily sync logic
+            await SyncVehicleAssignments();
+        }
+    }
+}
+```
+
+### Integration Patterns
+**Employee Number Lookup**: Uses `u_employeenumber` field from user table to match Fleetmatics driver assignments
+**Vehicle Assignment**: Updates `u_vehiclenumber` field with current vehicle assignment
+**Audit Logging**: Comprehensive logging of all API calls, errors, and database updates
+**Error Handling**: Graceful handling of missing assignments, API errors, and retry logic
+
+### Common Troubleshooting
+- **"Required Header Parameter Missing: atmosphere_app_id"** → Check AtmosphereAppId configuration
+- **"'e' is an invalid start of a value"** → JWT token parsing issue, ensure handling direct token response
+- **"Invalid column name 'u_lastmodified'"** → Remove from SQL update, handled by database trigger
+- **404 on endpoints** → Check route mapping, use `EvoApi/fleetmatics` not `api/EvoApi/fleetmatics`
 
 ## Critical Don'ts
 - **Never** bypass `BaseController` for authenticated endpoints
@@ -260,6 +374,12 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 - **Never** forget timing measurement with `Stopwatch`
 - **Never** add `ResponseTime` property to `ApiResponse<T>` objects - this property doesn't exist
 - **Never** pass `TimeSpan` to `LogAuditAsync` - convert to string first: `timeSpan.TotalSeconds.ToString("0.00")`
+- **Never** use standard Bearer authorization for Fleetmatics API calls - use Atmosphere format
+- **Never** expect JSON-wrapped token response from Fleetmatics - handle direct JWT string
+- **Never** include `u_lastmodified` in SQL updates - handled by database triggers
+- **Never** use employee numbers directly without URI encoding in API URLs
 - **Always** use async/await patterns consistently
 - **Always** include proper error handling and audit logging
 - **Always** verify `ApiResponse<T>` property names match the actual class definition
+- **Always** use `Fleetmatics__` prefix for environment variables (double underscore for nested config)
+- **Always** validate Fleetmatics DTO property names match actual API response structure
