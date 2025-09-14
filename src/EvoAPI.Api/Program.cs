@@ -117,8 +117,30 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IDataService, DataService>();
 
 // Register HttpClient for Google Maps service
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
 builder.Services.AddScoped<IGoogleMapsService, GoogleMapsService>();
+
+// Register HttpClient and Fleetmatics services
+builder.Services.AddHttpClient<IFleetmaticsService, FleetmaticsService>((serviceProvider, client) =>
+{
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    var baseUrl = configuration["Fleetmatics:BaseUrl"];
+    
+    if (!string.IsNullOrEmpty(baseUrl))
+    {
+        client.BaseAddress = new Uri(baseUrl);
+    }
+    
+    // Configure default timeout for Fleetmatics API calls
+    client.Timeout = TimeSpan.FromMinutes(2);
+    
+    // Add default headers if needed
+    client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-FleetmaticsClient/1.0");
+});
+builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
+
+// Register Fleetmatics background service for daily sync
+builder.Services.AddHostedService<FleetmaticsSyncService>();
 
 // Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

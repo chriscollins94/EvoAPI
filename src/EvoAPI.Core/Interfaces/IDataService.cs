@@ -76,5 +76,9 @@ public interface IDataService
     Task<DrivingScorecard> GetDrivingScorecardAsync(int userId);
     Task<List<DrivingScorecardWithTechnicianInfo>> GetAllDrivingScorecardsAsync();
     
+    // Fleetmatics User methods
+    Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync();
+    Task<bool> UpdateUserVehicleNumberAsync(int userId, string vehicleNumber);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

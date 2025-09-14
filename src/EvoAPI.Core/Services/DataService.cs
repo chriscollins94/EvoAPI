@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Data.SqlClient;
+using System.Diagnostics;
 
 namespace EvoAPI.Core.Services;
 
@@ -4199,5 +4200,121 @@ FROM DailyTechSummary;
             return result;
             
         return 0;
+    }
+
+    public async Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var users = new List<UserFleetmaticsDto>();
+
+        try
+        {
+            _logger.LogDebug("Getting users for Fleetmatics sync");
+
+            var sql = @"
+                SELECT u_id, u_username, u_firstname, u_lastname, u_employeenumber, u_vehiclenumber, u_active
+                FROM [user] 
+                WHERE u_active = 1 
+                AND u_employeenumber IS NOT NULL 
+                AND u_employeenumber != ''
+                AND LEN(TRIM(u_employeenumber)) > 0
+                ORDER BY u_employeenumber";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            foreach (DataRow row in result.Rows)
+            {
+                var user = new UserFleetmaticsDto
+                {
+                    UserId = ConvertToInt(row["u_id"]),
+                    Username = row["u_username"]?.ToString() ?? "",
+                    FirstName = row["u_firstname"]?.ToString() ?? "",
+                    LastName = row["u_lastname"]?.ToString() ?? "",
+                    EmployeeNumber = row["u_employeenumber"]?.ToString() ?? "",
+                    CurrentVehicleNumber = row["u_vehiclenumber"]?.ToString(),
+                    IsActive = Convert.ToBoolean(row["u_active"])
+                };
+
+                users.Add(user);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUsersForFleetmaticsSync",
+                Detail = $"Retrieved {users.Count} users eligible for Fleetmatics sync",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return users;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUsersForFleetmaticsSync",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving users for Fleetmatics sync");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserVehicleNumberAsync(int userId, string vehicleNumber)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogDebug("Updating vehicle number for user {UserId}: {VehicleNumber}", userId, vehicleNumber);
+
+            var sql = @"
+                UPDATE [user] 
+                SET u_vehiclenumber = @VehicleNumber,
+                    u_lastmodified = GETUTCDATE()
+                WHERE u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@VehicleNumber", vehicleNumber }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserVehicleNumber",
+                Detail = $"Updated vehicle number for user {userId}: {vehicleNumber}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserVehicleNumber",
+                Detail = $"Error updating vehicle number for user {userId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating vehicle number for user {UserId}", userId);
+            throw;
+        }
     }
 }
