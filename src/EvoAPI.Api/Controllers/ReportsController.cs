@@ -734,7 +734,14 @@ public class ReportsController : BaseController
             if (DateTime.TryParse(startDateTimeStr, out var parsedDateTime))
             {
                 parsedStartDateTime = parsedDateTime;
-                minutesUntilStart = (int)(parsedDateTime - DateTime.Now).TotalMinutes;
+                
+                // Convert current time to Central Time to match the SQL query time zone conversion
+                // This ensures both times are in the same zone (Central) when calculating the difference
+                var centralTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
+                var nowInCentral = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, centralTimeZone);
+                
+                // Calculate minutes until start using consistent time zones
+                minutesUntilStart = (int)(parsedDateTime - nowInCentral).TotalMinutes;
             }
 
             var firstName = CleanString(row["u_firstname"]);

@@ -11,7 +11,7 @@ public class ArrivingLateReportDto
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string VehicleNumber { get; set; } = string.Empty;
-    public string StartDateTime { get; set; } = string.Empty;
+    public string StartDateTime { get; set; } = string.Empty; // Central Time (converted from UTC in SQL)
     public string Address1 { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;
@@ -26,7 +26,7 @@ public class ArrivingLateReportDto
     public double? DistanceMiles { get; set; }
     public string RiskLevel { get; set; } = string.Empty;
     public bool RequiresImmediateDeparture { get; set; }
-    public int MinutesUntilStart { get; set; }
-    public DateTime? ParsedStartDateTime { get; set; }
+    public int MinutesUntilStart { get; set; } // Minutes from Central Time "now" to StartDateTime
+    public DateTime? ParsedStartDateTime { get; set; } // Central Time (parsed from StartDateTime)
     public string DataSource { get; set; } = string.Empty; // google_maps, database_cache, estimated
 }
