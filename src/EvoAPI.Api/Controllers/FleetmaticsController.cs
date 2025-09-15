@@ -320,6 +320,69 @@ public class FleetmaticsController : BaseController
     }
 
     /// <summary>
+    /// Gets current vehicle locations from Fleetmatics API for specified vehicle numbers
+    /// </summary>
+    [HttpPost("vehicle-locations")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<VehicleLocationDto>>>> GetVehicleLocations([FromBody] List<string> vehicleNumbers)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            if (vehicleNumbers == null || !vehicleNumbers.Any())
+            {
+                return BadRequest(new ApiResponse<List<VehicleLocationDto>>
+                {
+                    Success = false,
+                    Message = "Vehicle numbers list is required and cannot be empty"
+                });
+            }
+
+            // Remove null/empty entries and limit the list
+            var cleanVehicleNumbers = vehicleNumbers
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Take(50) // Limit to 50 vehicles per request
+                .ToList();
+
+            if (!cleanVehicleNumbers.Any())
+            {
+                return BadRequest(new ApiResponse<List<VehicleLocationDto>>
+                {
+                    Success = false,
+                    Message = "No valid vehicle numbers provided"
+                });
+            }
+
+            var vehicleLocations = await _fleetmaticsService.GetVehicleLocationsAsync(cleanVehicleNumbers);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetFleetmaticsVehicleLocations", 
+                new { requestedCount = cleanVehicleNumbers.Count, returnedCount = vehicleLocations.Count }, 
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<VehicleLocationDto>>
+            {
+                Success = true,
+                Message = $"Vehicle locations retrieved successfully for {vehicleLocations.Count} of {cleanVehicleNumbers.Count} vehicles",
+                Data = vehicleLocations,
+                Count = vehicleLocations.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetFleetmaticsVehicleLocations", ex, new { vehicleCount = vehicleNumbers?.Count });
+            
+            return StatusCode(500, new ApiResponse<List<VehicleLocationDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve vehicle locations"
+            });
+        }
+    }
+
+    /// <summary>
     /// DEBUG: Gets raw Fleetmatics API response for debugging JSON parsing issues
     /// </summary>
     [HttpGet("debug-raw-response/{employeeNumber}")]

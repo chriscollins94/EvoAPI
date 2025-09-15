@@ -317,6 +317,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("arriving-late")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ArrivingLateReportDto>>>> GetArrivingLateReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetArrivingLateReportAsync();
+            var reportData = ConvertDataTableToArrivingLateReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetArrivingLateReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ArrivingLateReportDto>>
+            {
+                Success = true,
+                Message = "Arriving late report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetArrivingLateReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ArrivingLateReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve arriving late report data"
+            });
+        }
+    }
+
     [HttpGet("active-service-requests")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<ActiveServiceRequestDto>>>> GetActiveServiceRequests()
@@ -679,6 +715,62 @@ public class ReportsController : BaseController
                 TechLastName = CleanString(row["u_lastname"]),
                 IsActive = ConvertToInt(row["u_active"]) == 1
             });
+        }
+        
+        return result;
+    }
+
+    private static List<ArrivingLateReportDto> ConvertDataTableToArrivingLateReport(DataTable dataTable)
+    {
+        var result = new List<ArrivingLateReportDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var startDateTimeStr = CleanString(row["wo_startdatetime"]);
+            DateTime? parsedStartDateTime = null;
+            var minutesUntilStart = 0;
+            
+            // Try to parse the start date time to calculate minutes until start
+            if (DateTime.TryParse(startDateTimeStr, out var parsedDateTime))
+            {
+                parsedStartDateTime = parsedDateTime;
+                minutesUntilStart = (int)(parsedDateTime - DateTime.Now).TotalMinutes;
+            }
+
+            var firstName = CleanString(row["u_firstname"]);
+            var lastName = CleanString(row["u_lastname"]);
+            var address1 = CleanString(row["a_address1"]);
+            var city = CleanString(row["a_city"]);
+            var state = CleanString(row["a_state"]);
+            var zip = CleanString(row["a_zip"]);
+
+            var dto = new ArrivingLateReportDto
+            {
+                CallCenterName = CleanString(row["cc_name"]),
+                Trade = CleanString(row["t_trade"]),
+                WorkOrderNumber = CleanString(row["wo_workordernumber"]),
+                SrId = ConvertToInt(row["sr_id"]),
+                UserId = ConvertToInt(row["u_id"]),
+                EmployeeNumber = CleanString(row["u_employeenumber"]),
+                FirstName = firstName,
+                LastName = lastName,
+                VehicleNumber = row["u_vehiclenumber"]?.ToString() ?? string.Empty, // Preserve exact format including spaces
+                StartDateTime = startDateTimeStr,
+                Address1 = address1,
+                City = city,
+                State = state,
+                Zip = zip,
+                ParsedStartDateTime = parsedStartDateTime,
+                MinutesUntilStart = minutesUntilStart,
+                RiskLevel = "UNKNOWN", // Will be calculated later with vehicle locations
+                RequiresImmediateDeparture = false, // Will be calculated later
+                DataSource = "database",
+                // Set calculated properties
+                TechnicianName = $"{firstName} {lastName}".Trim(),
+                FullAddress = $"{address1}, {city}, {state} {zip}".Trim()
+            };
+
+            result.Add(dto);
         }
         
         return result;

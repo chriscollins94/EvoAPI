@@ -488,4 +488,214 @@ public class FleetmaticsService : IFleetmaticsService
             throw;
         }
     }
+
+    public async Task<List<VehicleLocationDto>> GetVehicleLocationsAsync(List<string> vehicleNumbers)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var result = new List<VehicleLocationDto>();
+        
+        try
+        {
+            var token = await GetAccessTokenAsync();
+            var baseUrl = _configuration["Fleetmatics:BaseUrl"];
+            var atmosphereAppId = _configuration["Fleetmatics:AtmosphereAppId"];
+
+            // Fleetmatics requires special Atmosphere authorization format
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/rad/v1/vehicles/locations");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Atmosphere", 
+                $"atmosphere_app_id={atmosphereAppId}, Bearer {token}");
+
+            // Set content type and body
+            var jsonContent = JsonSerializer.Serialize(vehicleNumbers);
+            request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            _logger.LogInformation("Requesting vehicle locations for {VehicleCount} vehicles from Fleetmatics", vehicleNumbers.Count);
+            _logger.LogInformation("DEBUG: Exact JSON being sent to Fleetmatics: {JsonContent}", jsonContent);
+            
+            // Also write to console for immediate visibility
+            Console.WriteLine($"=== FLEETMATICS DEBUG ===");
+            Console.WriteLine($"URL: {baseUrl}/rad/v1/vehicles/locations");
+            Console.WriteLine($"Vehicle count: {vehicleNumbers.Count}");
+            Console.WriteLine($"JSON being sent: {jsonContent}");
+            Console.WriteLine($"Content-Type: {request.Content.Headers.ContentType}");
+            Console.WriteLine($"Authorization: {request.Headers.Authorization}");
+            Console.WriteLine($"========================");
+
+            var response = await _httpClient.SendAsync(request);
+            stopwatch.Stop();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Failed to get vehicle locations: {StatusCode} - {ErrorContent}", 
+                    response.StatusCode, errorContent);
+                
+                await _auditService.LogErrorAsync(new AuditEntry
+                {
+                    Username = "SYSTEM",
+                    Name = "FleetmaticsService",
+                    Description = "Vehicle Locations Request Failed",
+                    Detail = $"Status: {response.StatusCode}, Error: {errorContent}, VehicleCount: {vehicleNumbers.Count}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00"),
+                    IPAddress = "System",
+                    UserAgent = "EvoAPI FleetmaticsService",
+                    MachineName = Environment.MachineName,
+                    IsError = true
+                });
+                
+                throw new Exception($"Failed to get vehicle locations: {response.StatusCode}");
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            _logger.LogDebug("Fleetmatics vehicle locations raw response: {ResponseContent}", responseContent);
+            _logger.LogInformation("DEBUG: Full Fleetmatics response: {ResponseContent}", responseContent);
+
+            // Parse the response using the correct array structure (not wrapped in Data property)
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var fleetmaticsResponse = JsonSerializer.Deserialize<List<FleetmaticsLocationData>>(responseContent, options);
+
+            if (fleetmaticsResponse != null)
+            {
+                foreach (var dataItem in fleetmaticsResponse)
+                {
+                    if (dataItem.ContentResource?.Value == null) continue;
+
+                    var locationValue = dataItem.ContentResource.Value;
+                    
+                    // Parse the UpdatedUTC timestamp
+                    var lastUpdateTime = DateTime.UtcNow; // Default fallback
+                    if (!string.IsNullOrEmpty(locationValue.UpdatedUTC))
+                    {
+                        if (DateTime.TryParse(locationValue.UpdatedUTC, out var parsedTime))
+                        {
+                            lastUpdateTime = parsedTime;
+                        }
+                    }
+
+                    // Get address string - prioritize AddressLine1 as it contains the full formatted address
+                    var address = string.Empty;
+                    if (locationValue.Address != null)
+                    {
+                        if (!string.IsNullOrEmpty(locationValue.Address.AddressLine1))
+                        {
+                            // Use the full formatted address from AddressLine1
+                            address = locationValue.Address.AddressLine1;
+                        }
+                        else
+                        {
+                            // Fallback: build address from components
+                            var addressParts = new List<string>();
+                            if (!string.IsNullOrEmpty(locationValue.Address.Locality))
+                                addressParts.Add(locationValue.Address.Locality);
+                            if (!string.IsNullOrEmpty(locationValue.Address.AdministrativeArea))
+                                addressParts.Add(locationValue.Address.AdministrativeArea);
+                            if (!string.IsNullOrEmpty(locationValue.Address.PostalCode))
+                                addressParts.Add(locationValue.Address.PostalCode);
+                            address = string.Join(", ", addressParts);
+                        }
+                    }
+
+                    // Convert string heading to numeric value
+                    double? headingDegrees = ConvertHeadingTodegrees(locationValue.Heading);
+
+                    var dto = new VehicleLocationDto
+                    {
+                        VehicleNumber = dataItem.VehicleNumber,
+                        Latitude = locationValue.Latitude,
+                        Longitude = locationValue.Longitude,
+                        Address = !string.IsNullOrEmpty(address) ? address : "Address unavailable",
+                        LastUpdateTime = lastUpdateTime,
+                        Speed = locationValue.Speed,
+                        Heading = headingDegrees,
+                        IsActive = true
+                    };
+
+                    result.Add(dto);
+                }
+            }
+
+            _logger.LogInformation("Successfully retrieved locations for {LocationCount} of {RequestedCount} vehicles", 
+                result.Count, vehicleNumbers.Count);
+
+            await _auditService.LogAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "FleetmaticsService",
+                Description = "Vehicle Locations Retrieved",
+                Detail = $"Requested: {vehicleNumbers.Count}, Retrieved: {result.Count}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00"),
+                IPAddress = "System",
+                UserAgent = "EvoAPI FleetmaticsService",
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving vehicle locations from Fleetmatics");
+            
+            await _auditService.LogErrorAsync(new AuditEntry
+            {
+                Username = "SYSTEM",
+                Name = "FleetmaticsService",
+                Description = "Vehicle Locations Retrieval Failed",
+                Detail = $"Error: {ex.Message}, VehicleCount: {vehicleNumbers.Count}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("0.00"),
+                IPAddress = "System",
+                UserAgent = "EvoAPI FleetmaticsService",
+                MachineName = Environment.MachineName,
+                IsError = true
+            });
+            
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Converts a string heading direction to degrees
+    /// </summary>
+    /// <param name="heading">Heading direction (e.g., "North", "South", "East", "West", or numeric string)</param>
+    /// <returns>Heading in degrees (0-360) or null if conversion fails</returns>
+    private static double? ConvertHeadingTodegrees(string heading)
+    {
+        if (string.IsNullOrEmpty(heading))
+            return null;
+
+        // Try to parse as a numeric value first
+        if (double.TryParse(heading, out var numericHeading))
+        {
+            // Normalize to 0-360 range
+            while (numericHeading < 0) numericHeading += 360;
+            while (numericHeading >= 360) numericHeading -= 360;
+            return numericHeading;
+        }
+
+        // Convert direction names to degrees
+        return heading.ToUpperInvariant() switch
+        {
+            "N" or "NORTH" => 0,
+            "NNE" or "NORTH-NORTHEAST" => 22.5,
+            "NE" or "NORTHEAST" => 45,
+            "ENE" or "EAST-NORTHEAST" => 67.5,
+            "E" or "EAST" => 90,
+            "ESE" or "EAST-SOUTHEAST" => 112.5,
+            "SE" or "SOUTHEAST" => 135,
+            "SSE" or "SOUTH-SOUTHEAST" => 157.5,
+            "S" or "SOUTH" => 180,
+            "SSW" or "SOUTH-SOUTHWEST" => 202.5,
+            "SW" or "SOUTHWEST" => 225,
+            "WSW" or "WEST-SOUTHWEST" => 247.5,
+            "W" or "WEST" => 270,
+            "WNW" or "WEST-NORTHWEST" => 292.5,
+            "NW" or "NORTHWEST" => 315,
+            "NNW" or "NORTH-NORTHWEST" => 337.5,
+            _ => null // Unknown direction
+        };
+    }
 }

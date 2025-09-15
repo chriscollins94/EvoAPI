@@ -3621,6 +3621,98 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetArrivingLateReportAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                WITH Upcoming AS (
+                    SELECT
+                        cc.cc_name,
+                        t.t_trade,
+                        wo.wo_workordernumber,
+                        sr.sr_id,
+                        u.u_id,
+                        u.u_employeenumber,
+                        u.u_firstname,
+                        u.u_lastname,
+                        u.u_vehiclenumber,
+                        wo.wo_startdatetime,
+                        a.a_address1,
+                        a.a_city,
+                        a.a_state,
+                        a.a_zip,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY u.u_id
+                            ORDER BY wo.wo_startdatetime ASC
+                        ) AS rn
+                    FROM workorder          wo
+                    JOIN servicerequest     sr  ON sr.sr_id = wo.sr_id
+                    JOIN location           l   ON l.l_id = sr.l_id
+                    JOIN address            a   ON a.a_id = l.a_id
+                    JOIN xrefWorkOrderUser  xwou ON xwou.wo_id = wo.wo_id
+                    JOIN [user]             u   ON u.u_id = xwou.u_id
+                    JOIN xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
+                    JOIN CallCenter         cc  ON xccc.cc_id = cc.cc_id
+                    JOIN Trade              t   ON sr.t_id = t.t_id
+                    WHERE wo.wo_startdatetime > GETDATE()
+                      AND wo.wo_startdatetime <= DATEADD(HOUR, 8, GETDATE())
+                      AND cc.cc_name not in ('Administrative', 'Administrative - Automotive')
+                      AND u.u_vehiclenumber not in ('', 'NULL')
+                      AND u.u_vehiclenumber IS NOT NULL
+                )
+                SELECT
+                    cc_name,
+                    t_trade,
+                    wo_workordernumber,
+                    sr_id,
+                    u_id,
+                    u_employeenumber,
+                    u_firstname,
+                    u_lastname,
+                    u_vehiclenumber,
+                    FORMAT(wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') AS wo_startdatetime,
+                    a_address1,
+                    a_city,
+                    a_state,
+                    a_zip
+                FROM Upcoming
+                WHERE rn = 1
+                ORDER BY 1;";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetArrivingLateReport",
+                Detail = $"Retrieved {result.Rows.Count} arriving late report records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetArrivingLateReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving arriving late report");
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

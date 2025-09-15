@@ -61,6 +61,9 @@ public interface IDataService
     Task<DataTable> GetWorkOrderSchedulingConflictsAsync();
     Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync();
     
+    // Arriving Late Report methods
+    Task<DataTable> GetArrivingLateReportAsync();
+    
     // Attachments methods
     Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId);
     

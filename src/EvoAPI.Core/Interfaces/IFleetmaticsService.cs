@@ -36,4 +36,11 @@ public interface IFleetmaticsService
     /// <param name="vehicleNumber">New vehicle number</param>
     /// <returns>True if successful</returns>
     Task<bool> UpdateUserVehicleNumberAsync(int userId, string vehicleNumber);
+    
+    /// <summary>
+    /// Gets current locations for multiple vehicles from Fleetmatics API
+    /// </summary>
+    /// <param name="vehicleNumbers">List of vehicle numbers to get locations for</param>
+    /// <returns>List of vehicle locations</returns>
+    Task<List<VehicleLocationDto>> GetVehicleLocationsAsync(List<string> vehicleNumbers);
 }
