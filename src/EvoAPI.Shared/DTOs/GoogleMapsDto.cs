@@ -12,6 +12,8 @@ public class GoogleMapsDistanceDto
     public string FromAddress { get; set; } = string.Empty;
     public string ToAddress { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
+    public bool ShouldSkipCaching { get; set; } = false;
+    public bool UsedCoordinates { get; set; } = false;
 }
 
 public class DistanceDto

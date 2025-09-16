@@ -207,6 +207,45 @@ public class MappingController : BaseController
         [FromQuery] string toAddress,
         [FromQuery] bool includeTraffic = false)
     {
+        return await CalculateDistanceInternal(fromAddress, toAddress, null, null, null, null, includeTraffic);
+    }
+
+    /// <summary>
+    /// Calculate distance and travel time using Google Maps API with lat/lon coordinates
+    /// </summary>
+    /// <param name="fromAddress">Origin address (for display purposes)</param>
+    /// <param name="toAddress">Destination address (for display purposes)</param>
+    /// <param name="fromLat">Origin latitude</param>
+    /// <param name="fromLng">Origin longitude</param>
+    /// <param name="toLat">Destination latitude</param>
+    /// <param name="toLng">Destination longitude</param>
+    /// <param name="includeTraffic">Whether to include traffic data</param>
+    /// <returns>Distance and travel time data</returns>
+    [HttpGet("calculate-distance-coordinates")]
+    public async Task<ActionResult<ApiResponse<GoogleMapsDistanceDto>>> CalculateDistanceWithCoordinates(
+        [FromQuery] string fromAddress,
+        [FromQuery] string toAddress,
+        [FromQuery] double fromLat,
+        [FromQuery] double fromLng,
+        [FromQuery] double toLat,
+        [FromQuery] double toLng,
+        [FromQuery] bool includeTraffic = false)
+    {
+        return await CalculateDistanceInternal(fromAddress, toAddress, fromLat, fromLng, toLat, toLng, includeTraffic);
+    }
+
+    /// <summary>
+    /// Internal method to calculate distance with optional coordinates
+    /// </summary>
+    private async Task<ActionResult<ApiResponse<GoogleMapsDistanceDto>>> CalculateDistanceInternal(
+        string fromAddress,
+        string toAddress,
+        double? fromLat,
+        double? fromLng,
+        double? toLat,
+        double? toLng,
+        bool includeTraffic)
+    {
         var stopwatch = Stopwatch.StartNew();
 
         try
@@ -219,6 +258,9 @@ public class MappingController : BaseController
                     Message = "Both fromAddress and toAddress are required"
                 });
             }
+
+            // Check if we're dealing with "Unnamed Road" addresses that should not be cached
+            var shouldSkipCaching = IsUnnamedRoadAddress(fromAddress) || IsUnnamedRoadAddress(toAddress);
 
             var apiKey = _configuration["GoogleMaps:ApiKey"];
             if (string.IsNullOrWhiteSpace(apiKey))
@@ -233,10 +275,24 @@ public class MappingController : BaseController
                 });
             }
 
-            var encodedFrom = Uri.EscapeDataString(fromAddress);
-            var encodedTo = Uri.EscapeDataString(toAddress);
-
-            var apiUrl = $"https://maps.googleapis.com/maps/api/distancematrix/json?origins={encodedFrom}&destinations={encodedTo}&units=imperial&key={apiKey}";
+            string apiUrl;
+            
+            // Use coordinates if provided, otherwise use addresses
+            if (fromLat.HasValue && fromLng.HasValue && toLat.HasValue && toLng.HasValue)
+            {
+                // Use lat/lng coordinates for more accurate results
+                apiUrl = $"https://maps.googleapis.com/maps/api/distancematrix/json?origins={fromLat.Value},{fromLng.Value}&destinations={toLat.Value},{toLng.Value}&units=imperial&key={apiKey}";
+                
+                _logger.LogInformation("Using coordinates for distance calculation: ({FromLat},{FromLng}) to ({ToLat},{ToLng})", 
+                    fromLat.Value, fromLng.Value, toLat.Value, toLng.Value);
+            }
+            else
+            {
+                // Fallback to address-based calculation
+                var encodedFrom = Uri.EscapeDataString(fromAddress);
+                var encodedTo = Uri.EscapeDataString(toAddress);
+                apiUrl = $"https://maps.googleapis.com/maps/api/distancematrix/json?origins={encodedFrom}&destinations={encodedTo}&units=imperial&key={apiKey}";
+            }
 
             if (includeTraffic)
             {
@@ -315,13 +371,26 @@ public class MappingController : BaseController
                 } : null,
                 FromAddress = fromAddress,
                 ToAddress = toAddress,
-                Timestamp = DateTime.UtcNow
+                Timestamp = DateTime.UtcNow,
+                ShouldSkipCaching = shouldSkipCaching, // Flag to indicate if this should be cached
+                UsedCoordinates = fromLat.HasValue && fromLng.HasValue && toLat.HasValue && toLng.HasValue
             };
 
             stopwatch.Stop();
-            // await LogAuditAsync("CalculateDistance", 
-            //     $"Calculated distance from '{fromAddress}' to '{toAddress}'", 
-            //     stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            // Log coordinate usage for debugging
+            if (result.UsedCoordinates)
+            {
+                await LogAuditAsync("CalculateDistanceWithCoordinates", 
+                    new { fromAddress, toAddress, fromLat, fromLng, toLat, toLng, shouldSkipCaching }, 
+                    stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            }
+            else if (shouldSkipCaching)
+            {
+                await LogAuditAsync("CalculateDistanceSkipCache", 
+                    new { fromAddress, toAddress, reason = "Unnamed Road detected" }, 
+                    stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            }
 
             return Ok(new ApiResponse<GoogleMapsDistanceDto>
             {
@@ -341,5 +410,32 @@ public class MappingController : BaseController
                 Message = "Failed to calculate distance"
             });
         }
+    }
+
+    /// <summary>
+    /// Check if an address contains "Unnamed Road" or similar problematic values
+    /// </summary>
+    /// <param name="address">Address to check</param>
+    /// <returns>True if address should not be cached</returns>
+    private static bool IsUnnamedRoadAddress(string address)
+    {
+        if (string.IsNullOrWhiteSpace(address)) return false;
+        
+        var addressLower = address.ToLowerInvariant();
+        
+        // Check for various forms of unnamed/unknown roads
+        var unnamedPatterns = new[]
+        {
+            "unnamed road",
+            "unnamed rd",
+            "unnamed street",
+            "unnamed st",
+            "unknown road",
+            "unknown street",
+            "private road",
+            "private way"
+        };
+        
+        return unnamedPatterns.Any(pattern => addressLower.Contains(pattern));
     }
 }
