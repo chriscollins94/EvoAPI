@@ -631,6 +631,73 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpPut("users/{userId}/dashboard-note")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<string>>> UpdateUserDashboardNote(int userId, [FromBody] UpdateDashboardNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating dashboard note for user {UserId} by user {CurrentUserId}", userId, UserId);
+                
+                // Validate input
+                if (userId != request.UserId)
+                {
+                    return BadRequest(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User ID in URL does not match User ID in request body",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+                
+                // Update only the dashboard note
+                var success = await _dataService.UpdateUserDashboardNoteAsync(userId, request.NoteDashboard);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogAuditAsync("UpdateUserDashboardNote", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                    
+                    return Ok(new ApiResponse<string>
+                    {
+                        Success = true,
+                        Message = "Dashboard note updated successfully",
+                        Data = request.NoteDashboard,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateUserDashboardNote", ex);
+                
+                _logger.LogError(ex, "Error updating dashboard note for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating dashboard note",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("adminusers")]
         public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
         {

@@ -42,6 +42,7 @@ public interface IDataService
     Task<DataTable> GetUserByIdAsync(int userId);
     Task<int?> CreateUserAsync(CreateUserRequest request);
     Task<bool> UpdateUserAsync(UpdateUserRequest request);
+    Task<bool> UpdateUserDashboardNoteAsync(int userId, string? dashboardNote);
     
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();
