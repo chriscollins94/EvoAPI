@@ -3,6 +3,7 @@ namespace EvoAPI.Shared.DTOs;
 public class WorkOrderDto
 {
     public int sr_id { get; set; }
+    public int? wo_id { get; set; }
     public string CreateDate { get; set; } = string.Empty;
     public string CallCenter { get; set; } = string.Empty;
     public string Company { get; set; } = string.Empty;

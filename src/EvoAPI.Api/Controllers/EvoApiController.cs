@@ -2385,6 +2385,7 @@ public class EvoApiController : BaseController
             var workOrder = new WorkOrderDto
             {
                 sr_id = Convert.ToInt32(row["sr_id"]),
+                wo_id = row["wo_id"] != DBNull.Value ? Convert.ToInt32(row["wo_id"]) : (int?)null,
                 CreateDate = row["CreateDate"]?.ToString() ?? string.Empty,
                 CallCenter = CleanString(row["CallCenter"]),
                 Company = CleanString(row["Company"]),
