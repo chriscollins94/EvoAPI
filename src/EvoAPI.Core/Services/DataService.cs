@@ -1472,19 +1472,21 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                SELECT u_id as Id, o_id as OId, a_id as AId, v_id as VId, supervisor_id as SupervisorId,
-                       u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
-                       u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
-                       u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
-                       u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
-                       u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
-                       u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
-                       u_clothingshirt as ClothingShirt, u_clothingjacket as ClothingJacket, u_clothingpants as ClothingPants,
-                       u_wirelessprovider as WirelessProvider, u_preferrednotification as PreferredNotification,
-                       u_quickbooksname as QuickBooksName, u_passwordchanged as PasswordChanged, u_2fa as U_2FA,
-                       z_id as ZoneId, u_covidvaccinedate as CovidVaccineDate, u_note as Note, u_notedashboard as NoteDashboard
-                FROM dbo.[User]
-                WHERE u_id = @UserId";
+                SELECT u.u_id as Id, u.o_id as OId, u.a_id as AId, u.v_id as VId, u.supervisor_id as SupervisorId,
+                       u.u_insertdatetime as InsertDateTime, u.u_modifieddatetime as ModifiedDateTime,
+                       u.u_username as Username, u.u_password as Password, u.u_firstname as FirstName, u.u_lastname as LastName,
+                       u.u_employeenumber as EmployeeNumber, u.u_email as Email, u.u_phonehome as PhoneHome, u.u_phonemobile as PhoneMobile,
+                       u.u_active as Active, u.u_picture as Picture, u.u_ssn as SSN, u.u_dateofhire as DateOfHire,
+                       u.u_dateeligiblepto as DateEligiblePTO, u.u_dateeligiblevacation as DateEligibleVacation,
+                       u.u_daysavailablepto as DaysAvailablePTO, u.u_daysavailablevacation as DaysAvailableVacation,
+                       u.u_clothingshirt as ClothingShirt, u.u_clothingjacket as ClothingJacket, u.u_clothingpants as ClothingPants,
+                       u.u_wirelessprovider as WirelessProvider, u.u_preferrednotification as PreferredNotification,
+                       u.u_quickbooksname as QuickBooksName, u.u_passwordchanged as PasswordChanged, u.u_2fa as U_2FA,
+                       u.z_id as ZoneId, u.u_covidvaccinedate as CovidVaccineDate, u.u_note as Note, u.u_notedashboard as NoteDashboard,
+                       a.a_address1 as Address1, a.a_address2 as Address2, a.a_city as City, a.a_state as State, a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN address a ON u.a_id = a.a_id
+                WHERE u.u_id = @UserId";
 
             var parameters = new Dictionary<string, object>
             {

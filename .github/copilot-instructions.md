@@ -183,6 +183,43 @@ if (File.Exists(secretsPath))
 4. **Add audit logging** using BaseController methods
 5. **Test authentication** with existing JWT tokens
 
+### Database Schema Verification
+**Always** verify database schema and relationships before implementing new endpoints:
+
+**Critical Practice**: Before creating APIs that access user data or any multi-table operations:
+1. **Examine actual database structure** - Don't assume table contents or relationships
+2. **Check for foreign keys** - Look for `_id` fields that may reference other tables  
+3. **Verify field names** - Column names in database may differ from expected DTO properties
+4. **Test JOIN requirements** - Many data operations require JOINs (e.g., User + Address tables)
+5. **Validate data relationships** - Understand which tables store what data components
+
+**Common Schema Patterns to Check:**
+```sql
+-- User table may only contain foreign keys to other detail tables
+SELECT * FROM [user] LIMIT 1;  -- Check what fields actually exist
+
+-- Address data often stored separately with foreign key relationship  
+SELECT u.*, a.* FROM [user] u 
+LEFT JOIN address a ON u.a_id = a.a_id 
+WHERE u.u_id = @userId;
+
+-- Always verify field existence before SQL operations
+DESCRIBE [tablename]; -- or equivalent schema inspection
+```
+
+**Before Implementation Checklist:**
+- ✅ Inspect actual database tables and their columns
+- ✅ Identify foreign key relationships (e.g., `u.a_id → address.a_id`)
+- ✅ Verify which tables contain the data you need  
+- ✅ Test SQL queries with real data to confirm field availability
+- ✅ Check for naming conventions (e.g., `u_fieldname` vs `fieldname`)
+
+**Red Flags - Stop and Verify Schema:**
+- SQL errors mentioning "Invalid column name"
+- Missing data in API responses that should be available
+- 500 errors from backend when accessing related data
+- DTO properties that don't match database column names
+
 ### Audit Logging Pattern
 ```csharp
 public async Task<ActionResult> UpdatePriority(int id, UpdatePriorityRequest request)

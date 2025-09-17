@@ -578,6 +578,96 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("users/current/technician-profile")]
+        public async Task<ActionResult<ApiResponse<object>>> GetCurrentUserTechnicianProfile()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting current user technician profile for user {UserId}", UserId);
+                
+                var dataTable = await _dataService.GetUserByIdAsync(UserId);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+
+                var userRow = dataTable.Rows[0];
+                
+                // Build full address from separate components
+                var address1 = userRow["Address1"]?.ToString() ?? "";
+                var address2 = userRow["Address2"]?.ToString() ?? "";
+                var city = userRow["City"]?.ToString() ?? "";
+                var state = userRow["State"]?.ToString() ?? "";
+                var zip = userRow["Zip"]?.ToString() ?? "";
+                
+                var fullAddress = "";
+                if (!string.IsNullOrEmpty(address1))
+                {
+                    fullAddress = address1;
+                    if (!string.IsNullOrEmpty(address2))
+                        fullAddress += ", " + address2;
+                    if (!string.IsNullOrEmpty(city))
+                        fullAddress += ", " + city;
+                    if (!string.IsNullOrEmpty(state))
+                        fullAddress += ", " + state;
+                    if (!string.IsNullOrEmpty(zip))
+                        fullAddress += " " + zip;
+                }
+                
+                var technicianProfile = new
+                {
+                    u_id = ConvertToInt(userRow["Id"]),
+                    id = ConvertToInt(userRow["Id"]),
+                    u_firstname = userRow["FirstName"]?.ToString() ?? "",
+                    u_lastname = userRow["LastName"]?.ToString() ?? "",
+                    u_username = userRow["Username"]?.ToString() ?? "",
+                    u_fulladdress = fullAddress,
+                    fullAddress = fullAddress,
+                    address = fullAddress,
+                    u_email = userRow["Email"]?.ToString() ?? "",
+                    u_phone = userRow["PhoneMobile"]?.ToString() ?? "",
+                    employeeNumber = userRow["EmployeeNumber"]?.ToString() ?? ""
+                };
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetCurrentUserTechnicianProfile", 
+                    $"Retrieved technician profile for user {UserId}", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Current user technician profile retrieved successfully",
+                    Data = technicianProfile,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetCurrentUserTechnicianProfile", ex);
+                
+                _logger.LogError(ex, "Error retrieving current user technician profile");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving technician profile",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("users/{userId}/dashboard-note")]
         public async Task<ActionResult<ApiResponse<string>>> GetUserDashboardNote(int userId)
         {

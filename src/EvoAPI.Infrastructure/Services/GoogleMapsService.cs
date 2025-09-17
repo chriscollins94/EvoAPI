@@ -164,6 +164,14 @@ public class GoogleMapsService : IGoogleMapsService
     {
         try
         {
+            // Don't look for cached data if either address is an unnamed road
+            if (IsUnnamedRoadAddress(origin) || IsUnnamedRoadAddress(destination))
+            {
+                _logger.LogDebug("Skipping cache lookup for unnamed road addresses: {Origin} to {Destination}", 
+                    origin, destination);
+                return null;
+            }
+
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             if (string.IsNullOrEmpty(connectionString))
             {
@@ -217,6 +225,14 @@ public class GoogleMapsService : IGoogleMapsService
     {
         try
         {
+            // Check if either address is an "Unnamed Road" type that should not be cached
+            if (IsUnnamedRoadAddress(result.Origin) || IsUnnamedRoadAddress(result.Destination))
+            {
+                _logger.LogInformation("Skipping cache for unnamed road addresses: {Origin} to {Destination}", 
+                    result.Origin, result.Destination);
+                return;
+            }
+
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             if (string.IsNullOrEmpty(connectionString))
             {
@@ -392,5 +408,32 @@ public class GoogleMapsService : IGoogleMapsService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Check if an address contains "Unnamed Road" or similar problematic values
+    /// </summary>
+    /// <param name="address">Address to check</param>
+    /// <returns>True if address should not be cached</returns>
+    private static bool IsUnnamedRoadAddress(string address)
+    {
+        if (string.IsNullOrWhiteSpace(address)) return false;
+        
+        var addressLower = address.ToLowerInvariant();
+        
+        // Check for various forms of unnamed/unknown roads
+        var unnamedPatterns = new[]
+        {
+            "unnamed road",
+            "unnamed rd",
+            "unnamed street",
+            "unnamed st",
+            "unknown road",
+            "unknown street",
+            "private road",
+            "private way"
+        };
+        
+        return unnamedPatterns.Any(pattern => addressLower.Contains(pattern));
     }
 }
