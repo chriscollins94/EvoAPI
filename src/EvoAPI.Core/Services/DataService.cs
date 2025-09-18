@@ -34,6 +34,7 @@ public class DataService : IDataService
                 WITH RankedOrders AS (
                     SELECT 
                         sr.sr_id              AS sr_id,
+                        wo.wo_id              AS wo_id,
                         FORMAT(sr.sr_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') CreateDate,
                         cc.cc_name            AS CallCenter,
                         c.c_name              AS Company,
@@ -86,6 +87,7 @@ public class DataService : IDataService
                )
                 SELECT
                     sr_id,
+                    wo_id,
                     CreateDate,
                     CallCenter,
                     Company,
