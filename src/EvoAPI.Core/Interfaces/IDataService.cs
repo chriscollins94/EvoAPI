@@ -44,6 +44,9 @@ public interface IDataService
     Task<bool> UpdateUserAsync(UpdateUserRequest request);
     Task<bool> UpdateUserDashboardNoteAsync(int userId, string? dashboardNote);
     
+    // Employee Management methods (optimized)
+    Task<DataTable> GetAllEmployeesWithRolesAsync();
+    
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
@@ -88,6 +91,18 @@ public interface IDataService
     // Fleetmatics User methods
     Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync();
     Task<bool> UpdateUserVehicleNumberAsync(int userId, string vehicleNumber);
+    
+    // Employee Management methods
+    Task<DataTable> GetAllEmployeesAsync();
+    Task<DataTable> GetEmployeeByIdAsync(int userId);
+    Task<DataTable> GetAllRolesAsync();
+    Task<DataTable> GetUserRolesByUserIdAsync(int userId);
+    Task<DataTable> GetAddressByIdAsync(int addressId);
+    Task<int?> CreateEmployeeAsync(CreateEmployeeRequest request);
+    Task<bool> UpdateEmployeeAsync(UpdateEmployeeRequest request);
+    Task<bool> UpdateEmployeeRolesAsync(int userId, List<int> roleIds);
+    Task<int?> CreateAddressAsync(CreateAddressRequest request);
+    Task<bool> UpdateAddressAsync(UpdateAddressRequest request);
     
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

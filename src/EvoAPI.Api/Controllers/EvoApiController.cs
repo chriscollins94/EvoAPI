@@ -788,6 +788,325 @@ public class EvoApiController : BaseController
             }
         }
 
+        #region Employee Management
+
+        [HttpGet("employees")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeManagementDto>>> GetEmployees()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all employees for management with optimized single query");
+                
+                // Get all employee data including roles in a single query (OPTIMIZED!)
+                var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
+                var employees = ConvertDataTableToEmployeesWithRoles(employeesWithRolesDataTable);
+
+                // Get zones
+                var zonesDataTable = await _dataService.GetAllZonesAsync();
+                var zones = ConvertDataTableToZones(zonesDataTable);
+
+                // Get roles
+                var rolesDataTable = await _dataService.GetAllRolesAsync();
+                var roles = ConvertDataTableToRoles(rolesDataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetEmployees", $"Retrieved {employees.Count} employees with optimized query", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                var managementDto = new EmployeeManagementDto
+                {
+                    Employees = employees,
+                    Zones = zones,
+                    Roles = roles
+                };
+                
+                return Ok(new ApiResponse<EmployeeManagementDto>
+                {
+                    Success = true,
+                    Message = $"Retrieved {employees.Count} employees for management",
+                    Data = managementDto,
+                    Count = employees.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployees", ex);
+                
+                _logger.LogError(ex, "Error retrieving employees for management");
+                
+                return StatusCode(500, new ApiResponse<EmployeeManagementDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employees for management",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("employees/{id:int}")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> GetEmployeeById(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting employee by ID: {EmployeeId}", id);
+                
+                if (id <= 0)
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee ID must be greater than 0",
+                        Count = 0
+                    });
+                }
+
+                var dataTable = await _dataService.GetEmployeeByIdAsync(id);
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee not found",
+                        Count = 0
+                    });
+                }
+
+                var employees = ConvertDataTableToEmployees(dataTable);
+                var employee = employees.First();
+
+                // Get roles for this employee
+                var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(employee.Id);
+                employee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetEmployeeById", $"Retrieved employee {id}", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<EmployeeDto>
+                {
+                    Success = true,
+                    Message = "Employee retrieved successfully",
+                    Data = employee,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployeeById", ex);
+                
+                _logger.LogError(ex, "Error retrieving employee with ID {EmployeeId}", id);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employee",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("employees")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> CreateEmployee([FromBody] CreateEmployeeRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new employee: {FirstName} {LastName}", request.FirstName, request.LastName);
+                
+                // Validate required fields
+                if (string.IsNullOrWhiteSpace(request.Username))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Username is required",
+                        Count = 0
+                    });
+                }
+
+                if (string.IsNullOrWhiteSpace(request.Password))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Password is required",
+                        Count = 0
+                    });
+                }
+
+                var employeeId = await _dataService.CreateEmployeeAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (employeeId.HasValue)
+                {
+                    // Get the created employee to return
+                    var dataTable = await _dataService.GetEmployeeByIdAsync(employeeId.Value);
+                    if (dataTable.Rows.Count > 0)
+                    {
+                        var employees = ConvertDataTableToEmployees(dataTable);
+                        var createdEmployee = employees.First();
+                        
+                        // Get roles for this employee
+                        var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(createdEmployee.Id);
+                        createdEmployee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                        
+                        // Don't return the password in the response
+                        createdEmployee.Password = string.Empty;
+                        
+                        await LogAuditAsync("CreateEmployee", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                        
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee created successfully",
+                            Data = createdEmployee,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee created successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return StatusCode(500, new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create employee",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("CreateEmployee", ex);
+                
+                _logger.LogError(ex, "Error creating employee {FirstName} {LastName}", request.FirstName, request.LastName);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating employee",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("employees/{id:int}")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> UpdateEmployee(int id, [FromBody] UpdateEmployeeRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating employee {EmployeeId}: {FirstName} {LastName}", id, request.FirstName, request.LastName);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee ID in URL does not match Employee ID in request body",
+                        Count = 0
+                    });
+                }
+
+                if (string.IsNullOrWhiteSpace(request.Username))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Username is required",
+                        Count = 0
+                    });
+                }
+
+                var success = await _dataService.UpdateEmployeeAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Get the updated employee to return
+                    var dataTable = await _dataService.GetEmployeeByIdAsync(id);
+                    if (dataTable.Rows.Count > 0)
+                    {
+                        var employees = ConvertDataTableToEmployees(dataTable);
+                        var updatedEmployee = employees.First();
+                        
+                        // Get roles for this employee
+                        var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(updatedEmployee.Id);
+                        updatedEmployee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                        
+                        // Don't return the password in the response
+                        updatedEmployee.Password = string.Empty;
+                        
+                        await LogAuditAsync("UpdateEmployee", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+            
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee updated successfully",
+                            Data = updatedEmployee,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee updated successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateEmployee", ex);
+                
+                _logger.LogError(ex, "Error updating employee {EmployeeId}", id);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating employee",
+                    Count = 0
+                });
+            }
+        }
+
+        #endregion
+
         [HttpGet("adminusers")]
         public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
         {
@@ -3126,6 +3445,175 @@ public class EvoApiController : BaseController
             });
         }
     }
+
+    #region Employee Management Conversion Methods
+
+    private static List<EmployeeDto> ConvertDataTableToEmployees(DataTable dataTable)
+    {
+        var employees = new List<EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employee = new EmployeeDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                Password = row["Password"]?.ToString() ?? string.Empty,
+                Active = Convert.ToBoolean(row["Active"]),
+                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                Note = row["Note"]?.ToString(),
+                VehicleNumber = row["VehicleNumber"]?.ToString(),
+                Picture = row["Picture"]?.ToString(),
+                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                ZoneName = row["ZoneName"]?.ToString(),
+                AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                Address1 = row["Address1"]?.ToString(),
+                Address2 = row["Address2"]?.ToString(),
+                City = row["City"]?.ToString(),
+                State = row["State"]?.ToString(),
+                Zip = row["Zip"]?.ToString()
+            };
+
+            employees.Add(employee);
+        }
+
+        return employees;
+    }
+
+    private static List<RoleDto> ConvertDataTableToRoles(DataTable dataTable)
+    {
+        var roles = new List<RoleDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var role = new RoleDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                Name = row["Name"]?.ToString() ?? string.Empty,
+                Description = row["Description"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"])
+            };
+
+            roles.Add(role);
+        }
+
+        return roles;
+    }
+
+    private static List<UserRoleDto> ConvertDataTableToUserRoles(DataTable dataTable)
+    {
+        var userRoles = new List<UserRoleDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var userRole = new UserRoleDto
+            {
+                UserId = Convert.ToInt32(row["UserId"]),
+                RoleId = Convert.ToInt32(row["RoleId"]),
+                RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                RoleDescription = row["RoleDescription"]?.ToString()
+            };
+
+            userRoles.Add(userRole);
+        }
+
+        return userRoles;
+    }
+
+    private static List<AddressDto> ConvertDataTableToAddresses(DataTable dataTable)
+    {
+        var addresses = new List<AddressDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var address = new AddressDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Address1 = row["Address1"]?.ToString(),
+                Address2 = row["Address2"]?.ToString(),
+                City = row["City"]?.ToString(),
+                State = row["State"]?.ToString(),
+                Zip = row["Zip"]?.ToString(),
+                Phone = row["Phone"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                Notes = row["Notes"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"])
+            };
+
+            addresses.Add(address);
+        }
+
+        return addresses;
+    }
+
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRoles(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = row["Password"]?.ToString() ?? string.Empty,
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var userRole = new UserRoleDto
+                {
+                    UserId = employeeId,
+                    RoleId = Convert.ToInt32(row["RoleId"]),
+                    RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                    RoleDescription = row["RoleDescription"]?.ToString()
+                };
+
+                employeeDict[employeeId].Roles.Add(userRole);
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    #endregion
 
     #endregion
 }

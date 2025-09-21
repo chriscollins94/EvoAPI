@@ -1844,6 +1844,786 @@ public class DataService : IDataService
         }
     }
 
+    #region Employee Management Methods
+
+    public async Task<DataTable> GetAllEmployeesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployees",
+                Detail = $"Retrieved {result.Rows.Count} employees",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployees",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employees");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetEmployeeByIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                WHERE u.u_id = @UserId";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeById",
+                Detail = $"Retrieved employee with ID {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employee with ID {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllRolesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    r_id as Id,
+                    r_role as Name,
+                    r_description as Description,
+                    1 as Active
+                FROM dbo.Role
+                ORDER BY r_role";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllRoles",
+                Detail = $"Retrieved {result.Rows.Count} roles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving roles");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetUserRolesByUserIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xur.u_id as UserId,
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription
+                FROM dbo.XRefUserRole xur
+                INNER JOIN dbo.Role r ON xur.r_id = r.r_id
+                WHERE xur.u_id = @UserId
+                ORDER BY r.r_role";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserRolesByUserId",
+                Detail = $"Retrieved {result.Rows.Count} roles for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserRolesByUserId",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving roles for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAddressByIdAsync(int addressId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a_id as Id,
+                    a_insertdatetime as InsertDateTime,
+                    a_modifieddatetime as ModifiedDateTime,
+                    a_address1 as Address1,
+                    a_address2 as Address2,
+                    a_city as City,
+                    a_state as State,
+                    a_zip as Zip,
+                    a_phone as Phone,
+                    a_email as Email,
+                    a_notes as Notes,
+                    a_active as Active
+                FROM dbo.Address
+                WHERE a_id = @AddressId";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@AddressId", addressId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressById",
+                Detail = $"Retrieved address with ID {addressId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving address with ID {AddressId}", addressId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateEmployeeAsync(CreateEmployeeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // First create address if provided
+            int? addressId = null;
+            if (!string.IsNullOrWhiteSpace(request.Address1))
+            {
+                var addressRequest = new CreateAddressRequest
+                {
+                    Address1 = request.Address1,
+                    Address2 = request.Address2,
+                    City = request.City,
+                    State = request.State,
+                    Zip = request.Zip,
+                    Active = true
+                };
+                addressId = await CreateAddressAsync(addressRequest);
+            }
+
+            // Create the user record
+            const string userSql = @"
+                INSERT INTO dbo.[User] (
+                    o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
+                    u_employeenumber, u_email, u_phonemobile, u_active, u_daysavailablepto,
+                    u_daysavailablevacation, u_note, u_picture, z_id
+                )
+                OUTPUT INSERTED.u_id
+                VALUES (
+                    1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
+                    @EmployeeNumber, @Email, @PhoneMobile, @Active, @DaysAvailablePTO,
+                    @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                )";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(userSql, connection);
+            command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Username", request.Username);
+            command.Parameters.AddWithValue("@Password", request.Password);
+            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LastName", request.LastName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+
+            var userId = (int)await command.ExecuteScalarAsync();
+
+            // Assign roles if provided
+            if (request.RoleIds.Any())
+            {
+                await UpdateEmployeeRolesAsync(userId, request.RoleIds);
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployee",
+                Detail = $"Created employee {request.FirstName} {request.LastName} with ID {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return userId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployee",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating employee {FirstName} {LastName}", request.FirstName, request.LastName);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeAsync(UpdateEmployeeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Update or create address if provided
+            int? addressId = request.AddressId;
+            if (!string.IsNullOrWhiteSpace(request.Address1))
+            {
+                if (addressId.HasValue)
+                {
+                    var addressRequest = new UpdateAddressRequest
+                    {
+                        Id = addressId.Value,
+                        Address1 = request.Address1,
+                        Address2 = request.Address2,
+                        City = request.City,
+                        State = request.State,
+                        Zip = request.Zip,
+                        Active = true
+                    };
+                    await UpdateAddressAsync(addressRequest);
+                }
+                else
+                {
+                    var addressRequest = new CreateAddressRequest
+                    {
+                        Address1 = request.Address1,
+                        Address2 = request.Address2,
+                        City = request.City,
+                        State = request.State,
+                        Zip = request.Zip,
+                        Active = true
+                    };
+                    addressId = await CreateAddressAsync(addressRequest);
+                }
+            }
+
+            // Update the user record
+            var userSql = @"
+                UPDATE dbo.[User] 
+                SET 
+                    a_id = @AddressId,
+                    u_modifieddatetime = GETDATE(),
+                    u_username = @Username,
+                    u_firstname = @FirstName,
+                    u_lastname = @LastName,
+                    u_employeenumber = @EmployeeNumber,
+                    u_email = @Email,
+                    u_phonemobile = @PhoneMobile,
+                    u_active = @Active,
+                    u_daysavailablepto = @DaysAvailablePTO,
+                    u_daysavailablevacation = @DaysAvailableVacation,
+                    u_note = @Note,
+                    u_picture = @Picture,
+                    z_id = @ZoneId";
+
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                userSql += ", u_password = @Password";
+            }
+
+            userSql += " WHERE u_id = @UserId";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(userSql, connection);
+            command.Parameters.AddWithValue("@UserId", request.Id);
+            command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Username", request.Username);
+            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LastName", request.LastName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+            
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                command.Parameters.AddWithValue("@Password", request.Password);
+            }
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            // Update roles
+            await UpdateEmployeeRolesAsync(request.Id, request.RoleIds);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployee",
+                Detail = $"Updated employee {request.FirstName} {request.LastName} (ID: {request.Id})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployee",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating employee {FirstName} {LastName} (ID: {Id})", request.FirstName, request.LastName, request.Id);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeRolesAsync(int userId, List<int> roleIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            // Remove all existing roles for the user
+            const string deleteSql = "DELETE FROM dbo.XRefUserRole WHERE u_id = @UserId";
+            using var deleteCommand = new SqlCommand(deleteSql, connection);
+            deleteCommand.Parameters.AddWithValue("@UserId", userId);
+            await deleteCommand.ExecuteNonQueryAsync();
+
+            // Add new roles
+            if (roleIds.Any())
+            {
+                const string insertSql = @"
+                    INSERT INTO dbo.XRefUserRole (u_id, r_id)
+                    VALUES (@UserId, @RoleId)";
+
+                foreach (var roleId in roleIds)
+                {
+                    using var insertCommand = new SqlCommand(insertSql, connection);
+                    insertCommand.Parameters.AddWithValue("@UserId", userId);
+                    insertCommand.Parameters.AddWithValue("@RoleId", roleId);
+                    await insertCommand.ExecuteNonQueryAsync();
+                }
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeRoles",
+                Detail = $"Updated roles for user {userId}. Assigned {roleIds.Count} roles.",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating roles for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateAddressAsync(CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.Address (
+                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip,
+                    a_phone, a_email, a_notes, a_active
+                )
+                OUTPUT INSERTED.a_id
+                VALUES (
+                    GETDATE(), @Address1, @Address2, @City, @State, @Zip,
+                    @Phone, @Email, @Notes, @Active
+                )";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Phone", request.Phone ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Notes", request.Notes ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+
+            var addressId = (int)await command.ExecuteScalarAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = $"Created address with ID {addressId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return addressId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAddressAsync(UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.Address 
+                SET 
+                    a_modifieddatetime = GETDATE(),
+                    a_address1 = @Address1,
+                    a_address2 = @Address2,
+                    a_city = @City,
+                    a_state = @State,
+                    a_zip = @Zip,
+                    a_phone = @Phone,
+                    a_email = @Email,
+                    a_notes = @Notes,
+                    a_active = @Active
+                WHERE a_id = @AddressId";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@AddressId", request.Id);
+            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Phone", request.Phone ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Notes", request.Notes ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = $"Updated address with ID {request.Id}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address with ID {AddressId}", request.Id);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllEmployeesWithRolesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip,
+                    -- Role information (nullable since LEFT JOIN)
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
+                LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRoles",
+                Detail = $"Retrieved {result.Rows.Count} employee-role records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employees with roles");
+            throw;
+        }
+    }
+
+    #endregion
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
