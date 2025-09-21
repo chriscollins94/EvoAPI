@@ -60,6 +60,7 @@ public interface IDataService
     
     // Vehicle Maintenance methods
     Task<List<VehicleMaintenanceDto>> GetVehicleMaintenanceRecordsAsync();
+    Task<VehicleMaintenanceDto?> GetVehicleMaintenanceByEmployeeNumberAsync(string employeeNumber);
     Task<int> UploadVehicleMaintenanceRecordsAsync(List<VehicleMaintenanceUploadDto> records);
     
     // Work Order Scheduling Conflicts methods

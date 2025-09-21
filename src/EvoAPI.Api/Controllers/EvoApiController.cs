@@ -3016,6 +3016,42 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("vehicle-maintenance/{employeeNumber}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<VehicleMaintenanceDto>>> GetVehicleMaintenanceByTechnician(string employeeNumber)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting vehicle maintenance for employee number: {EmployeeNumber}", employeeNumber);
+            
+            var vehicleData = await _dataService.GetVehicleMaintenanceByEmployeeNumberAsync(employeeNumber);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetVehicleMaintenanceByTechnician", $"Retrieved vehicle maintenance for employee {employeeNumber}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<VehicleMaintenanceDto>
+            {
+                Success = true,
+                Message = "Vehicle maintenance data retrieved successfully",
+                Data = vehicleData,
+                Count = vehicleData != null ? 1 : 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetVehicleMaintenanceByTechnician", ex);
+            
+            return StatusCode(500, new ApiResponse<VehicleMaintenanceDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve vehicle maintenance data"
+            });
+        }
+    }
+
     #endregion
 
     #region Driving Scorecard
