@@ -2933,6 +2933,91 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Vehicle Maintenance
+
+    [HttpGet("vehicle-maintenance")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<VehicleMaintenanceDto>>>> GetVehicleMaintenanceRecords()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting vehicle maintenance records for today");
+            
+            var records = await _dataService.GetVehicleMaintenanceRecordsAsync();
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetVehicleMaintenanceRecords", $"Retrieved {records.Count} vehicle maintenance records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<VehicleMaintenanceDto>>
+            {
+                Success = true,
+                Message = "Vehicle maintenance records retrieved successfully",
+                Data = records,
+                Count = records.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetVehicleMaintenanceRecords", ex);
+            
+            return StatusCode(500, new ApiResponse<List<VehicleMaintenanceDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve vehicle maintenance records"
+            });
+        }
+    }
+
+    [HttpPost("vehicle-maintenance/upload")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<int>>> UploadVehicleMaintenanceRecords([FromBody] List<VehicleMaintenanceUploadDto> records)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Uploading {Count} vehicle maintenance records for user {UserId}", records.Count, UserId);
+            
+            if (!records.Any())
+            {
+                return BadRequest(new ApiResponse<int>
+                {
+                    Success = false,
+                    Message = "No vehicle maintenance data provided"
+                });
+            }
+
+            var uploadedCount = await _dataService.UploadVehicleMaintenanceRecordsAsync(records);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("UploadVehicleMaintenanceRecords", $"Uploaded {uploadedCount} vehicle maintenance records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<int>
+            {
+                Success = true,
+                Message = $"Successfully uploaded {uploadedCount} vehicle maintenance records",
+                Data = uploadedCount,
+                Count = uploadedCount
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("UploadVehicleMaintenanceRecords", ex);
+            
+            return StatusCode(500, new ApiResponse<int>
+            {
+                Success = false,
+                Message = "Failed to upload vehicle maintenance records"
+            });
+        }
+    }
+
+    #endregion
+
     #region Driving Scorecard
 
     /// <summary>

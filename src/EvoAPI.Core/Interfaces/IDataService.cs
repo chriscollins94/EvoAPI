@@ -58,6 +58,10 @@ public interface IDataService
     Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsByUserAsync(int userId);
     Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts);
     
+    // Vehicle Maintenance methods
+    Task<List<VehicleMaintenanceDto>> GetVehicleMaintenanceRecordsAsync();
+    Task<int> UploadVehicleMaintenanceRecordsAsync(List<VehicleMaintenanceUploadDto> records);
+    
     // Work Order Scheduling Conflicts methods
     Task<DataTable> GetWorkOrderSchedulingConflictsAsync();
     Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync();

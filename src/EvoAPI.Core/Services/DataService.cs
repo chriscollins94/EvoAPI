@@ -4483,4 +4483,362 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<List<VehicleMaintenanceDto>> GetVehicleMaintenanceRecordsAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("Database connection string is not configured");
+        }
+
+        try
+        {
+            var results = new List<VehicleMaintenanceDto>();
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            const string sql = @"
+                SELECT 
+                    vd_id, vd_insertdatetime, vd_modifieddatetime, vd_dateupload,
+                    vd_maintproduct, vd_monthsoncurrentservice, vd_custname, vd_driver,
+                    vd_vin, vd_maintcostcode, vd_customervehicleid, vd_year, vd_make,
+                    vd_model, vd_series, vd_vehicle, vd_openrecall, vd_oilchangedate,
+                    vd_oilchangemileage, vd_estmileagesinceoilchange, vd_contractedbrakesets,
+                    vd_availablebrakesets, vd_brakereplacementdate, vd_frontrearboth,
+                    vd_brakereplacementmileage, vd_estmileagesincebrakereplacement,
+                    vd_contractedtires, vd_availabletires, vd_tirereplacementdate,
+                    vd_tirereplacementmileage, vd_estmileagesincetirereplacement,
+                    vd_estimatedcurrentmileage, u_employeenumber
+                FROM VehicleDetail 
+                WHERE CAST(vd_dateupload AS DATE) = (
+                    SELECT MAX(CAST(vd_dateupload AS DATE)) 
+                    FROM VehicleDetail 
+                    WHERE vd_dateupload IS NOT NULL
+                )
+                ORDER BY vd_insertdatetime DESC";
+
+            using var command = new SqlCommand(sql, connection);
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                results.Add(new VehicleMaintenanceDto
+                {
+                    vd_id = reader.GetInt32("vd_id"),
+                    vd_insertdatetime = reader.GetDateTime("vd_insertdatetime"),
+                    vd_modifieddatetime = reader.IsDBNull("vd_modifieddatetime") ? null : reader.GetDateTime("vd_modifieddatetime"),
+                    vd_dateupload = reader.IsDBNull("vd_dateupload") ? null : reader.GetDateTime("vd_dateupload"),
+                    vd_maintproduct = reader.IsDBNull("vd_maintproduct") ? null : reader.GetString("vd_maintproduct"),
+                    vd_monthsoncurrentservice = reader.IsDBNull("vd_monthsoncurrentservice") ? null : reader.GetInt32("vd_monthsoncurrentservice"),
+                    vd_custname = reader.IsDBNull("vd_custname") ? null : reader.GetString("vd_custname"),
+                    vd_driver = reader.IsDBNull("vd_driver") ? null : reader.GetString("vd_driver"),
+                    vd_vin = reader.IsDBNull("vd_vin") ? null : reader.GetString("vd_vin"),
+                    vd_maintcostcode = reader.IsDBNull("vd_maintcostcode") ? null : reader.GetString("vd_maintcostcode"),
+                    vd_customervehicleid = reader.IsDBNull("vd_customervehicleid") ? null : reader.GetString("vd_customervehicleid"),
+                    vd_year = reader.IsDBNull("vd_year") ? null : reader.GetInt32("vd_year"),
+                    vd_make = reader.IsDBNull("vd_make") ? null : reader.GetString("vd_make"),
+                    vd_model = reader.IsDBNull("vd_model") ? null : reader.GetString("vd_model"),
+                    vd_series = reader.IsDBNull("vd_series") ? null : reader.GetString("vd_series"),
+                    vd_vehicle = reader.IsDBNull("vd_vehicle") ? null : reader.GetString("vd_vehicle"),
+                    vd_openrecall = reader.IsDBNull("vd_openrecall") ? null : reader.GetString("vd_openrecall"),
+                    vd_oilchangedate = reader.IsDBNull("vd_oilchangedate") ? null : reader.GetDateTime("vd_oilchangedate"),
+                    vd_oilchangemileage = reader.IsDBNull("vd_oilchangemileage") ? null : reader.GetInt32("vd_oilchangemileage"),
+                    vd_estmileagesinceoilchange = reader.IsDBNull("vd_estmileagesinceoilchange") ? null : reader.GetInt32("vd_estmileagesinceoilchange"),
+                    vd_contractedbrakesets = reader.IsDBNull("vd_contractedbrakesets") ? null : reader.GetInt32("vd_contractedbrakesets"),
+                    vd_availablebrakesets = reader.IsDBNull("vd_availablebrakesets") ? null : reader.GetInt32("vd_availablebrakesets"),
+                    vd_brakereplacementdate = reader.IsDBNull("vd_brakereplacementdate") ? null : reader.GetDateTime("vd_brakereplacementdate"),
+                    vd_frontrearboth = reader.IsDBNull("vd_frontrearboth") ? null : reader.GetString("vd_frontrearboth"),
+                    vd_brakereplacementmileage = reader.IsDBNull("vd_brakereplacementmileage") ? null : reader.GetInt32("vd_brakereplacementmileage"),
+                    vd_estmileagesincebrakereplacement = reader.IsDBNull("vd_estmileagesincebrakereplacement") ? null : reader.GetInt32("vd_estmileagesincebrakereplacement"),
+                    vd_contractedtires = reader.IsDBNull("vd_contractedtires") ? null : reader.GetInt32("vd_contractedtires"),
+                    vd_availabletires = reader.IsDBNull("vd_availabletires") ? null : reader.GetInt32("vd_availabletires"),
+                    vd_tirereplacementdate = reader.IsDBNull("vd_tirereplacementdate") ? null : reader.GetDateTime("vd_tirereplacementdate"),
+                    vd_tirereplacementmileage = reader.IsDBNull("vd_tirereplacementmileage") ? null : reader.GetInt32("vd_tirereplacementmileage"),
+                    vd_estmileagesincetirereplacement = reader.IsDBNull("vd_estmileagesincetirereplacement") ? null : reader.GetInt32("vd_estmileagesincetirereplacement"),
+                    vd_estimatedcurrentmileage = reader.IsDBNull("vd_estimatedcurrentmileage") ? null : reader.GetInt32("vd_estimatedcurrentmileage"),
+                    u_employeenumber = reader.IsDBNull("u_employeenumber") ? null : reader.GetString("u_employeenumber")
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceRecords",
+                Detail = $"Retrieved {results.Count} vehicle maintenance records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving vehicle maintenance records");
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceRecords",
+                Detail = $"Error retrieving vehicle maintenance records: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int> UploadVehicleMaintenanceRecordsAsync(List<VehicleMaintenanceUploadDto> records)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("Database connection string is not configured");
+        }
+
+        try
+        {
+            var uploadDate = DateTime.Today;
+            
+            // Log sample of incoming data for debugging
+            if (records.Count > 0)
+            {
+                var firstRecord = records[0];
+                _logger.LogInformation($"Sample record - Oil Change Date: '{firstRecord.vdOilChangeDate}', Brake Date: '{firstRecord.vdBrakeReplacementDate}', Tire Date: '{firstRecord.vdTireReplacementDate}'");
+            }
+            
+            // Test the ParseDate function with known values
+            _logger.LogInformation($"ParseDate test: '4/2/2025' -> {ParseDateTest("4/2/2025")}");
+            _logger.LogInformation($"ParseDate test: '04/02/2025' -> {ParseDateTest("04/02/2025")}");
+            _logger.LogInformation($"ParseDate test: '2025-04-02' -> {ParseDateTest("2025-04-02")}");
+            
+            DateTime? ParseDateTest(string? dateStr)
+            {
+                if (string.IsNullOrWhiteSpace(dateStr)) return null;
+                
+                // Try standard parsing first
+                if (DateTime.TryParse(dateStr, out var date))
+                    return date;
+                
+                // Try specific common formats for Excel data
+                string[] formats = {
+                    "M/d/yyyy",     // 4/2/2025
+                    "MM/dd/yyyy",   // 04/02/2025
+                    "M/d/yy",       // 4/2/25
+                    "MM/dd/yy",     // 04/02/25
+                    "yyyy-MM-dd",   // 2025-04-02
+                    "M-d-yyyy",     // 4-2-2025
+                    "MM-dd-yyyy",   // 04-02-2025
+                    "d/M/yyyy",     // 2/4/2025 (day/month format)
+                    "dd/MM/yyyy"    // 02/04/2025 (day/month format)
+                };
+                
+                foreach (var format in formats)
+                {
+                    if (DateTime.TryParseExact(dateStr, format, System.Globalization.CultureInfo.InvariantCulture, 
+                        System.Globalization.DateTimeStyles.None, out date))
+                    {
+                        return date;
+                    }
+                }
+                
+                return null;
+            }
+            var insertedCount = 0;
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            // Clear existing records for today (rip and replace)
+            const string deleteSql = @"DELETE FROM VehicleDetail WHERE CAST(vd_dateupload AS DATE) = @uploadDate";
+            using var deleteCommand = new SqlCommand(deleteSql, connection);
+            deleteCommand.Parameters.AddWithValue("@uploadDate", uploadDate);
+            await deleteCommand.ExecuteNonQueryAsync();
+
+            // Insert new records
+            const string insertSql = @"
+                INSERT INTO VehicleDetail (
+                    vd_dateupload, vd_maintproduct, vd_monthsoncurrentservice, vd_custname, vd_driver,
+                    vd_vin, vd_maintcostcode, vd_customervehicleid, vd_year, vd_make, vd_model,
+                    vd_series, vd_vehicle, vd_openrecall, vd_oilchangedate, vd_oilchangemileage,
+                    vd_estmileagesinceoilchange, vd_contractedbrakesets, vd_availablebrakesets,
+                    vd_brakereplacementdate, vd_frontrearboth, vd_brakereplacementmileage,
+                    vd_estmileagesincebrakereplacement, vd_contractedtires, vd_availabletires,
+                    vd_tirereplacementdate, vd_tirereplacementmileage, vd_estmileagesincetirereplacement,
+                    vd_estimatedcurrentmileage, u_employeenumber
+                ) VALUES (
+                    @uploadDate, @maintProduct, @monthsOnCurrentService, @custName, @driver,
+                    @vin, @maintCostCode, @customerVehicleId, @year, @make, @model,
+                    @series, @vehicle, @openRecall, @oilChangeDate, @oilChangeMileage,
+                    @estMileageSinceOilChange, @contractedBrakeSets, @availableBrakeSets,
+                    @brakeReplacementDate, @frontRearBoth, @brakeReplacementMileage,
+                    @estMileageSinceBrakeReplacement, @contractedTires, @availableTires,
+                    @tireReplacementDate, @tireReplacementMileage, @estMileageSinceTireReplacement,
+                    @estimatedCurrentMileage, @employeeNumber
+                )";
+
+            foreach (var record in records)
+            {
+                using var insertCommand = new SqlCommand(insertSql, connection);
+                
+                // Helper function to parse dates with multiple format support
+                DateTime? ParseDate(string? dateStr)
+                {
+                    if (string.IsNullOrWhiteSpace(dateStr)) return null;
+                    
+                    // Try standard parsing first
+                    if (DateTime.TryParse(dateStr, out var date))
+                        return date;
+                    
+                    // Try specific common formats for Excel data
+                    string[] formats = {
+                        "M/d/yyyy",     // 4/2/2025
+                        "MM/dd/yyyy",   // 04/02/2025
+                        "M/d/yy",       // 4/2/25
+                        "MM/dd/yy",     // 04/02/25
+                        "yyyy-MM-dd",   // 2025-04-02
+                        "M-d-yyyy",     // 4-2-2025
+                        "MM-dd-yyyy",   // 04-02-2025
+                        "d/M/yyyy",     // 2/4/2025 (day/month format)
+                        "dd/MM/yyyy"    // 02/04/2025 (day/month format)
+                    };
+                    
+                    foreach (var format in formats)
+                    {
+                        if (DateTime.TryParseExact(dateStr, format, System.Globalization.CultureInfo.InvariantCulture, 
+                            System.Globalization.DateTimeStyles.None, out date))
+                        {
+                            return date;
+                        }
+                    }
+                    
+                    return null;
+                }
+
+                // Helper function to safely truncate strings to prevent SQL truncation errors
+                string? SafeTruncate(string? value, int maxLength)
+                {
+                    if (string.IsNullOrEmpty(value)) return value;
+                    return value.Length > maxLength ? value.Substring(0, maxLength) : value;
+                }
+
+                insertCommand.Parameters.AddWithValue("@uploadDate", uploadDate);
+                insertCommand.Parameters.AddWithValue("@maintProduct", (object?)SafeTruncate(record.vdMaintProduct, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@monthsOnCurrentService", (object?)record.vdMonthsOnCurrentService ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@custName", (object?)SafeTruncate(record.vdCustName, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@driver", (object?)SafeTruncate(record.vdDriver, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@vin", (object?)SafeTruncate(record.vdVin, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@maintCostCode", (object?)SafeTruncate(record.vdMaintCostCode, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@customerVehicleId", (object?)SafeTruncate(record.vdCustomerVehicleId, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@year", (object?)record.vdYear ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@make", (object?)SafeTruncate(record.vdMake, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@model", (object?)SafeTruncate(record.vdModel, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@series", (object?)SafeTruncate(record.vdSeries, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@vehicle", (object?)SafeTruncate(record.vdVehicle, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@openRecall", (object?)SafeTruncate(record.vdOpenRecall, 255) ?? DBNull.Value);
+                
+                // Parse and add date fields with logging
+                var oilChangeDate = ParseDate(record.vdOilChangeDate);
+                _logger.LogInformation($"Oil Change Date: '{record.vdOilChangeDate}' -> {oilChangeDate}");
+                if (oilChangeDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@oilChangeDate", oilChangeDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@oilChangeDate", DBNull.Value);
+                
+                insertCommand.Parameters.AddWithValue("@oilChangeMileage", (object?)record.vdOilChangeMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceOilChange", (object?)record.vdEstMileageSinceOilChange ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@contractedBrakeSets", (object?)record.vdContractedBrakeSets ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@availableBrakeSets", (object?)record.vdAvailableBrakeSets ?? DBNull.Value);
+                
+                var brakeReplacementDate = ParseDate(record.vdBrakeReplacementDate);
+                _logger.LogInformation($"Brake Replacement Date: '{record.vdBrakeReplacementDate}' -> {brakeReplacementDate}");
+                if (brakeReplacementDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@brakeReplacementDate", brakeReplacementDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@brakeReplacementDate", DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@frontRearBoth", (object?)SafeTruncate(record.vdFrontRearBoth, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@brakeReplacementMileage", (object?)record.vdBrakeReplacementMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceBrakeReplacement", (object?)record.vdEstMileageSinceBrakeReplacement ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@contractedTires", (object?)record.vdContractedTires ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@availableTires", (object?)record.vdAvailableTires ?? DBNull.Value);
+                
+                var tireReplacementDate = ParseDate(record.vdTireReplacementDate);
+                _logger.LogInformation($"Tire Replacement Date: '{record.vdTireReplacementDate}' -> {tireReplacementDate}");
+                if (tireReplacementDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@tireReplacementDate", tireReplacementDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@tireReplacementDate", DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@tireReplacementMileage", (object?)record.vdTireReplacementMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceTireReplacement", (object?)record.vdEstMileageSinceTireReplacement ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estimatedCurrentMileage", (object?)record.vdEstimatedCurrentMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@employeeNumber", (object?)SafeTruncate(record.uEmployeeNumber, 50) ?? DBNull.Value);
+
+                try
+                {
+                    await insertCommand.ExecuteNonQueryAsync();
+                    insertedCount++;
+                }
+                catch (SqlException sqlEx) when (sqlEx.Message.Contains("truncated"))
+                {
+                    // Log detailed information about the problematic record
+                    var problemFields = new List<string>();
+                    if (!string.IsNullOrEmpty(record.vdMaintProduct) && record.vdMaintProduct.Length > 255) 
+                        problemFields.Add($"MaintProduct: {record.vdMaintProduct.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdCustName) && record.vdCustName.Length > 255) 
+                        problemFields.Add($"CustName: {record.vdCustName.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdDriver) && record.vdDriver.Length > 255) 
+                        problemFields.Add($"Driver: {record.vdDriver.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdVin) && record.vdVin.Length > 50) 
+                        problemFields.Add($"VIN: {record.vdVin.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdCustomerVehicleId) && record.vdCustomerVehicleId.Length > 100) 
+                        problemFields.Add($"CustomerVehicleId: {record.vdCustomerVehicleId.Length} chars");
+                    if (!string.IsNullOrEmpty(record.uEmployeeNumber) && record.uEmployeeNumber.Length > 50) 
+                        problemFields.Add($"EmployeeNumber: {record.uEmployeeNumber.Length} chars");
+                    
+                    await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "UploadVehicleMaintenanceRecords - Data Truncation",
+                        Detail = $"Record caused truncation error. Problematic fields: {string.Join(", ", problemFields)}. VIN: {record.vdVin}. Error: {sqlEx.Message}",
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    // Skip this record and continue with the next one
+                    continue;
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UploadVehicleMaintenanceRecords",
+                Detail = $"Uploaded {insertedCount} vehicle maintenance records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return insertedCount;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error uploading vehicle maintenance records");
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UploadVehicleMaintenanceRecords",
+                Detail = $"Error uploading vehicle maintenance records: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
 }
