@@ -49,9 +49,6 @@ public class CreateAddressRequest
     public string? City { get; set; }
     public string? State { get; set; }
     public string? Zip { get; set; }
-    public string? Phone { get; set; }
-    public string? Email { get; set; }
-    public string? Notes { get; set; }
     public bool Active { get; set; } = true;
 }
 
@@ -63,8 +60,5 @@ public class UpdateAddressRequest
     public string? City { get; set; }
     public string? State { get; set; }
     public string? Zip { get; set; }
-    public string? Phone { get; set; }
-    public string? Email { get; set; }
-    public string? Notes { get; set; }
     public bool Active { get; set; }
 }

@@ -2427,13 +2427,11 @@ public class DataService : IDataService
         {
             const string sql = @"
                 INSERT INTO dbo.Address (
-                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip,
-                    a_phone, a_email, a_notes, a_active
+                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
                 )
                 OUTPUT INSERTED.a_id
                 VALUES (
-                    GETDATE(), @Address1, @Address2, @City, @State, @Zip,
-                    @Phone, @Email, @Notes, @Active
+                    GETDATE(), @Address1, @Address2, @City, @State, @Zip, @Active
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2446,9 +2444,6 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Phone", request.Phone ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Notes", request.Notes ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Active", request.Active);
 
             var addressId = (int)await command.ExecuteScalarAsync();
@@ -2497,9 +2492,6 @@ public class DataService : IDataService
                     a_city = @City,
                     a_state = @State,
                     a_zip = @Zip,
-                    a_phone = @Phone,
-                    a_email = @Email,
-                    a_notes = @Notes,
                     a_active = @Active
                 WHERE a_id = @AddressId";
 
@@ -2514,9 +2506,6 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Phone", request.Phone ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Notes", request.Notes ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Active", request.Active);
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
