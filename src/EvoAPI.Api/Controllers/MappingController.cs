@@ -54,7 +54,7 @@ public class MappingController : BaseController
             var cachedDistance = await _dataService.GetCachedDistanceAsync(fromAddress.Trim(), toAddress.Trim());
             
             stopwatch.Stop();
-            await LogAuditAsync("GetCachedDistance", new { fromAddress, toAddress, found = cachedDistance != null }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            // await LogAuditAsync("GetCachedDistance", new { fromAddress, toAddress, found = cachedDistance != null }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
 
             if (cachedDistance == null)
             {
@@ -121,7 +121,7 @@ public class MappingController : BaseController
             var savedId = await _dataService.SaveCachedDistanceAsync(request);
             
             stopwatch.Stop();
-            await LogAuditAsync("SaveCachedDistance", request, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            // await LogAuditAsync("SaveCachedDistance", request, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
 
             return Ok(new ApiResponse<int>
             {

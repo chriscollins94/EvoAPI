@@ -694,7 +694,7 @@ public class EvoApiController : BaseController
                 var dashboardNote = row["NoteDashboard"]?.ToString() ?? string.Empty;
                 
                 stopwatch.Stop();
-                await LogAuditAsync("GetUserDashboardNote", $"Retrieved dashboard note for user {userId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                // await LogAuditAsync("GetUserDashboardNote", $"Retrieved dashboard note for user {userId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
                 
                 return Ok(new ApiResponse<string>
                 {
@@ -1414,7 +1414,7 @@ public class EvoApiController : BaseController
                 stopwatch.Stop();
                 
                 // Log successful operation
-                await LogOperationAsync("GetPendingTechInfo", $"Retrieved {pendingTechInfo.Count} pending tech info records for user {targetUserId}", stopwatch.Elapsed);
+                // await LogOperationAsync("GetPendingTechInfo", $"Retrieved {pendingTechInfo.Count} pending tech info records for user {targetUserId}", stopwatch.Elapsed);
     
                 return Ok(new ApiResponse<List<PendingTechInfoDto>>
                 {
@@ -3182,7 +3182,7 @@ public class EvoApiController : BaseController
             var receipts = await _dataService.GetMissingReceiptsByUserAsync(UserId);
             
             stopwatch.Stop();
-            await LogAuditAsync("GetMissingReceiptsByUser", $"Retrieved {receipts.Count} missing receipts for user {UserId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            // await LogAuditAsync("GetMissingReceiptsByUser", $"Retrieved {receipts.Count} missing receipts for user {UserId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
             {

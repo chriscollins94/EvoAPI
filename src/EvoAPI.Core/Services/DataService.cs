@@ -4055,14 +4055,14 @@ FROM DailyTechSummary;
             }
 
             stopwatch.Stop();
-            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
-            {
-                Name = "DataService",
-                Description = "GetMissingReceiptsByUser",
-                Detail = $"Retrieved {receipts.Count} missing receipts for user {userId}",
-                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
-                MachineName = Environment.MachineName
-            });
+            // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            // {
+            //     Name = "DataService",
+            //     Description = "GetMissingReceiptsByUser",
+            //     Detail = $"Retrieved {receipts.Count} missing receipts for user {userId}",
+            //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+            //     MachineName = Environment.MachineName
+            // });
 
             return receipts;
         }
@@ -4877,14 +4877,14 @@ FROM DailyTechSummary;
                 var newId = ConvertToInt(insertResult.Rows[0][0]);
                 
                 stopwatch.Stop();
-                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
-                {
-                    Name = "DataService",
-                    Description = "SaveCachedDistance",
-                    Detail = $"Inserted new cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
-                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
-                    MachineName = Environment.MachineName
-                });
+                // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                // {
+                //     Name = "DataService",
+                //     Description = "SaveCachedDistance",
+                //     Detail = $"Inserted new cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                //     MachineName = Environment.MachineName
+                // });
 
                 return newId;
             }
