@@ -2307,18 +2307,18 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@UserId", request.Id);
             command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Username", request.Username);
-            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@LastName", request.LastName ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? "");
+            command.Parameters.AddWithValue("@LastName", request.LastName ?? "");
+            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? "");
+            command.Parameters.AddWithValue("@Email", request.Email ?? "");
+            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? "");
             command.Parameters.AddWithValue("@Active", request.Active);
-            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
+            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
+            command.Parameters.AddWithValue("@Note", request.Note ?? "");
+            command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
-            
+
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
                 command.Parameters.AddWithValue("@Password", request.Password);
