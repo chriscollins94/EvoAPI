@@ -2623,10 +2623,6 @@ public class DataService : IDataService
 
         var dataTable = new DataTable();
         
-        // Log the exact SQL being executed
-        _logger.LogInformation("=== EXECUTING SQL ===");
-        _logger.LogInformation("SQL: {Sql}", sql);
-        
         using var connection = new SqlConnection(connectionString);
         connection.ConnectionString += ";Connection Timeout=30;";
         
@@ -2638,15 +2634,12 @@ public class DataService : IDataService
             foreach (var param in parameters)
             {
                 command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
-                _logger.LogInformation("Parameter: {Key} = {Value}", param.Key, param.Value);
             }
         }
         
         await connection.OpenAsync();
         using var adapter = new SqlDataAdapter(command);
         adapter.Fill(dataTable);
-        
-        _logger.LogInformation("Query completed successfully. Rows returned: {Count}", dataTable.Rows.Count);
         
         return dataTable;
     }
@@ -2660,8 +2653,6 @@ public class DataService : IDataService
         }
 
         // Log the exact SQL being executed
-        _logger.LogInformation("=== EXECUTING NON-QUERY SQL ===");
-        _logger.LogInformation("SQL: {Sql}", sql);
         
         using var connection = new SqlConnection(connectionString);
         connection.ConnectionString += ";Connection Timeout=30;";
@@ -2674,14 +2665,11 @@ public class DataService : IDataService
             foreach (var param in parameters)
             {
                 command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
-                _logger.LogInformation("Parameter: {Key} = {Value}", param.Key, param.Value);
             }
         }
         
         await connection.OpenAsync();
         var rowsAffected = await command.ExecuteNonQueryAsync();
-        
-        _logger.LogInformation("Non-query completed successfully. Rows affected: {Count}", rowsAffected);
         
         return rowsAffected;
     }
@@ -4103,8 +4091,6 @@ FROM DailyTechSummary;
                 using var deleteCommand = new SqlCommand(deleteSql, connection, transaction);
                 var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
                 
-                _logger.LogInformation("Deleted {DeletedRows} existing records for today", deletedRows);
-
                 // Insert new records with Central Time
                 const string insertSql = @"
                     INSERT INTO ReceiptMissing (rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber)
@@ -5502,13 +5488,7 @@ FROM DailyTechSummary;
             if (records.Count > 0)
             {
                 var firstRecord = records[0];
-                _logger.LogInformation($"Sample record - Oil Change Date: '{firstRecord.vdOilChangeDate}', Brake Date: '{firstRecord.vdBrakeReplacementDate}', Tire Date: '{firstRecord.vdTireReplacementDate}'");
             }
-            
-            // Test the ParseDate function with known values
-            _logger.LogInformation($"ParseDate test: '4/2/2025' -> {ParseDateTest("4/2/2025")}");
-            _logger.LogInformation($"ParseDate test: '04/02/2025' -> {ParseDateTest("04/02/2025")}");
-            _logger.LogInformation($"ParseDate test: '2025-04-02' -> {ParseDateTest("2025-04-02")}");
             
             DateTime? ParseDateTest(string? dateStr)
             {
@@ -5635,9 +5615,8 @@ FROM DailyTechSummary;
                 insertCommand.Parameters.AddWithValue("@vehicle", (object?)SafeTruncate(record.vdVehicle, 255) ?? DBNull.Value);
                 insertCommand.Parameters.AddWithValue("@openRecall", (object?)SafeTruncate(record.vdOpenRecall, 255) ?? DBNull.Value);
                 
-                // Parse and add date fields with logging
+                // Parse and add date fields
                 var oilChangeDate = ParseDate(record.vdOilChangeDate);
-                _logger.LogInformation($"Oil Change Date: '{record.vdOilChangeDate}' -> {oilChangeDate}");
                 if (oilChangeDate.HasValue)
                     insertCommand.Parameters.AddWithValue("@oilChangeDate", oilChangeDate.Value);
                 else
@@ -5649,7 +5628,6 @@ FROM DailyTechSummary;
                 insertCommand.Parameters.AddWithValue("@availableBrakeSets", (object?)record.vdAvailableBrakeSets ?? DBNull.Value);
                 
                 var brakeReplacementDate = ParseDate(record.vdBrakeReplacementDate);
-                _logger.LogInformation($"Brake Replacement Date: '{record.vdBrakeReplacementDate}' -> {brakeReplacementDate}");
                 if (brakeReplacementDate.HasValue)
                     insertCommand.Parameters.AddWithValue("@brakeReplacementDate", brakeReplacementDate.Value);
                 else
@@ -5661,7 +5639,6 @@ FROM DailyTechSummary;
                 insertCommand.Parameters.AddWithValue("@availableTires", (object?)record.vdAvailableTires ?? DBNull.Value);
                 
                 var tireReplacementDate = ParseDate(record.vdTireReplacementDate);
-                _logger.LogInformation($"Tire Replacement Date: '{record.vdTireReplacementDate}' -> {tireReplacementDate}");
                 if (tireReplacementDate.HasValue)
                     insertCommand.Parameters.AddWithValue("@tireReplacementDate", tireReplacementDate.Value);
                 else
