@@ -9,7 +9,7 @@ using System.Data;
 namespace EvoAPI.Api.Controllers;
 
 [ApiController]
-[Route("[controller]")]
+[Route("EvoApi")]
 [Authorize]
 public class EvoApiController : BaseController
 {
@@ -1015,6 +1015,8 @@ public class EvoApiController : BaseController
             try
             {
                 _logger.LogInformation("Updating employee {EmployeeId}: {FirstName} {LastName}", id, request.FirstName, request.LastName);
+                _logger.LogInformation("Phone fields received - PhoneMobile: {PhoneMobile}, PhoneHome: {PhoneHome}, PhoneDesk: {PhoneDesk}, Extension: {Extension}", 
+                    request.PhoneMobile, request.PhoneHome, request.PhoneDesk, request.Extension);
                 
                 // Validate input
                 if (id != request.Id)
@@ -1036,6 +1038,9 @@ public class EvoApiController : BaseController
                         Count = 0
                     });
                 }
+
+                // Ensure the request ID matches the URL parameter
+                request.Id = id;
 
                 var success = await _dataService.UpdateEmployeeAsync(request);
                 
@@ -1688,6 +1693,9 @@ public class EvoApiController : BaseController
                         Count = 0
                     });
                 }
+
+                // Set the ID from the URL parameter
+                request.Id = id;
 
                 // Update user
                 var success = await _dataService.UpdateUserAsync(request);
@@ -2919,6 +2927,8 @@ public class EvoApiController : BaseController
                 Email = row["Email"]?.ToString(),
                 PhoneHome = row["PhoneHome"]?.ToString(),
                 PhoneMobile = row["PhoneMobile"]?.ToString(),
+                PhoneDesk = row["PhoneDesk"]?.ToString(),
+                Extension = row["Extension"]?.ToString(),
                 Active = Convert.ToBoolean(row["Active"]),
                 Picture = row["Picture"]?.ToString(),
                 SSN = row["SSN"]?.ToString(),
@@ -3460,6 +3470,9 @@ public class EvoApiController : BaseController
                 EmployeeNumber = row["EmployeeNumber"]?.ToString(),
                 Email = row["Email"]?.ToString(),
                 PhoneMobile = row["PhoneMobile"]?.ToString(),
+                PhoneHome = row["PhoneHome"]?.ToString(),
+                PhoneDesk = row["PhoneDesk"]?.ToString(),
+                Extension = row["Extension"]?.ToString(),
                 Username = row["Username"]?.ToString() ?? string.Empty,
                 Password = row["Password"]?.ToString() ?? string.Empty,
                 Active = Convert.ToBoolean(row["Active"]),
@@ -3571,6 +3584,9 @@ public class EvoApiController : BaseController
                     EmployeeNumber = row["EmployeeNumber"]?.ToString(),
                     Email = row["Email"]?.ToString(),
                     PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = row["Password"]?.ToString() ?? string.Empty,
                     Active = Convert.ToBoolean(row["Active"]),

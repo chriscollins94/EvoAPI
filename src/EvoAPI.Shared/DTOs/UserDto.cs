@@ -17,6 +17,8 @@ public class UserDto
     public string? Email { get; set; }
     public string? PhoneHome { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public bool Active { get; set; }
     public string? Picture { get; set; }
     public string? SSN { get; set; }
@@ -57,6 +59,8 @@ public class CreateUserRequest
     public string? Email { get; set; }
     public string? PhoneHome { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public bool Active { get; set; } = true;
     public string? Picture { get; set; }
     public string? SSN { get; set; }
@@ -93,6 +97,8 @@ public class UpdateUserRequest
     public string? Email { get; set; }
     public string? PhoneHome { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public bool Active { get; set; }
     public string? Picture { get; set; }
     public string? SSN { get; set; }

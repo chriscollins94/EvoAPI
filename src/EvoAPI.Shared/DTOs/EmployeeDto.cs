@@ -9,6 +9,9 @@ public class EmployeeDto
     public string? EmployeeNumber { get; set; }
     public string? Email { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneHome { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool Active { get; set; }
@@ -76,6 +79,9 @@ public class CreateEmployeeRequest
     public string? EmployeeNumber { get; set; }
     public string? Email { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneHome { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool Active { get; set; } = true;
@@ -104,6 +110,9 @@ public class UpdateEmployeeRequest
     public string? EmployeeNumber { get; set; }
     public string? Email { get; set; }
     public string? PhoneMobile { get; set; }
+    public string? PhoneHome { get; set; }
+    public string? PhoneDesk { get; set; }
+    public string? Extension { get; set; }
     public string Username { get; set; } = string.Empty;
     public string? Password { get; set; } // Optional for updates
     public bool Active { get; set; }

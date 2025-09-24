@@ -1428,6 +1428,7 @@ public class DataService : IDataService
                        u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
                        u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
                        u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
+                       u_phonedesk as PhoneDesk, u_extension as Extension,
                        u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
                        u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
                        u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
@@ -1480,6 +1481,7 @@ public class DataService : IDataService
                        u.u_insertdatetime as InsertDateTime, u.u_modifieddatetime as ModifiedDateTime,
                        u.u_username as Username, u.u_password as Password, u.u_firstname as FirstName, u.u_lastname as LastName,
                        u.u_employeenumber as EmployeeNumber, u.u_email as Email, u.u_phonehome as PhoneHome, u.u_phonemobile as PhoneMobile,
+                       u.u_phonedesk as PhoneDesk, u.u_extension as Extension,
                        u.u_active as Active, u.u_picture as Picture, u.u_ssn as SSN, u.u_dateofhire as DateOfHire,
                        u.u_dateeligiblepto as DateEligiblePTO, u.u_dateeligiblevacation as DateEligibleVacation,
                        u.u_daysavailablepto as DaysAvailablePTO, u.u_daysavailablevacation as DaysAvailableVacation,
@@ -1537,14 +1539,14 @@ public class DataService : IDataService
             const string sql = @"
                 INSERT INTO dbo.[User] 
                 (o_id, a_id, v_id, supervisor_id, u_insertdatetime, u_modifieddatetime, u_username, u_password, 
-                 u_firstname, u_lastname, u_employeenumber, u_email, u_phonehome, u_phonemobile, u_active, 
+                 u_firstname, u_lastname, u_employeenumber, u_email, u_phonehome, u_phonemobile, u_phonedesk, u_extension, u_active, 
                  u_picture, u_ssn, u_dateofhire, u_dateeligiblepto, u_dateeligiblevacation, u_daysavailablepto, 
                  u_daysavailablevacation, u_clothingshirt, u_clothingjacket, u_clothingpants, u_wirelessprovider, 
                  u_preferrednotification, u_quickbooksname, u_passwordchanged, u_2fa, z_id, u_covidvaccinedate, 
                  u_note, u_notedashboard)
                 VALUES 
                 (@OId, @AId, @VId, @SupervisorId, GETDATE(), GETDATE(), @Username, @Password,
-                 @FirstName, @LastName, @EmployeeNumber, @Email, @PhoneHome, @PhoneMobile, @Active,
+                 @FirstName, @LastName, @EmployeeNumber, @Email, @PhoneHome, @PhoneMobile, @PhoneDesk, @Extension, @Active,
                  @Picture, @SSN, @DateOfHire, @DateEligiblePTO, @DateEligibleVacation, @DaysAvailablePTO,
                  @DaysAvailableVacation, @ClothingShirt, @ClothingJacket, @ClothingPants, @WirelessProvider,
                  @PreferredNotification, @QuickBooksName, @PasswordChanged, @U_2FA, @ZoneId, @CovidVaccineDate,
@@ -1566,6 +1568,8 @@ public class DataService : IDataService
                 { "@Email", request.Email ?? (object)DBNull.Value },
                 { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
                 { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value },
+                { "@Extension", request.Extension ?? (object)DBNull.Value },
                 { "@Active", request.Active },
                 { "@Picture", request.Picture ?? (object)DBNull.Value },
                 { "@SSN", request.SSN ?? (object)DBNull.Value },
@@ -1665,6 +1669,8 @@ public class DataService : IDataService
                     u_email = @Email,
                     u_phonehome = @PhoneHome,
                     u_phonemobile = @PhoneMobile,
+                    u_phonedesk = @PhoneDesk,
+                    u_extension = @Extension,
                     u_active = @Active,
                     u_picture = @Picture,
                     u_ssn = @SSN,
@@ -1700,6 +1706,8 @@ public class DataService : IDataService
                 { "@Email", request.Email ?? (object)DBNull.Value },
                 { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
                 { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value },
+                { "@Extension", request.Extension ?? (object)DBNull.Value },
                 { "@Active", request.Active },
                 { "@Picture", request.Picture ?? (object)DBNull.Value },
                 { "@SSN", request.SSN ?? (object)DBNull.Value },
@@ -1860,6 +1868,9 @@ public class DataService : IDataService
                     u.u_employeenumber as EmployeeNumber,
                     u.u_email as Email,
                     u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
@@ -1926,6 +1937,9 @@ public class DataService : IDataService
                     u.u_employeenumber as EmployeeNumber,
                     u.u_email as Email,
                     u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
@@ -2167,14 +2181,14 @@ public class DataService : IDataService
             const string userSql = @"
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
-                    u_employeenumber, u_email, u_phonemobile, u_active, u_daysavailablepto,
-                    u_daysavailablevacation, u_note, u_picture, z_id
+                    u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
+                    u_active, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
-                    @EmployeeNumber, @Email, @PhoneMobile, @Active, @DaysAvailablePTO,
-                    @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                    @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
+                    @Active, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2190,6 +2204,9 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneHome", request.PhoneHome ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Extension", request.Extension ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Active", request.Active);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
@@ -2285,6 +2302,9 @@ public class DataService : IDataService
                     u_employeenumber = @EmployeeNumber,
                     u_email = @Email,
                     u_phonemobile = @PhoneMobile,
+                    u_phonehome = @PhoneHome,
+                    u_phonedesk = @PhoneDesk,
+                    u_extension = @Extension,
                     u_active = @Active,
                     u_daysavailablepto = @DaysAvailablePTO,
                     u_daysavailablevacation = @DaysAvailableVacation,
@@ -2312,6 +2332,9 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? "");
             command.Parameters.AddWithValue("@Email", request.Email ?? "");
             command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? "");
+            command.Parameters.AddWithValue("@PhoneHome", request.PhoneHome ?? "");
+            command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? "");
+            command.Parameters.AddWithValue("@Extension", request.Extension ?? "");
             command.Parameters.AddWithValue("@Active", request.Active);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
@@ -2553,6 +2576,9 @@ public class DataService : IDataService
                     u.u_employeenumber as EmployeeNumber,
                     u.u_email as Email,
                     u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
@@ -2828,6 +2854,9 @@ public class DataService : IDataService
                     u.u_email as Email, 
                     u.u_picture as Picture, 
                     u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
                     a.a_address1 as Address1,
                     a.a_address2 as Address2,
                     a.a_city as City,
