@@ -791,7 +791,6 @@ public class EvoApiController : BaseController
         #region Employee Management
 
         [HttpGet("employees")]
-        [UserAdminOnly]
         public async Task<ActionResult<ApiResponse<EmployeeManagementDto>>> GetEmployees()
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -847,7 +846,6 @@ public class EvoApiController : BaseController
         }
 
         [HttpGet("employees/{id:int}")]
-        [UserAdminOnly]
         public async Task<ActionResult<ApiResponse<EmployeeDto>>> GetEmployeeById(int id)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
