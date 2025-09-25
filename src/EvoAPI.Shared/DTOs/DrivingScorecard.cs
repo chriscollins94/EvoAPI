@@ -18,7 +18,7 @@ public class DrivingScorecard
     
     /// <summary>
     /// Get a driving grade based on total violations
-    /// A: 0-9 violations, B: 10-19 violations, C: 20-29 violations, D: 30-39 violations, F: 40+ violations
+    /// A: 0-6 violations, B: 7-12 violations, C: 13-19 violations, D: 20-26 violations, F: 27+ violations
     /// </summary>
     public string Grade
     {
@@ -26,10 +26,10 @@ public class DrivingScorecard
         {
             return TotalViolations switch
             {
-                <= 9 => "A",
-                <= 19 => "B",
-                <= 29 => "C",
-                <= 39 => "D",
+                <= 6 => "A",
+                <= 12 => "B",
+                <= 19 => "C",
+                <= 26 => "D",
                 _ => "F"
             };
         }
@@ -81,7 +81,7 @@ public class DrivingScorecardWithTechnicianInfo
     
     /// <summary>
     /// Get a driving grade based on total violations
-    /// A: 0-9 violations, B: 10-19 violations, C: 20-29 violations, D: 30-39 violations, F: 40+ violations
+    /// A: 0-6 violations, B: 7-12 violations, C: 13-19 violations, D: 20-26 violations, F: 27+ violations
     /// </summary>
     public string Grade
     {
@@ -89,10 +89,10 @@ public class DrivingScorecardWithTechnicianInfo
         {
             return TotalViolations switch
             {
-                <= 9 => "A",
-                <= 19 => "B",
-                <= 29 => "C",
-                <= 39 => "D",
+                <= 6 => "A",
+                <= 12 => "B",
+                <= 19 => "C",
+                <= 26 => "D",
                 _ => "F"
             };
         }
