@@ -2637,6 +2637,184 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetAllTradeGeneralsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    tg.tg_id as Id,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as Type
+                FROM TradeGeneral tg WITH(NOLOCK)
+                ORDER BY tg.tg_type, tg.tg_trade";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTradeGenerals",
+                Detail = $"Retrieved {result.Rows.Count} trade generals",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTradeGenerals",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving trade generals");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetUserTradeGeneralsByUserIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xutg.xutg_id as Id,
+                    xutg.u_id as UserId,
+                    xutg.tg_id as TradeGeneralId,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as Type
+                FROM xrefUserTradeGeneral xutg WITH(NOLOCK)
+                    INNER JOIN TradeGeneral tg WITH(NOLOCK) ON xutg.tg_id = tg.tg_id
+                WHERE xutg.u_id = @userId
+                ORDER BY tg.tg_type, tg.tg_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@userId", userId }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserTradeGeneralsByUserId",
+                Detail = $"Retrieved {result.Rows.Count} user trade generals for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserTradeGeneralsByUserId",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user trade generals for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeTradeGeneralsAsync(int userId, List<int> tradeGeneralIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                // First, delete all existing trade general assignments for this user
+                const string deleteSql = "DELETE FROM xrefUserTradeGeneral WHERE u_id = @userId";
+                using (var deleteCommand = new SqlCommand(deleteSql, connection, transaction))
+                {
+                    deleteCommand.Parameters.AddWithValue("@userId", userId);
+                    await deleteCommand.ExecuteNonQueryAsync();
+                }
+
+                // Then, insert new trade general assignments
+                if (tradeGeneralIds?.Count > 0)
+                {
+                    const string insertSql = @"
+                        INSERT INTO xrefUserTradeGeneral (xutg_insertdatetime, u_id, tg_id)
+                        VALUES (GETDATE(), @userId, @tradeGeneralId)";
+
+                    foreach (var tradeGeneralId in tradeGeneralIds)
+                    {
+                        using var insertCommand = new SqlCommand(insertSql, connection, transaction);
+                        insertCommand.Parameters.AddWithValue("@userId", userId);
+                        insertCommand.Parameters.AddWithValue("@tradeGeneralId", tradeGeneralId);
+                        await insertCommand.ExecuteNonQueryAsync();
+                    }
+                }
+
+                transaction.Commit();
+                
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateEmployeeTradeGenerals",
+                    Detail = $"Updated trade generals for user {userId}, assigned {tradeGeneralIds?.Count ?? 0} trade generals",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeTradeGenerals",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Failed to update employee trade generals for user {UserId}", userId);
+            throw;
+        }
+    }
+
     #endregion
 
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)

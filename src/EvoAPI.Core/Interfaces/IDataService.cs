@@ -104,5 +104,10 @@ public interface IDataService
     Task<int?> CreateAddressAsync(CreateAddressRequest request);
     Task<bool> UpdateAddressAsync(UpdateAddressRequest request);
     
+    // TradeGeneral Management methods
+    Task<DataTable> GetAllTradeGeneralsAsync();
+    Task<DataTable> GetUserTradeGeneralsByUserIdAsync(int userId);
+    Task<bool> UpdateEmployeeTradeGeneralsAsync(int userId, List<int> tradeGeneralIds);
+    
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
 }

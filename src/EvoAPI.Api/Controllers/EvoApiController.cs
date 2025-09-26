@@ -1108,6 +1108,163 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("tradegenerals")]
+        public async Task<ActionResult<ApiResponse<List<TradeGeneralDto>>>> GetTradeGenerals()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all trade generals");
+                
+                var dataTable = await _dataService.GetAllTradeGeneralsAsync();
+                var tradeGenerals = ConvertDataTableToTradeGenerals(dataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetTradeGenerals", $"Retrieved {tradeGenerals.Count} trade generals", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<List<TradeGeneralDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {tradeGenerals.Count} trade generals",
+                    Data = tradeGenerals,
+                    Count = tradeGenerals.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error retrieving trade generals");
+                
+                return StatusCode(500, new ApiResponse<List<TradeGeneralDto>>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving trade generals",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("employees/{userId:int}/tradegenerals")]
+        public async Task<ActionResult<ApiResponse<List<UserTradeGeneralDto>>>> GetUserTradeGenerals(int userId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting trade generals for user {UserId}", userId);
+                
+                if (userId <= 0)
+                {
+                    return BadRequest(new ApiResponse<List<UserTradeGeneralDto>>
+                    {
+                        Success = false,
+                        Message = "Invalid user ID",
+                        Count = 0
+                    });
+                }
+                
+                var dataTable = await _dataService.GetUserTradeGeneralsByUserIdAsync(userId);
+                var userTradeGenerals = ConvertDataTableToUserTradeGenerals(dataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetUserTradeGenerals", $"Retrieved {userTradeGenerals.Count} trade generals for user {userId}", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<List<UserTradeGeneralDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {userTradeGenerals.Count} trade generals for user",
+                    Data = userTradeGenerals,
+                    Count = userTradeGenerals.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetUserTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error retrieving trade generals for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<List<UserTradeGeneralDto>>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving user trade generals",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("employees/{userId:int}/tradegenerals")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateEmployeeTradeGenerals(int userId, [FromBody] UpdateEmployeeTradeGeneralsRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating trade generals for user {UserId}", userId);
+                
+                if (userId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Invalid user ID",
+                        Count = 0
+                    });
+                }
+
+                if (request.UserId != userId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "User ID in URL does not match user ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateEmployeeTradeGeneralsAsync(userId, request.TradeGeneralIds);
+                
+                if (success)
+                {
+                    stopwatch.Stop();
+                    await LogAuditAsync("UpdateEmployeeTradeGenerals", $"Updated trade generals for user {userId}, assigned {request.TradeGeneralIds.Count} trade generals", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Employee trade generals updated successfully",
+                        Count = request.TradeGeneralIds.Count
+                    });
+                }
+                else
+                {
+                    return StatusCode(500, new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update employee trade generals",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateEmployeeTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error updating trade generals for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating employee trade generals",
+                    Count = 0
+                });
+            }
+        }
+
         #endregion
 
         [HttpGet("adminusers")]
@@ -3625,6 +3782,48 @@ public class EvoApiController : BaseController
         }
 
         return employeeDict.Values.ToList();
+    }
+
+    #endregion
+
+    #region TradeGeneral Management Conversion Methods
+
+    private static List<TradeGeneralDto> ConvertDataTableToTradeGenerals(DataTable dataTable)
+    {
+        var tradeGenerals = new List<TradeGeneralDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var tradeGeneral = new TradeGeneralDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                Trade = row["Trade"]?.ToString() ?? string.Empty,
+                Type = row["Type"]?.ToString() ?? string.Empty
+            };
+            tradeGenerals.Add(tradeGeneral);
+        }
+
+        return tradeGenerals;
+    }
+
+    private static List<UserTradeGeneralDto> ConvertDataTableToUserTradeGenerals(DataTable dataTable)
+    {
+        var userTradeGenerals = new List<UserTradeGeneralDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var userTradeGeneral = new UserTradeGeneralDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                UserId = Convert.ToInt32(row["UserId"]),
+                TradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]),
+                Trade = row["Trade"]?.ToString() ?? string.Empty,
+                Type = row["Type"]?.ToString() ?? string.Empty
+            };
+            userTradeGenerals.Add(userTradeGeneral);
+        }
+
+        return userTradeGenerals;
     }
 
     #endregion
