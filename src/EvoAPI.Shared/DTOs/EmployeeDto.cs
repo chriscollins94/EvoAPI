@@ -21,6 +21,7 @@ public class EmployeeDto
     public string? VehicleNumber { get; set; }
     public string? Picture { get; set; }
     public int? ZoneId { get; set; }
+    public string? ZoneNumber { get; set; }
     public string? ZoneName { get; set; }
     public int? AddressId { get; set; }
 
