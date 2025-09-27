@@ -3275,10 +3275,10 @@ public class EvoApiController : BaseController
                 sr_requestnumber = CleanString(row["sr_requestnumber"]),
                 u_firstname = CleanString(row["u_firstname"]),
                 u_lastname = CleanString(row["u_lastname"]),
-                wo_insertdatetime = ConvertToDateTime(row["wo_insertdatetime"]),
+                wo_insertdatetime = ConvertToDateTimeString(row["wo_insertdatetime"]),
                 t_trade = CleanString(row["t_trade"]),
                 c_name = CleanString(row["c_name"]),
-                wo_startdatetime = ConvertToDateTime(row["wo_startdatetime"])
+                wo_startdatetime = ConvertToDateTimeString(row["wo_startdatetime"])
             };
 
             pendingTechInfo.Add(info);
@@ -3307,6 +3307,34 @@ public class EvoApiController : BaseController
             return result;
             
         return DateTime.MinValue;
+    }
+
+    private static string ConvertToDateTimeString(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return string.Empty;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+        {
+            // Assume database datetimes are stored in UTC and need to be converted to Central Time
+            DateTime localTime;
+            try
+            {
+                // Treat the datetime as UTC and convert to Central Time
+                var utcTime = DateTime.SpecifyKind(result, DateTimeKind.Utc);
+                var centralTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
+                localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, centralTimeZone);
+            }
+            catch
+            {
+                localTime = result; // Fallback to original value
+            }
+            
+            // Return in the same format as work orders API: "YYYY-MM-DD HH:mm"
+            return localTime.ToString("yyyy-MM-dd HH:mm");
+        }
+            
+        return string.Empty;
     }
 
     #endregion
