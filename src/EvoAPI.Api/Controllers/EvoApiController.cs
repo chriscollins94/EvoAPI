@@ -791,17 +791,30 @@ public class EvoApiController : BaseController
         #region Employee Management
 
         [HttpGet("employees")]
-        public async Task<ActionResult<ApiResponse<EmployeeManagementDto>>> GetEmployees()
+        public async Task<ActionResult<ApiResponse<EmployeeManagementDto>>> GetEmployees([FromQuery] bool includeTrades = false)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             
             try
             {
-                _logger.LogInformation("Getting all employees for management with optimized single query");
+                List<EmployeeDto> employees;
                 
-                // Get all employee data including roles in a single query (OPTIMIZED!)
-                var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
-                var employees = ConvertDataTableToEmployeesWithRoles(employeesWithRolesDataTable);
+                if (includeTrades)
+                {
+                    _logger.LogInformation("Getting all employees with roles and trade generals in optimized single query");
+                    
+                    // Get all employee data including roles AND trade generals in a single query (SUPER OPTIMIZED!)
+                    var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
+                    employees = ConvertDataTableToEmployeesWithRolesAndTradeGenerals(employeesWithRolesAndTradesDataTable);
+                }
+                else
+                {
+                    _logger.LogInformation("Getting all employees for management with optimized single query (roles only)");
+                    
+                    // Get all employee data including roles in a single query (OPTIMIZED!)
+                    var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
+                    employees = ConvertDataTableToEmployeesWithRoles(employeesWithRolesDataTable);
+                }
 
                 // Get zones
                 var zonesDataTable = await _dataService.GetAllZonesAsync();
@@ -812,7 +825,9 @@ public class EvoApiController : BaseController
                 var roles = ConvertDataTableToRoles(rolesDataTable);
                 
                 stopwatch.Stop();
-                await LogAuditAsync("GetEmployees", $"Retrieved {employees.Count} employees with optimized query", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                await LogAuditAsync("GetEmployees", 
+                    $"Retrieved {employees.Count} employees with {(includeTrades ? "roles and trade generals" : "roles")} in optimized query", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3"));
                 
                 var managementDto = new EmployeeManagementDto
                 {
@@ -3720,6 +3735,96 @@ public class EvoApiController : BaseController
         }
 
         return addresses;
+    }
+
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRolesAndTradeGenerals(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = row["Password"]?.ToString() ?? string.Empty,
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>(),
+                    TradeGenerals = new List<UserTradeGeneralDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            var currentEmployee = employeeDict[employeeId];
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                // Check if this role is already added to avoid duplicates
+                if (!currentEmployee.Roles.Any(r => r.RoleId == roleId))
+                {
+                    var userRole = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+
+                    currentEmployee.Roles.Add(userRole);
+                }
+            }
+
+            // Add trade general information if it exists (not null due to LEFT JOIN)
+            if (row["UserTradeGeneralId"] != DBNull.Value)
+            {
+                var userTradeGeneralId = Convert.ToInt32(row["UserTradeGeneralId"]);
+                // Check if this trade general is already added to avoid duplicates
+                if (!currentEmployee.TradeGenerals.Any(tg => tg.Id == userTradeGeneralId))
+                {
+                    var userTradeGeneral = new UserTradeGeneralDto
+                    {
+                        Id = userTradeGeneralId,
+                        UserId = employeeId,
+                        TradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]),
+                        Trade = row["Trade"]?.ToString() ?? string.Empty,
+                        Type = row["TradeType"]?.ToString() ?? string.Empty
+                    };
+
+                    currentEmployee.TradeGenerals.Add(userTradeGeneral);
+                }
+            }
+        }
+
+        return employeeDict.Values.ToList();
     }
 
     private static List<EmployeeDto> ConvertDataTableToEmployeesWithRoles(DataTable dataTable)

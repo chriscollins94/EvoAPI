@@ -2682,6 +2682,86 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetAllEmployeesWithRolesAndTradeGeneralsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip,
+                    -- Role information (nullable since LEFT JOIN)
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription,
+                    -- Trade General information (nullable since LEFT JOIN)
+                    xutg.xutg_id as UserTradeGeneralId,
+                    xutg.tg_id as TradeGeneralId,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as TradeType
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
+                LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
+                LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
+                LEFT JOIN dbo.TradeGeneral tg ON xutg.tg_id = tg.tg_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role, tg.tg_type, tg.tg_trade";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRolesAndTradeGenerals",
+                Detail = $"Retrieved {result.Rows.Count} employee records with roles and trade generals",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRolesAndTradeGenerals",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetUserTradeGeneralsByUserIdAsync(int userId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

@@ -46,6 +46,7 @@ public interface IDataService
     
     // Employee Management methods (optimized)
     Task<DataTable> GetAllEmployeesWithRolesAsync();
+    Task<DataTable> GetAllEmployeesWithRolesAndTradeGeneralsAsync();
     
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();

@@ -33,6 +33,9 @@ public class EmployeeDto
 
     // Role Information
     public List<UserRoleDto> Roles { get; set; } = new();
+    
+    // Trade General Information
+    public List<UserTradeGeneralDto> TradeGenerals { get; set; } = new();
 
     // Computed Properties
     public string FullName => $"{FirstName} {LastName}".Trim();
