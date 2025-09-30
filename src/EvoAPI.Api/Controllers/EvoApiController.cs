@@ -1940,6 +1940,7 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
     #endregion
 
 
@@ -3223,35 +3224,35 @@ public class EvoApiController : BaseController
                 InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
                 ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
                 Username = row["Username"]?.ToString() ?? string.Empty,
-                Password = row["Password"]?.ToString() ?? string.Empty,
+                Password = dataTable.Columns.Contains("Password") ? row["Password"]?.ToString() ?? string.Empty : string.Empty,
                 FirstName = row["FirstName"]?.ToString(),
                 LastName = row["LastName"]?.ToString(),
-                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                EmployeeNumber = dataTable.Columns.Contains("EmployeeNumber") ? row["EmployeeNumber"]?.ToString() : null,
                 Email = row["Email"]?.ToString(),
-                PhoneHome = row["PhoneHome"]?.ToString(),
-                PhoneMobile = row["PhoneMobile"]?.ToString(),
-                PhoneDesk = row["PhoneDesk"]?.ToString(),
-                Extension = row["Extension"]?.ToString(),
+                PhoneHome = dataTable.Columns.Contains("PhoneHome") ? row["PhoneHome"]?.ToString() : null,
+                PhoneMobile = dataTable.Columns.Contains("PhoneMobile") ? row["PhoneMobile"]?.ToString() : null,
+                PhoneDesk = dataTable.Columns.Contains("PhoneDesk") ? row["PhoneDesk"]?.ToString() : null,
+                Extension = dataTable.Columns.Contains("Extension") ? row["Extension"]?.ToString() : null,
                 Active = Convert.ToBoolean(row["Active"]),
-                Picture = row["Picture"]?.ToString(),
-                SSN = row["SSN"]?.ToString(),
-                DateOfHire = row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
-                DateEligiblePTO = row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
-                DateEligibleVacation = row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
-                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
-                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
-                ClothingShirt = row["ClothingShirt"]?.ToString(),
-                ClothingJacket = row["ClothingJacket"]?.ToString(),
-                ClothingPants = row["ClothingPants"]?.ToString(),
-                WirelessProvider = row["WirelessProvider"]?.ToString(),
-                PreferredNotification = row["PreferredNotification"]?.ToString(),
-                QuickBooksName = row["QuickBooksName"]?.ToString(),
-                PasswordChanged = row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
-                U_2FA = row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
+                Picture = dataTable.Columns.Contains("Picture") ? row["Picture"]?.ToString() : null,
+                SSN = dataTable.Columns.Contains("SSN") ? row["SSN"]?.ToString() : null,
+                DateOfHire = dataTable.Columns.Contains("DateOfHire") && row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
+                DateEligiblePTO = dataTable.Columns.Contains("DateEligiblePTO") && row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
+                DateEligibleVacation = dataTable.Columns.Contains("DateEligibleVacation") && row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
+                DaysAvailablePTO = dataTable.Columns.Contains("DaysAvailablePTO") && row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = dataTable.Columns.Contains("DaysAvailableVacation") && row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                ClothingShirt = dataTable.Columns.Contains("ClothingShirt") ? row["ClothingShirt"]?.ToString() : null,
+                ClothingJacket = dataTable.Columns.Contains("ClothingJacket") ? row["ClothingJacket"]?.ToString() : null,
+                ClothingPants = dataTable.Columns.Contains("ClothingPants") ? row["ClothingPants"]?.ToString() : null,
+                WirelessProvider = dataTable.Columns.Contains("WirelessProvider") ? row["WirelessProvider"]?.ToString() : null,
+                PreferredNotification = dataTable.Columns.Contains("PreferredNotification") ? row["PreferredNotification"]?.ToString() : null,
+                QuickBooksName = dataTable.Columns.Contains("QuickBooksName") ? row["QuickBooksName"]?.ToString() : null,
+                PasswordChanged = dataTable.Columns.Contains("PasswordChanged") && row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
+                U_2FA = dataTable.Columns.Contains("U_2FA") && row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
                 ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
-                CovidVaccineDate = row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
-                Note = row["Note"]?.ToString(),
-                NoteDashboard = row["NoteDashboard"]?.ToString()
+                CovidVaccineDate = dataTable.Columns.Contains("CovidVaccineDate") && row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
+                Note = dataTable.Columns.Contains("Note") ? row["Note"]?.ToString() : null,
+                NoteDashboard = dataTable.Columns.Contains("NoteDashboard") ? row["NoteDashboard"]?.ToString() : null
             };
 
             users.Add(user);
@@ -4420,6 +4421,72 @@ public class EvoApiController : BaseController
         }
 
         return employeeDict.Values.ToList();
+    }
+
+    #endregion
+
+    #region TimeTrackingDetail Endpoints
+
+    [HttpPost("timetrackingdetail")]
+    [HttpPost("~/api/EvoApi/timetrackingdetail")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateTimeTrackingDetail([FromBody] CreateTimeTrackingDetailRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating time tracking detail for User {UserId}, TTT_ID {TttId}, WO_ID {WoId}", 
+                request.u_id, request.ttt_id, request.wo_id);
+            
+            // Validate input
+            if (request.u_id <= 0 || request.ttt_id <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Valid User ID and Time Tracking Type ID are required",
+                    Count = 0
+                });
+            }
+
+            // Insert the time tracking detail record
+            var success = await _dataService.InsertTimeTrackingDetailAsync(request.u_id, request.ttt_id, request.wo_id);
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogAuditAsync("CreateTimeTrackingDetail", request, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Time tracking detail created successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogAuditErrorAsync("CreateTimeTrackingDetail", new Exception("Failed to insert time tracking detail"));
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to create time tracking detail"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating time tracking detail for User {UserId}", request.u_id);
+            await LogAuditErrorAsync("CreateTimeTrackingDetail", ex);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to create time tracking detail"
+            });
+        }
     }
 
     #endregion

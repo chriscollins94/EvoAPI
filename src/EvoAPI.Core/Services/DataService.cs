@@ -6001,4 +6001,64 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime)
+                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime)";
+
+            var parameters = new Dictionary<string, object>
+            {
+                {"@u_id", userId},
+                {"@ttt_id", tttId},
+                {"@wo_id", woId ?? (object)DBNull.Value},
+                {"@ttd_insertdatetime", DateTime.UtcNow}
+            };
+
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            await connection.OpenAsync();
+
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            stopwatch.Stop();
+
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeTrackingDetail",
+                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error inserting time tracking detail for User {UserId}, TTT_ID {TttId}, WO_ID {WoId}", 
+                userId, tttId, woId);
+            
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeTrackingDetail",
+                Detail = $"Error inserting time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            throw;
+        }
+    }
 }
