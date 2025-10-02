@@ -5287,7 +5287,7 @@ FROM DailyTechSummary;
             {
                 Name = "DataService",
                 Description = "GetDrivingScorecard",
-                Detail = $"Retrieved driving scorecard for user {userId}. Total violations: {drivingScorecard.TotalViolations}",
+                Detail = $"Retrieved driving scorecard for user {userId}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
