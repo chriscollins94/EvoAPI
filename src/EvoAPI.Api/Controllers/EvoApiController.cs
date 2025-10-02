@@ -4260,6 +4260,7 @@ public class EvoApiController : BaseController
 
     /// <summary>
     /// Minimal data version for tech directory - only city/state, work email/phone, no personal info
+    /// Technicians get all phone numbers, non-techs get work phone, desk phone, and extension only
     /// </summary>
     private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable)
     {
@@ -4280,9 +4281,9 @@ public class EvoApiController : BaseController
                     EmployeeNumber = row["EmployeeNumber"]?.ToString(),
                     Email = row["Email"]?.ToString(),
                     PhoneMobile = row["PhoneMobile"]?.ToString(),
-                    PhoneHome = string.Empty, // Excluded for tech directory
-                    PhoneDesk = string.Empty, // Excluded for tech directory
-                    Extension = string.Empty, // Excluded for tech directory
+                    PhoneHome = row["PhoneHome"]?.ToString(), // Store temporarily, will be cleared for non-techs
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = string.Empty, // Excluded for security
                     Active = Convert.ToBoolean(row["Active"]),
@@ -4346,6 +4347,18 @@ public class EvoApiController : BaseController
                     };
                     currentEmployee.TradeGenerals.Add(tradeGeneral);
                 }
+            }
+        }
+
+        // Post-process: Clear PhoneHome for non-technician employees
+        foreach (var employee in employeeDict.Values)
+        {
+            var isTechnician = employee.Roles.Any(r => 
+                r.RoleName != null && r.RoleName.Contains("Technician", StringComparison.OrdinalIgnoreCase));
+            
+            if (!isTechnician)
+            {
+                employee.PhoneHome = string.Empty;
             }
         }
 
