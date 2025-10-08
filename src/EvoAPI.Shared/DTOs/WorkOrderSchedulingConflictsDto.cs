@@ -33,6 +33,21 @@ public class WorkOrderSchedulingConflictsDto
     
     // Organization change indicator
     public string OrganizationChange { get; set; } = string.Empty;
+    
+    // Google Maps travel data
+    public GoogleMapsTravelData? GoogleMapsTravelData { get; set; }
+}
+
+public class GoogleMapsTravelData
+{
+    public int DistanceMeters { get; set; }
+    public string DistanceText { get; set; } = string.Empty;
+    public int DurationSeconds { get; set; }
+    public string DurationText { get; set; } = string.Empty;
+    public int DurationInTrafficSeconds { get; set; }
+    public string DurationInTrafficText { get; set; } = string.Empty;
+    public bool IsSuccess { get; set; }
+    public string Status { get; set; } = string.Empty;
 }
 
 public class WorkOrderSchedulingConflictsSummaryDto

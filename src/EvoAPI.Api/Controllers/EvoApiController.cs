@@ -9,7 +9,7 @@ using System.Data;
 namespace EvoAPI.Api.Controllers;
 
 [ApiController]
-[Route("[controller]")]
+[Route("EvoApi")]
 [Authorize]
 public class EvoApiController : BaseController
 {
@@ -84,7 +84,7 @@ public class EvoApiController : BaseController
         }
 
     [HttpGet("workorders/schedule")]
-    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30)
+    public async Task<ActionResult<ApiResponse<List<WorkOrderDto>>>> GetWorkOrdersSchedule([FromQuery] int numberOfDays = 30, [FromQuery] int? technicianId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -104,13 +104,14 @@ public class EvoApiController : BaseController
             }
 
             // Get data from service
-            var dataTable = await _dataService.GetWorkOrdersScheduleAsync(numberOfDays);
+            var dataTable = await _dataService.GetWorkOrdersScheduleAsync(numberOfDays, technicianId);
             var workOrders = ConvertDataTableToWorkOrders(dataTable);
 
             stopwatch.Stop();
 
             // Log successful operation
-            await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days", stopwatch.Elapsed);
+            var technicianInfo = technicianId.HasValue ? $" for technician {technicianId.Value}" : " for all technicians";
+            await LogOperationAsync("GetWorkOrdersSchedule", $"Retrieved {workOrders.Count} scheduled work orders for {numberOfDays} days{technicianInfo}", stopwatch.Elapsed);
 
             return Ok(new ApiResponse<List<WorkOrderDto>>
             {
@@ -577,6 +578,841 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("users/current/technician-profile")]
+        public async Task<ActionResult<ApiResponse<object>>> GetCurrentUserTechnicianProfile()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting current user technician profile for user {UserId}", UserId);
+                
+                var dataTable = await _dataService.GetUserByIdAsync(UserId);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+
+                var userRow = dataTable.Rows[0];
+                
+                // Build full address from separate components
+                var address1 = userRow["Address1"]?.ToString() ?? "";
+                var address2 = userRow["Address2"]?.ToString() ?? "";
+                var city = userRow["City"]?.ToString() ?? "";
+                var state = userRow["State"]?.ToString() ?? "";
+                var zip = userRow["Zip"]?.ToString() ?? "";
+                
+                var fullAddress = "";
+                if (!string.IsNullOrEmpty(address1))
+                {
+                    fullAddress = address1;
+                    if (!string.IsNullOrEmpty(address2))
+                        fullAddress += ", " + address2;
+                    if (!string.IsNullOrEmpty(city))
+                        fullAddress += ", " + city;
+                    if (!string.IsNullOrEmpty(state))
+                        fullAddress += ", " + state;
+                    if (!string.IsNullOrEmpty(zip))
+                        fullAddress += " " + zip;
+                }
+                
+                var technicianProfile = new
+                {
+                    u_id = ConvertToInt(userRow["Id"]),
+                    id = ConvertToInt(userRow["Id"]),
+                    u_firstname = userRow["FirstName"]?.ToString() ?? "",
+                    u_lastname = userRow["LastName"]?.ToString() ?? "",
+                    u_username = userRow["Username"]?.ToString() ?? "",
+                    u_fulladdress = fullAddress,
+                    fullAddress = fullAddress,
+                    address = fullAddress,
+                    u_email = userRow["Email"]?.ToString() ?? "",
+                    u_phone = userRow["PhoneMobile"]?.ToString() ?? "",
+                    employeeNumber = userRow["EmployeeNumber"]?.ToString() ?? ""
+                };
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetCurrentUserTechnicianProfile", 
+                    $"Retrieved technician profile for user {UserId}", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Current user technician profile retrieved successfully",
+                    Data = technicianProfile,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetCurrentUserTechnicianProfile", ex);
+                
+                _logger.LogError(ex, "Error retrieving current user technician profile");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving technician profile",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("users/{userId}/dashboard-note")]
+        public async Task<ActionResult<ApiResponse<string>>> GetUserDashboardNote(int userId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting dashboard note for user {UserId} by user {CurrentUserId}", userId, UserId);
+                
+                var dataTable = await _dataService.GetUserByIdAsync(userId);
+                
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+                
+                var row = dataTable.Rows[0];
+                var dashboardNote = row["NoteDashboard"]?.ToString() ?? string.Empty;
+                
+                stopwatch.Stop();
+                // await LogAuditAsync("GetUserDashboardNote", $"Retrieved dashboard note for user {userId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return Ok(new ApiResponse<string>
+                {
+                    Success = true,
+                    Message = "Dashboard note retrieved successfully",
+                    Data = dashboardNote,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetUserDashboardNote", ex);
+                
+                _logger.LogError(ex, "Error retrieving dashboard note for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving dashboard note",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("users/{userId}/dashboard-note")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<string>>> UpdateUserDashboardNote(int userId, [FromBody] UpdateDashboardNoteRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating dashboard note for user {UserId} by user {CurrentUserId}", userId, UserId);
+                
+                // Validate input
+                if (userId != request.UserId)
+                {
+                    return BadRequest(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User ID in URL does not match User ID in request body",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+                
+                // Update only the dashboard note
+                var success = await _dataService.UpdateUserDashboardNoteAsync(userId, request.NoteDashboard);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    await LogAuditAsync("UpdateUserDashboardNote", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                    
+                    return Ok(new ApiResponse<string>
+                    {
+                        Success = true,
+                        Message = "Dashboard note updated successfully",
+                        Data = request.NoteDashboard,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<string>
+                    {
+                        Success = false,
+                        Message = "User not found",
+                        Data = null,
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateUserDashboardNote", ex);
+                
+                _logger.LogError(ex, "Error updating dashboard note for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<string>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating dashboard note",
+                    Data = null,
+                    Count = 0
+                });
+            }
+        }
+
+        #region Employee Management
+
+        [HttpGet("employees")]
+        public async Task<ActionResult<ApiResponse<EmployeeManagementDto>>> GetEmployees([FromQuery] bool includeTrades = false, [FromQuery] bool excludeSensitiveData = false)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                List<EmployeeDto> employees;
+                
+                if (includeTrades)
+                {
+                    _logger.LogInformation("Getting all employees with roles and trade generals in optimized single query");
+                    
+                    // Get all employee data including roles AND trade generals in a single query (SUPER OPTIMIZED!)
+                    var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
+                    
+                    if (excludeSensitiveData)
+                    {
+                        employees = ConvertDataTableToEmployeesWithRolesAndTradeGeneralsSecure(employeesWithRolesAndTradesDataTable);
+                    }
+                    else
+                    {
+                        employees = ConvertDataTableToEmployeesWithRolesAndTradeGenerals(employeesWithRolesAndTradesDataTable);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Getting all employees for management with optimized single query (roles only)");
+                    
+                    // Get all employee data including roles in a single query (OPTIMIZED!)
+                    var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
+                    
+                    if (excludeSensitiveData)
+                    {
+                        employees = ConvertDataTableToEmployeesWithRolesSecure(employeesWithRolesDataTable);
+                    }
+                    else
+                    {
+                        employees = ConvertDataTableToEmployeesWithRoles(employeesWithRolesDataTable);
+                    }
+                }
+
+                // Get zones
+                var zonesDataTable = await _dataService.GetAllZonesAsync();
+                var zones = ConvertDataTableToZones(zonesDataTable);
+
+                // Get roles
+                var rolesDataTable = await _dataService.GetAllRolesAsync();
+                var roles = ConvertDataTableToRoles(rolesDataTable);
+                
+                stopwatch.Stop();
+                var securityLevel = excludeSensitiveData ? " (secure mode - sensitive data excluded)" : "";
+                await LogAuditAsync("GetEmployees", 
+                    $"Retrieved {employees.Count} employees with {(includeTrades ? "roles and trade generals" : "roles")} in optimized query{securityLevel}", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                var managementDto = new EmployeeManagementDto
+                {
+                    Employees = employees,
+                    Zones = zones,
+                    Roles = roles
+                };
+                
+                return Ok(new ApiResponse<EmployeeManagementDto>
+                {
+                    Success = true,
+                    Message = $"Retrieved {employees.Count} employees for management",
+                    Data = managementDto,
+                    Count = employees.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployees", ex);
+                
+                _logger.LogError(ex, "Error retrieving employees for management");
+                
+                return StatusCode(500, new ApiResponse<EmployeeManagementDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employees for management",
+                    Count = 0
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get employees for employee directory - excludes sensitive data like passwords
+        /// </summary>
+        [HttpGet("employees/directory")]
+        public async Task<ActionResult<ApiResponse<object>>> GetEmployeesForDirectory([FromQuery] bool includeTrades = true)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting employees for directory (secure mode)");
+                
+                List<EmployeeDto> employees;
+                
+                if (includeTrades)
+                {
+                    // Get all employee data including roles AND trade generals in secure mode
+                    var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
+                    employees = ConvertDataTableToEmployeesWithRolesAndTradeGeneralsSecure(employeesWithRolesAndTradesDataTable);
+                }
+                else
+                {
+                    // Get all employee data including roles in secure mode
+                    var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
+                    employees = ConvertDataTableToEmployeesWithRolesSecure(employeesWithRolesDataTable);
+                }
+
+                stopwatch.Stop();
+                await LogAuditAsync("GetEmployeesForDirectory", 
+                    $"Retrieved {employees.Count} employees for directory (secure mode - sensitive data excluded)", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                // Return just the employees list for directory compatibility
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = $"Retrieved {employees.Count} employees for directory",
+                    Data = new { employees },
+                    Count = employees.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployeesForDirectory", ex);
+                
+                _logger.LogError(ex, "Error retrieving employees for directory");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employees for directory",
+                    Count = 0
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get employees for tech directory - minimal data (city/state only, work email/phone only)
+        /// </summary>
+        [HttpGet("employees/tech-directory")]
+        public async Task<ActionResult<ApiResponse<object>>> GetEmployeesForTechDirectory([FromQuery] bool includeTrades = true)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting employees for tech directory (minimal data)");
+                
+                List<EmployeeDto> employees;
+                
+                if (includeTrades)
+                {
+                    // Get all employee data including roles AND trade generals in secure mode
+                    var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
+                    employees = ConvertDataTableToEmployeesForTechDirectory(employeesWithRolesAndTradesDataTable);
+                }
+                else
+                {
+                    // Get all employee data including roles in secure mode
+                    var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
+                    employees = ConvertDataTableToEmployeesForTechDirectoryNoTrades(employeesWithRolesDataTable);
+                }
+
+                stopwatch.Stop();
+                await LogAuditAsync("GetEmployeesForTechDirectory", 
+                    $"Retrieved {employees.Count} employees for tech directory (minimal data - city/state, work contact only)", 
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                // Return just the employees list for directory compatibility
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = $"Retrieved {employees.Count} employees for tech directory",
+                    Data = new { employees },
+                    Count = employees.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployeesForTechDirectory", ex);
+                
+                _logger.LogError(ex, "Error retrieving employees for tech directory");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employees for tech directory",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("employees/{id:int}")]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> GetEmployeeById(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting employee by ID: {EmployeeId}", id);
+                
+                if (id <= 0)
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee ID must be greater than 0",
+                        Count = 0
+                    });
+                }
+
+                var dataTable = await _dataService.GetEmployeeByIdAsync(id);
+                if (dataTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee not found",
+                        Count = 0
+                    });
+                }
+
+                var employees = ConvertDataTableToEmployees(dataTable);
+                var employee = employees.First();
+
+                // Get roles for this employee
+                var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(employee.Id);
+                employee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetEmployeeById", $"Retrieved employee {id}", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<EmployeeDto>
+                {
+                    Success = true,
+                    Message = "Employee retrieved successfully",
+                    Data = employee,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetEmployeeById", ex);
+                
+                _logger.LogError(ex, "Error retrieving employee with ID {EmployeeId}", id);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving employee",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("employees")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> CreateEmployee([FromBody] CreateEmployeeRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Creating new employee: {FirstName} {LastName}", request.FirstName, request.LastName);
+                
+                // Validate required fields
+                if (string.IsNullOrWhiteSpace(request.Username))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Username is required",
+                        Count = 0
+                    });
+                }
+
+                if (string.IsNullOrWhiteSpace(request.Password))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Password is required",
+                        Count = 0
+                    });
+                }
+
+                var employeeId = await _dataService.CreateEmployeeAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (employeeId.HasValue)
+                {
+                    // Get the created employee to return
+                    var dataTable = await _dataService.GetEmployeeByIdAsync(employeeId.Value);
+                    if (dataTable.Rows.Count > 0)
+                    {
+                        var employees = ConvertDataTableToEmployees(dataTable);
+                        var createdEmployee = employees.First();
+                        
+                        // Get roles for this employee
+                        var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(createdEmployee.Id);
+                        createdEmployee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                        
+                        // Don't return the password in the response
+                        createdEmployee.Password = string.Empty;
+                        
+                        await LogAuditAsync("CreateEmployee", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                        
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee created successfully",
+                            Data = createdEmployee,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee created successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return StatusCode(500, new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create employee",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("CreateEmployee", ex);
+                
+                _logger.LogError(ex, "Error creating employee {FirstName} {LastName}", request.FirstName, request.LastName);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating employee",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("employees/{id:int}")]
+        [UserAdminOnly]
+        public async Task<ActionResult<ApiResponse<EmployeeDto>>> UpdateEmployee(int id, [FromBody] UpdateEmployeeRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating employee {EmployeeId}: {FirstName} {LastName}", id, request.FirstName, request.LastName);
+                _logger.LogInformation("Phone fields received - PhoneMobile: {PhoneMobile}, PhoneHome: {PhoneHome}, PhoneDesk: {PhoneDesk}, Extension: {Extension}", 
+                    request.PhoneMobile, request.PhoneHome, request.PhoneDesk, request.Extension);
+                
+                // Validate input
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee ID in URL does not match Employee ID in request body",
+                        Count = 0
+                    });
+                }
+
+                if (string.IsNullOrWhiteSpace(request.Username))
+                {
+                    return BadRequest(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Username is required",
+                        Count = 0
+                    });
+                }
+
+                // Ensure the request ID matches the URL parameter
+                request.Id = id;
+
+                var success = await _dataService.UpdateEmployeeAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    // Get the updated employee to return
+                    var dataTable = await _dataService.GetEmployeeByIdAsync(id);
+                    if (dataTable.Rows.Count > 0)
+                    {
+                        var employees = ConvertDataTableToEmployees(dataTable);
+                        var updatedEmployee = employees.First();
+                        
+                        // Get roles for this employee
+                        var userRolesDataTable = await _dataService.GetUserRolesByUserIdAsync(updatedEmployee.Id);
+                        updatedEmployee.Roles = ConvertDataTableToUserRoles(userRolesDataTable);
+                        
+                        // Don't return the password in the response
+                        updatedEmployee.Password = string.Empty;
+                        
+                        await LogAuditAsync("UpdateEmployee", request, stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+            
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee updated successfully",
+                            Data = updatedEmployee,
+                            Count = 1
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new ApiResponse<EmployeeDto>
+                        {
+                            Success = true,
+                            Message = "Employee updated successfully",
+                            Count = 1
+                        });
+                    }
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<EmployeeDto>
+                    {
+                        Success = false,
+                        Message = "Employee not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateEmployee", ex);
+                
+                _logger.LogError(ex, "Error updating employee {EmployeeId}", id);
+                
+                return StatusCode(500, new ApiResponse<EmployeeDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating employee",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("tradegenerals")]
+        public async Task<ActionResult<ApiResponse<List<TradeGeneralDto>>>> GetTradeGenerals()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all trade generals");
+                
+                var dataTable = await _dataService.GetAllTradeGeneralsAsync();
+                var tradeGenerals = ConvertDataTableToTradeGenerals(dataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetTradeGenerals", $"Retrieved {tradeGenerals.Count} trade generals", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<List<TradeGeneralDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {tradeGenerals.Count} trade generals",
+                    Data = tradeGenerals,
+                    Count = tradeGenerals.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error retrieving trade generals");
+                
+                return StatusCode(500, new ApiResponse<List<TradeGeneralDto>>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving trade generals",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("employees/{userId:int}/tradegenerals")]
+        public async Task<ActionResult<ApiResponse<List<UserTradeGeneralDto>>>> GetUserTradeGenerals(int userId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting trade generals for user {UserId}", userId);
+                
+                if (userId <= 0)
+                {
+                    return BadRequest(new ApiResponse<List<UserTradeGeneralDto>>
+                    {
+                        Success = false,
+                        Message = "Invalid user ID",
+                        Count = 0
+                    });
+                }
+                
+                var dataTable = await _dataService.GetUserTradeGeneralsByUserIdAsync(userId);
+                var userTradeGenerals = ConvertDataTableToUserTradeGenerals(dataTable);
+                
+                stopwatch.Stop();
+                await LogAuditAsync("GetUserTradeGenerals", $"Retrieved {userTradeGenerals.Count} trade generals for user {userId}", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                
+                return Ok(new ApiResponse<List<UserTradeGeneralDto>>
+                {
+                    Success = true,
+                    Message = $"Retrieved {userTradeGenerals.Count} trade generals for user",
+                    Data = userTradeGenerals,
+                    Count = userTradeGenerals.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("GetUserTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error retrieving trade generals for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<List<UserTradeGeneralDto>>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving user trade generals",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("employees/{userId:int}/tradegenerals")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateEmployeeTradeGenerals(int userId, [FromBody] UpdateEmployeeTradeGeneralsRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating trade generals for user {UserId}", userId);
+                
+                if (userId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Invalid user ID",
+                        Count = 0
+                    });
+                }
+
+                if (request.UserId != userId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "User ID in URL does not match user ID in request body",
+                        Count = 0
+                    });
+                }
+                
+                var success = await _dataService.UpdateEmployeeTradeGeneralsAsync(userId, request.TradeGeneralIds);
+                
+                if (success)
+                {
+                    stopwatch.Stop();
+                    await LogAuditAsync("UpdateEmployeeTradeGenerals", $"Updated trade generals for user {userId}, assigned {request.TradeGeneralIds.Count} trade generals", stopwatch.Elapsed.TotalSeconds.ToString("F3"));
+                    
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Employee trade generals updated successfully",
+                        Count = request.TradeGeneralIds.Count
+                    });
+                }
+                else
+                {
+                    return StatusCode(500, new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update employee trade generals",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogAuditErrorAsync("UpdateEmployeeTradeGenerals", ex);
+                
+                _logger.LogError(ex, "Error updating trade generals for user {UserId}", userId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating employee trade generals",
+                    Count = 0
+                });
+            }
+        }
+
+        #endregion
+
         [HttpGet("adminusers")]
         public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAdminUsers()
         {
@@ -811,6 +1647,104 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpGet("attachments")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetAttachments([FromQuery] int srId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attachments for service request {SrId}", srId);
+                
+                // Validate input
+                if (srId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid service request ID is required",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetAttachmentsByServiceRequestAsync(srId);
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAttachments", $"Retrieved {attachments.Count} attachments for service request {srId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attachments for service request {SrId}", srId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("pending-tech-info")]
+        public async Task<ActionResult<ApiResponse<List<PendingTechInfoDto>>>> GetPendingTechInfo([FromQuery] int? userId = null)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                // Use current user ID if none provided
+                var targetUserId = userId ?? UserId;
+                
+                _logger.LogInformation("Getting pending tech info for user {UserId}", targetUserId);
+    
+                // Get data from service
+                var dataTable = await _dataService.GetPendingTechInfoAsync(targetUserId);
+                var pendingTechInfo = ConvertDataTableToPendingTechInfo(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                // await LogOperationAsync("GetPendingTechInfo", $"Retrieved {pendingTechInfo.Count} pending tech info records for user {targetUserId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<PendingTechInfoDto>>
+                {
+                    Success = true,
+                    Message = "Pending tech info retrieved successfully",
+                    Data = pendingTechInfo,
+                    Count = pendingTechInfo.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetPendingTechInfo", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving pending tech info for user {UserId}", userId ?? UserId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving pending tech info",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -1006,6 +1940,7 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
     #endregion
 
 
@@ -1062,6 +1997,9 @@ public class EvoApiController : BaseController
                         Count = 0
                     });
                 }
+
+                // Set the ID from the URL parameter
+                request.Id = id;
 
                 // Update user
                 var success = await _dataService.UpdateUserAsync(request);
@@ -1993,6 +2931,70 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPut("workorders/{id}/schedulelock")]
+        [AdminOnly]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateWorkOrderScheduleLock(int id, [FromBody] UpdateWorkOrderScheduleLockRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Updating schedule lock status for work order {Id} to {IsScheduleLocked}", id, request.IsScheduleLocked);
+                
+                // Validate input
+                if (id != request.ServiceRequestId)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID in URL does not match ID in request body",
+                        Count = 0
+                    });
+                }
+
+                // Update schedule lock status
+                var success = await _dataService.UpdateWorkOrderScheduleLockAsync(request);
+                
+                stopwatch.Stop();
+                
+                if (success)
+                {
+                    var action = request.IsScheduleLocked ? "locked" : "unlocked";
+                    await LogOperationAsync("UpdateWorkOrderScheduleLock", $"Work order {id} schedule {action}", stopwatch.Elapsed);
+        
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = $"Work order schedule {action} successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Work order not found",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateWorkOrderScheduleLock", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating schedule lock status for work order {Id}", id);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the work order schedule lock status",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -2003,7 +3005,7 @@ public class EvoApiController : BaseController
         return value?.ToString()?.Trim()?.Replace("\r\n", "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
     }
 
-    private static List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
+    private List<WorkOrderDto> ConvertDataTableToWorkOrders(DataTable dataTable)
     {
         var workOrders = new List<WorkOrderDto>();
 
@@ -2012,6 +3014,7 @@ public class EvoApiController : BaseController
             var workOrder = new WorkOrderDto
             {
                 sr_id = Convert.ToInt32(row["sr_id"]),
+                wo_id = row["wo_id"] != DBNull.Value ? Convert.ToInt32(row["wo_id"]) : (int?)null,
                 CreateDate = row["CreateDate"]?.ToString() ?? string.Empty,
                 CallCenter = CleanString(row["CallCenter"]),
                 Company = CleanString(row["Company"]),
@@ -2029,9 +3032,13 @@ public class EvoApiController : BaseController
                 Location = CleanString(row["Location"]),
                 Address = CleanString(row["Address"]),
                 City = CleanString(row["City"]),
+                State = CleanString(row["State"]),
+                Zip = CleanString(row["Zip"]),
                 Zone = CleanString(row["Zone"]),
                 CreatedBy = CleanString(row["CreatedBy"]),
-                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null
+                Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
+                ScheduleLock = row["ScheduleLock"] != DBNull.Value && Convert.ToBoolean(row["ScheduleLock"]),
+                ActionableNote = CleanString(row["ActionableNote"])
             };
 
             workOrders.Add(workOrder);
@@ -2217,33 +3224,35 @@ public class EvoApiController : BaseController
                 InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
                 ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
                 Username = row["Username"]?.ToString() ?? string.Empty,
-                Password = row["Password"]?.ToString() ?? string.Empty,
+                Password = dataTable.Columns.Contains("Password") ? row["Password"]?.ToString() ?? string.Empty : string.Empty,
                 FirstName = row["FirstName"]?.ToString(),
                 LastName = row["LastName"]?.ToString(),
-                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                EmployeeNumber = dataTable.Columns.Contains("EmployeeNumber") ? row["EmployeeNumber"]?.ToString() : null,
                 Email = row["Email"]?.ToString(),
-                PhoneHome = row["PhoneHome"]?.ToString(),
-                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                PhoneHome = dataTable.Columns.Contains("PhoneHome") ? row["PhoneHome"]?.ToString() : null,
+                PhoneMobile = dataTable.Columns.Contains("PhoneMobile") ? row["PhoneMobile"]?.ToString() : null,
+                PhoneDesk = dataTable.Columns.Contains("PhoneDesk") ? row["PhoneDesk"]?.ToString() : null,
+                Extension = dataTable.Columns.Contains("Extension") ? row["Extension"]?.ToString() : null,
                 Active = Convert.ToBoolean(row["Active"]),
-                Picture = row["Picture"]?.ToString(),
-                SSN = row["SSN"]?.ToString(),
-                DateOfHire = row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
-                DateEligiblePTO = row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
-                DateEligibleVacation = row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
-                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
-                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
-                ClothingShirt = row["ClothingShirt"]?.ToString(),
-                ClothingJacket = row["ClothingJacket"]?.ToString(),
-                ClothingPants = row["ClothingPants"]?.ToString(),
-                WirelessProvider = row["WirelessProvider"]?.ToString(),
-                PreferredNotification = row["PreferredNotification"]?.ToString(),
-                QuickBooksName = row["QuickBooksName"]?.ToString(),
-                PasswordChanged = row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
-                U_2FA = row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
+                Picture = dataTable.Columns.Contains("Picture") ? row["Picture"]?.ToString() : null,
+                SSN = dataTable.Columns.Contains("SSN") ? row["SSN"]?.ToString() : null,
+                DateOfHire = dataTable.Columns.Contains("DateOfHire") && row["DateOfHire"] != DBNull.Value ? Convert.ToDateTime(row["DateOfHire"]) : null,
+                DateEligiblePTO = dataTable.Columns.Contains("DateEligiblePTO") && row["DateEligiblePTO"] != DBNull.Value ? Convert.ToDateTime(row["DateEligiblePTO"]) : null,
+                DateEligibleVacation = dataTable.Columns.Contains("DateEligibleVacation") && row["DateEligibleVacation"] != DBNull.Value ? Convert.ToDateTime(row["DateEligibleVacation"]) : null,
+                DaysAvailablePTO = dataTable.Columns.Contains("DaysAvailablePTO") && row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = dataTable.Columns.Contains("DaysAvailableVacation") && row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                ClothingShirt = dataTable.Columns.Contains("ClothingShirt") ? row["ClothingShirt"]?.ToString() : null,
+                ClothingJacket = dataTable.Columns.Contains("ClothingJacket") ? row["ClothingJacket"]?.ToString() : null,
+                ClothingPants = dataTable.Columns.Contains("ClothingPants") ? row["ClothingPants"]?.ToString() : null,
+                WirelessProvider = dataTable.Columns.Contains("WirelessProvider") ? row["WirelessProvider"]?.ToString() : null,
+                PreferredNotification = dataTable.Columns.Contains("PreferredNotification") ? row["PreferredNotification"]?.ToString() : null,
+                QuickBooksName = dataTable.Columns.Contains("QuickBooksName") ? row["QuickBooksName"]?.ToString() : null,
+                PasswordChanged = dataTable.Columns.Contains("PasswordChanged") && row["PasswordChanged"] != DBNull.Value ? Convert.ToDateTime(row["PasswordChanged"]) : null,
+                U_2FA = dataTable.Columns.Contains("U_2FA") && row["U_2FA"] != DBNull.Value ? Convert.ToBoolean(row["U_2FA"]) : false,
                 ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
-                CovidVaccineDate = row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
-                Note = row["Note"]?.ToString(),
-                NoteDashboard = row["NoteDashboard"]?.ToString()
+                CovidVaccineDate = dataTable.Columns.Contains("CovidVaccineDate") && row["CovidVaccineDate"] != DBNull.Value ? Convert.ToDateTime(row["CovidVaccineDate"]) : null,
+                Note = dataTable.Columns.Contains("Note") ? row["Note"]?.ToString() : null,
+                NoteDashboard = dataTable.Columns.Contains("NoteDashboard") ? row["NoteDashboard"]?.ToString() : null
             };
 
             users.Add(user);
@@ -2267,7 +3276,12 @@ public class EvoApiController : BaseController
                 Username = row["Username"]?.ToString() ?? string.Empty,
                 Email = row["Email"]?.ToString(),
                 Picture = row["Picture"]?.ToString(),
-                PhoneMobile = row["PhoneMobile"]?.ToString()
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                Address1 = row["Address1"] == DBNull.Value ? null : row["Address1"]?.ToString(),
+                Address2 = row["Address2"] == DBNull.Value ? null : row["Address2"]?.ToString(),
+                City = row["City"] == DBNull.Value ? null : row["City"]?.ToString(),
+                State = row["State"] == DBNull.Value ? null : row["State"]?.ToString(),
+                Zip = row["Zip"] == DBNull.Value ? null : row["Zip"]?.ToString()
             };
 
             technicians.Add(technician);
@@ -2353,6 +3367,108 @@ public class EvoApiController : BaseController
         await LogAuditErrorAsync(operation, ex, new { ResponseTime = elapsed.TotalSeconds.ToString("F3") });
     }
 
+    private static List<AttachmentDto> ConvertDataTableToAttachments(DataTable dataTable)
+    {
+        var attachments = new List<AttachmentDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attachment = new AttachmentDto
+            {
+                att_id = Convert.ToInt32(row["att_id"]),
+                att_insertdatetime = Convert.ToDateTime(row["att_insertdatetime"]),
+                att_filename = CleanString(row["att_filename"]),
+                att_description = CleanString(row["att_description"]),
+                att_active = Convert.ToBoolean(row["att_active"]),
+                att_receipt = Convert.ToBoolean(row["att_receipt"]),
+                att_public = Convert.ToBoolean(row["att_public"]),
+                att_signoff = Convert.ToBoolean(row["att_signoff"]),
+                att_submittedby = CleanString(row["att_submittedby"]),
+                att_receiptamount = row["att_receiptamount"] != DBNull.Value ? Convert.ToDecimal(row["att_receiptamount"]) : null,
+                sr_id = Convert.ToInt32(row["sr_id"])
+            };
+
+            attachments.Add(attachment);
+        }
+
+        return attachments;
+    }
+
+    private static List<PendingTechInfoDto> ConvertDataTableToPendingTechInfo(DataTable dataTable)
+    {
+        var pendingTechInfo = new List<PendingTechInfoDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var info = new PendingTechInfoDto
+            {
+                sr_id = ConvertToInt(row["sr_id"]),
+                xwou_id = ConvertToInt(row["xwou_id"]),
+                sr_requestnumber = CleanString(row["sr_requestnumber"]),
+                u_firstname = CleanString(row["u_firstname"]),
+                u_lastname = CleanString(row["u_lastname"]),
+                wo_insertdatetime = ConvertToDateTimeString(row["wo_insertdatetime"]),
+                t_trade = CleanString(row["t_trade"]),
+                c_name = CleanString(row["c_name"]),
+                wo_startdatetime = ConvertToDateTimeString(row["wo_startdatetime"])
+            };
+
+            pendingTechInfo.Add(info);
+        }
+
+        return pendingTechInfo;
+    }
+
+    private static int ConvertToInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return 0;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return 0;
+    }
+
+    private static DateTime ConvertToDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return DateTime.MinValue;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return DateTime.MinValue;
+    }
+
+    private static string ConvertToDateTimeString(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return string.Empty;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+        {
+            // Assume database datetimes are stored in UTC and need to be converted to Central Time
+            DateTime localTime;
+            try
+            {
+                // Treat the datetime as UTC and convert to Central Time
+                var utcTime = DateTime.SpecifyKind(result, DateTimeKind.Utc);
+                var centralTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
+                localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, centralTimeZone);
+            }
+            catch
+            {
+                localTime = result; // Fallback to original value
+            }
+            
+            // Return in the same format as work orders API: "YYYY-MM-DD HH:mm"
+            return localTime.ToString("yyyy-MM-dd HH:mm");
+        }
+            
+        return string.Empty;
+    }
+
     #endregion
 
     #region Missing Receipts
@@ -2384,6 +3500,42 @@ public class EvoApiController : BaseController
         {
             stopwatch.Stop();
             await LogAuditErrorAsync("GetMissingReceipts", ex);
+            
+            return StatusCode(500, new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve missing receipts"
+            });
+        }
+    }
+
+    [HttpGet("missing-receipts/user")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<MissingReceiptDashboardDto>>>> GetMissingReceiptsByUser()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting missing receipts for user {UserId}", UserId);
+            
+            var receipts = await _dataService.GetMissingReceiptsByUserAsync(UserId);
+            
+            stopwatch.Stop();
+            // await LogAuditAsync("GetMissingReceiptsByUser", $"Retrieved {receipts.Count} missing receipts for user {UserId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<MissingReceiptDashboardDto>>
+            {
+                Success = true,
+                Message = "Missing receipts retrieved successfully",
+                Data = receipts,
+                Count = receipts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetMissingReceiptsByUser", ex);
             
             return StatusCode(500, new ApiResponse<List<MissingReceiptDashboardDto>>
             {
@@ -2437,6 +3589,920 @@ public class EvoApiController : BaseController
             });
         }
     }
+
+    #endregion
+
+    #region Vehicle Maintenance
+
+    [HttpGet("vehicle-maintenance")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<VehicleMaintenanceDto>>>> GetVehicleMaintenanceRecords()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting vehicle maintenance records for today");
+            
+            var records = await _dataService.GetVehicleMaintenanceRecordsAsync();
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetVehicleMaintenanceRecords", $"Retrieved {records.Count} vehicle maintenance records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<VehicleMaintenanceDto>>
+            {
+                Success = true,
+                Message = "Vehicle maintenance records retrieved successfully",
+                Data = records,
+                Count = records.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetVehicleMaintenanceRecords", ex);
+            
+            return StatusCode(500, new ApiResponse<List<VehicleMaintenanceDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve vehicle maintenance records"
+            });
+        }
+    }
+
+    [HttpPost("vehicle-maintenance/upload")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<int>>> UploadVehicleMaintenanceRecords([FromBody] List<VehicleMaintenanceUploadDto> records)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Uploading {Count} vehicle maintenance records for user {UserId}", records.Count, UserId);
+            
+            if (!records.Any())
+            {
+                return BadRequest(new ApiResponse<int>
+                {
+                    Success = false,
+                    Message = "No vehicle maintenance data provided"
+                });
+            }
+
+            var uploadedCount = await _dataService.UploadVehicleMaintenanceRecordsAsync(records);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("UploadVehicleMaintenanceRecords", $"Uploaded {uploadedCount} vehicle maintenance records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<int>
+            {
+                Success = true,
+                Message = $"Successfully uploaded {uploadedCount} vehicle maintenance records",
+                Data = uploadedCount,
+                Count = uploadedCount
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("UploadVehicleMaintenanceRecords", ex);
+            
+            return StatusCode(500, new ApiResponse<int>
+            {
+                Success = false,
+                Message = "Failed to upload vehicle maintenance records"
+            });
+        }
+    }
+
+    [HttpGet("vehicle-maintenance/{employeeNumber}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<VehicleMaintenanceDto>>> GetVehicleMaintenanceByTechnician(string employeeNumber)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting vehicle maintenance for employee number: {EmployeeNumber}", employeeNumber);
+            
+            var vehicleData = await _dataService.GetVehicleMaintenanceByEmployeeNumberAsync(employeeNumber);
+            
+            stopwatch.Stop();
+            await LogAuditAsync("GetVehicleMaintenanceByTechnician", $"Retrieved vehicle maintenance for employee {employeeNumber}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<VehicleMaintenanceDto>
+            {
+                Success = true,
+                Message = "Vehicle maintenance data retrieved successfully",
+                Data = vehicleData,
+                Count = vehicleData != null ? 1 : 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetVehicleMaintenanceByTechnician", ex);
+            
+            return StatusCode(500, new ApiResponse<VehicleMaintenanceDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve vehicle maintenance data"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Driving Scorecard
+
+    /// <summary>
+    /// Get driving scorecard data for a specific technician
+    /// </summary>
+    /// <param name="userId">User ID of the technician</param>
+    /// <returns>Driving scorecard data for the past 7 days</returns>
+    [HttpGet("driving-scorecard/{userId}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<DrivingScorecard>>> GetDrivingScorecard(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var drivingData = await _dataService.GetDrivingScorecardAsync(userId);
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetDrivingScorecard", $"Retrieved driving scorecard for user {userId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<DrivingScorecard>
+            {
+                Success = true,
+                Message = "Driving scorecard retrieved successfully",
+                Data = drivingData,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetDrivingScorecard", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<DrivingScorecard>
+            {
+                Success = false,
+                Message = "Failed to retrieve driving scorecard"
+            });
+        }
+    }
+
+    [HttpGet("driving-scorecards")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<DrivingScorecardWithTechnicianInfo>>>> GetAllDrivingScorecard()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var drivingData = await _dataService.GetAllDrivingScorecardsAsync();
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetAllDrivingScorecard", $"Retrieved driving scorecards for all technicians. Count: {drivingData.Count}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<DrivingScorecardWithTechnicianInfo>>
+            {
+                Success = true,
+                Message = "All driving scorecards retrieved successfully",
+                Data = drivingData,
+                Count = drivingData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAllDrivingScorecard", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<DrivingScorecardWithTechnicianInfo>>
+            {
+                Success = false,
+                Message = "Failed to retrieve all driving scorecards"
+            });
+        }
+    }
+
+    #region Employee Management Conversion Methods
+
+    private static List<EmployeeDto> ConvertDataTableToEmployees(DataTable dataTable)
+    {
+        var employees = new List<EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employee = new EmployeeDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                FirstName = row["FirstName"]?.ToString(),
+                LastName = row["LastName"]?.ToString(),
+                EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                PhoneMobile = row["PhoneMobile"]?.ToString(),
+                PhoneHome = row["PhoneHome"]?.ToString(),
+                PhoneDesk = row["PhoneDesk"]?.ToString(),
+                Extension = row["Extension"]?.ToString(),
+                Username = row["Username"]?.ToString() ?? string.Empty,
+                Password = row["Password"]?.ToString() ?? string.Empty,
+                Active = Convert.ToBoolean(row["Active"]),
+                DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                Note = row["Note"]?.ToString(),
+                VehicleNumber = row["VehicleNumber"]?.ToString(),
+                Picture = row["Picture"]?.ToString(),
+                ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                ZoneName = row["ZoneName"]?.ToString(),
+                AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                Address1 = row["Address1"]?.ToString(),
+                Address2 = row["Address2"]?.ToString(),
+                City = row["City"]?.ToString(),
+                State = row["State"]?.ToString(),
+                Zip = row["Zip"]?.ToString()
+            };
+
+            employees.Add(employee);
+        }
+
+        return employees;
+    }
+
+    private static List<RoleDto> ConvertDataTableToRoles(DataTable dataTable)
+    {
+        var roles = new List<RoleDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var role = new RoleDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                Name = row["Name"]?.ToString() ?? string.Empty,
+                Description = row["Description"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"])
+            };
+
+            roles.Add(role);
+        }
+
+        return roles;
+    }
+
+    private static List<UserRoleDto> ConvertDataTableToUserRoles(DataTable dataTable)
+    {
+        var userRoles = new List<UserRoleDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var userRole = new UserRoleDto
+            {
+                UserId = Convert.ToInt32(row["UserId"]),
+                RoleId = Convert.ToInt32(row["RoleId"]),
+                RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                RoleDescription = row["RoleDescription"]?.ToString()
+            };
+
+            userRoles.Add(userRole);
+        }
+
+        return userRoles;
+    }
+
+    private static List<AddressDto> ConvertDataTableToAddresses(DataTable dataTable)
+    {
+        var addresses = new List<AddressDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var address = new AddressDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Address1 = row["Address1"]?.ToString(),
+                Address2 = row["Address2"]?.ToString(),
+                City = row["City"]?.ToString(),
+                State = row["State"]?.ToString(),
+                Zip = row["Zip"]?.ToString(),
+                Phone = row["Phone"]?.ToString(),
+                Email = row["Email"]?.ToString(),
+                Notes = row["Notes"]?.ToString(),
+                Active = Convert.ToBoolean(row["Active"])
+            };
+
+            addresses.Add(address);
+        }
+
+        return addresses;
+    }
+
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRolesAndTradeGenerals(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = row["Password"]?.ToString() ?? string.Empty,
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>(),
+                    TradeGenerals = new List<UserTradeGeneralDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            var currentEmployee = employeeDict[employeeId];
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                // Check if this role is already added to avoid duplicates
+                if (!currentEmployee.Roles.Any(r => r.RoleId == roleId))
+                {
+                    var userRole = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+
+                    currentEmployee.Roles.Add(userRole);
+                }
+            }
+
+            // Add trade general information if it exists (not null due to LEFT JOIN)
+            if (row["UserTradeGeneralId"] != DBNull.Value)
+            {
+                var userTradeGeneralId = Convert.ToInt32(row["UserTradeGeneralId"]);
+                // Check if this trade general is already added to avoid duplicates
+                if (!currentEmployee.TradeGenerals.Any(tg => tg.Id == userTradeGeneralId))
+                {
+                    var userTradeGeneral = new UserTradeGeneralDto
+                    {
+                        Id = userTradeGeneralId,
+                        UserId = employeeId,
+                        TradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]),
+                        Trade = row["Trade"]?.ToString() ?? string.Empty,
+                        Type = row["TradeType"]?.ToString() ?? string.Empty
+                    };
+
+                    currentEmployee.TradeGenerals.Add(userTradeGeneral);
+                }
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRoles(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = row["Password"]?.ToString() ?? string.Empty,
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var userRole = new UserRoleDto
+                {
+                    UserId = employeeId,
+                    RoleId = Convert.ToInt32(row["RoleId"]),
+                    RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                    RoleDescription = row["RoleDescription"]?.ToString()
+                };
+
+                employeeDict[employeeId].Roles.Add(userRole);
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    #endregion
+
+    #region TradeGeneral Management Conversion Methods
+
+    private static List<TradeGeneralDto> ConvertDataTableToTradeGenerals(DataTable dataTable)
+    {
+        var tradeGenerals = new List<TradeGeneralDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var tradeGeneral = new TradeGeneralDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                Trade = row["Trade"]?.ToString() ?? string.Empty,
+                Type = row["Type"]?.ToString() ?? string.Empty
+            };
+            tradeGenerals.Add(tradeGeneral);
+        }
+
+        return tradeGenerals;
+    }
+
+    private static List<UserTradeGeneralDto> ConvertDataTableToUserTradeGenerals(DataTable dataTable)
+    {
+        var userTradeGenerals = new List<UserTradeGeneralDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var userTradeGeneral = new UserTradeGeneralDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                UserId = Convert.ToInt32(row["UserId"]),
+                TradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]),
+                Trade = row["Trade"]?.ToString() ?? string.Empty,
+                Type = row["Type"]?.ToString() ?? string.Empty
+            };
+            userTradeGenerals.Add(userTradeGeneral);
+        }
+
+        return userTradeGenerals;
+    }
+
+    /// <summary>
+    /// Secure version that excludes sensitive data like passwords for employee directory
+    /// </summary>
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRolesAndTradeGeneralsSecure(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = string.Empty, // Excluded for security
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>(),
+                    TradeGenerals = new List<UserTradeGeneralDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            var currentEmployee = employeeDict[employeeId];
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                
+                // Check if we already have this role (avoid duplicates)
+                if (!currentEmployee.Roles.Any(r => r.RoleId == roleId))
+                {
+                    var role = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+                    currentEmployee.Roles.Add(role);
+                }
+            }
+
+            // Add trade general information if it exists (not null due to LEFT JOIN)
+            if (row["TradeGeneralId"] != DBNull.Value)
+            {
+                var tradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]);
+                
+                // Check if we already have this trade general (avoid duplicates)
+                if (!currentEmployee.TradeGenerals.Any(tg => tg.TradeGeneralId == tradeGeneralId))
+                {
+                    var tradeGeneral = new UserTradeGeneralDto
+                    {
+                        Id = row["UserTradeGeneralId"] != DBNull.Value ? Convert.ToInt32(row["UserTradeGeneralId"]) : 0,
+                        UserId = employeeId,
+                        TradeGeneralId = tradeGeneralId,
+                        Trade = row["Trade"]?.ToString() ?? string.Empty,
+                        Type = row["TradeType"]?.ToString() ?? string.Empty
+                    };
+                    currentEmployee.TradeGenerals.Add(tradeGeneral);
+                }
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    /// <summary>
+    /// Secure version that excludes sensitive data like passwords for employee directory
+    /// </summary>
+    private static List<EmployeeDto> ConvertDataTableToEmployeesWithRolesSecure(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(),
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = string.Empty, // Excluded for security
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
+                    DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    Note = row["Note"]?.ToString(),
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null,
+                    Address1 = row["Address1"]?.ToString(),
+                    Address2 = row["Address2"]?.ToString(),
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = row["Zip"]?.ToString(),
+                    Roles = new List<UserRoleDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                
+                // Check if we already have this role (avoid duplicates)
+                if (!employeeDict[employeeId].Roles.Any(r => r.RoleId == roleId))
+                {
+                    var role = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+                    employeeDict[employeeId].Roles.Add(role);
+                }
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    /// <summary>
+    /// Minimal data version for tech directory - only city/state, work email/phone, no personal info
+    /// Technicians get all phone numbers, non-techs get work phone, desk phone, and extension only
+    /// </summary>
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = row["PhoneHome"]?.ToString(), // Store temporarily, will be cleared for non-techs
+                    PhoneDesk = row["PhoneDesk"]?.ToString(),
+                    Extension = row["Extension"]?.ToString(),
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = string.Empty, // Excluded for security
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = null, // Excluded for tech directory
+                    DaysAvailableVacation = null, // Excluded for tech directory
+                    Note = string.Empty, // Excluded for tech directory
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = null, // Excluded for tech directory
+                    Address1 = string.Empty, // Excluded for tech directory
+                    Address2 = string.Empty, // Excluded for tech directory
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = string.Empty, // Excluded for tech directory
+                    Roles = new List<UserRoleDto>(),
+                    TradeGenerals = new List<UserTradeGeneralDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            var currentEmployee = employeeDict[employeeId];
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                
+                // Check if we already have this role (avoid duplicates)
+                if (!currentEmployee.Roles.Any(r => r.RoleId == roleId))
+                {
+                    var role = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+                    currentEmployee.Roles.Add(role);
+                }
+            }
+
+            // Add trade general information if it exists (not null due to LEFT JOIN)
+            if (row["TradeGeneralId"] != DBNull.Value)
+            {
+                var tradeGeneralId = Convert.ToInt32(row["TradeGeneralId"]);
+                
+                // Check if we already have this trade general (avoid duplicates)
+                if (!currentEmployee.TradeGenerals.Any(tg => tg.TradeGeneralId == tradeGeneralId))
+                {
+                    var tradeGeneral = new UserTradeGeneralDto
+                    {
+                        Id = row["UserTradeGeneralId"] != DBNull.Value ? Convert.ToInt32(row["UserTradeGeneralId"]) : 0,
+                        UserId = employeeId,
+                        TradeGeneralId = tradeGeneralId,
+                        Trade = row["Trade"]?.ToString() ?? string.Empty,
+                        Type = row["TradeType"]?.ToString() ?? string.Empty
+                    };
+                    currentEmployee.TradeGenerals.Add(tradeGeneral);
+                }
+            }
+        }
+
+        // Post-process: Clear PhoneHome for non-technician employees
+        foreach (var employee in employeeDict.Values)
+        {
+            var isTechnician = employee.Roles.Any(r => 
+                r.RoleName != null && r.RoleName.Contains("Technician", StringComparison.OrdinalIgnoreCase));
+            
+            if (!isTechnician)
+            {
+                employee.PhoneHome = string.Empty;
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    /// <summary>
+    /// Minimal data version for tech directory without trades - only city/state, work email/phone, no personal info
+    /// </summary>
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectoryNoTrades(DataTable dataTable)
+    {
+        var employeeDict = new Dictionary<int, EmployeeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var employeeId = Convert.ToInt32(row["Id"]);
+            
+            // If we haven't seen this employee yet, create them
+            if (!employeeDict.ContainsKey(employeeId))
+            {
+                var employee = new EmployeeDto
+                {
+                    Id = employeeId,
+                    FirstName = row["FirstName"]?.ToString(),
+                    LastName = row["LastName"]?.ToString(),
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString(),
+                    Email = row["Email"]?.ToString(),
+                    PhoneMobile = row["PhoneMobile"]?.ToString(),
+                    PhoneHome = string.Empty, // Excluded for tech directory
+                    PhoneDesk = string.Empty, // Excluded for tech directory
+                    Extension = string.Empty, // Excluded for tech directory
+                    Username = row["Username"]?.ToString() ?? string.Empty,
+                    Password = string.Empty, // Excluded for security
+                    Active = Convert.ToBoolean(row["Active"]),
+                    DaysAvailablePTO = null, // Excluded for tech directory
+                    DaysAvailableVacation = null, // Excluded for tech directory
+                    Note = string.Empty, // Excluded for tech directory
+                    VehicleNumber = row["VehicleNumber"]?.ToString(),
+                    Picture = row["Picture"]?.ToString(),
+                    ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
+                    ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
+                    ZoneName = row["ZoneName"]?.ToString(),
+                    AddressId = null, // Excluded for tech directory
+                    Address1 = string.Empty, // Excluded for tech directory
+                    Address2 = string.Empty, // Excluded for tech directory
+                    City = row["City"]?.ToString(),
+                    State = row["State"]?.ToString(),
+                    Zip = string.Empty, // Excluded for tech directory
+                    Roles = new List<UserRoleDto>()
+                };
+
+                employeeDict[employeeId] = employee;
+            }
+
+            // Add role information if it exists (not null due to LEFT JOIN)
+            if (row["RoleId"] != DBNull.Value)
+            {
+                var roleId = Convert.ToInt32(row["RoleId"]);
+                
+                // Check if we already have this role (avoid duplicates)
+                if (!employeeDict[employeeId].Roles.Any(r => r.RoleId == roleId))
+                {
+                    var role = new UserRoleDto
+                    {
+                        UserId = employeeId,
+                        RoleId = roleId,
+                        RoleName = row["RoleName"]?.ToString() ?? string.Empty,
+                        RoleDescription = row["RoleDescription"]?.ToString()
+                    };
+                    employeeDict[employeeId].Roles.Add(role);
+                }
+            }
+        }
+
+        return employeeDict.Values.ToList();
+    }
+
+    #endregion
+
+    #region TimeTrackingDetail Endpoints
+
+    [HttpPost("timetrackingdetail")]
+    [HttpPost("~/api/EvoApi/timetrackingdetail")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateTimeTrackingDetail([FromBody] CreateTimeTrackingDetailRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating time tracking detail for User {UserId}, TTT_ID {TttId}, WO_ID {WoId}", 
+                request.u_id, request.ttt_id, request.wo_id);
+            
+            // Validate input
+            if (request.u_id <= 0 || request.ttt_id <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Valid User ID and Time Tracking Type ID are required",
+                    Count = 0
+                });
+            }
+
+            // Insert the time tracking detail record
+            var success = await _dataService.InsertTimeTrackingDetailAsync(request.u_id, request.ttt_id, request.wo_id);
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogAuditAsync("CreateTimeTrackingDetail", request, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Time tracking detail created successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogAuditErrorAsync("CreateTimeTrackingDetail", new Exception("Failed to insert time tracking detail"));
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to create time tracking detail"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating time tracking detail for User {UserId}", request.u_id);
+            await LogAuditErrorAsync("CreateTimeTrackingDetail", ex);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to create time tracking detail"
+            });
+        }
+    }
+
+    #endregion
 
     #endregion
 }

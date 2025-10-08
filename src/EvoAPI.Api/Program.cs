@@ -4,6 +4,7 @@ using System.Text;
 using EvoAPI.Api.Middleware;
 using EvoAPI.Core.Interfaces;
 using EvoAPI.Core.Services;
+using EvoAPI.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,13 @@ var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Test")
 {
     builder.Configuration.AddUserSecrets<Program>();
+}
+
+// Add secrets file if it exists (for local development in any environment)
+var secretsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.secrets.json");
+if (File.Exists(secretsPath))
+{
+    builder.Configuration.AddJsonFile("appsettings.secrets.json", optional: true, reloadOnChange: true);
 }
 
 // Log the current environment and connection string for debugging
@@ -43,11 +51,54 @@ if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PA
     }
 }
 
+// Replace Google Maps API key placeholder with actual key from environment variables
+var googleMapsApiKey = builder.Configuration["GoogleMaps:ApiKey"];
+logger.LogInformation("Original Google Maps API Key: {ApiKey}", 
+    !string.IsNullOrEmpty(googleMapsApiKey) ? $"{googleMapsApiKey.Substring(0, Math.Min(10, googleMapsApiKey.Length))}..." : "NOT FOUND");
+
+if (!string.IsNullOrEmpty(googleMapsApiKey) && googleMapsApiKey.Contains("${GOOGLE_MAPS_API_KEY}"))
+{
+    var envApiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
+    if (!string.IsNullOrEmpty(envApiKey))
+    {
+        builder.Configuration["GoogleMaps:ApiKey"] = envApiKey;
+        logger.LogInformation("Google Maps API key replacement successful from environment variable");
+    }
+    else
+    {
+        logger.LogError("GOOGLE_MAPS_API_KEY environment variable not found");
+    }
+}
+else if (string.IsNullOrEmpty(googleMapsApiKey) || googleMapsApiKey.Contains("your-google-maps-api-key"))
+{
+    // Try to get from environment variable as fallback
+    var envApiKey = Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY");
+    if (!string.IsNullOrEmpty(envApiKey))
+    {
+        builder.Configuration["GoogleMaps:ApiKey"] = envApiKey;
+        logger.LogInformation("Google Maps API key set from environment variable");
+    }
+    else
+    {
+        logger.LogError("Google Maps API key not configured properly - check appsettings or environment variables");
+    }
+}
+
+// Final validation of Google Maps API key
+var finalApiKey = builder.Configuration["GoogleMaps:ApiKey"];
+logger.LogInformation("Final Google Maps API Key status: {Status}", 
+    !string.IsNullOrEmpty(finalApiKey) && !finalApiKey.Contains("$") && !finalApiKey.Contains("your-google-maps") 
+        ? "CONFIGURED" 
+        : "NOT CONFIGURED");
+
 logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
-// Configure Kestrel for HTTPS only in local development
-if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local" || builder.Environment.EnvironmentName == "Test")
+// Configure Kestrel for HTTPS in local development environments
+// Skip HTTPS configuration only when running in actual Azure cloud environment
+var isAzureEnvironment = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME"));
+
+if (!isAzureEnvironment && (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Local" || builder.Environment.EnvironmentName == "Test"))
 {
     builder.WebHost.ConfigureKestrel(options =>
     {
@@ -64,6 +115,32 @@ builder.Services.AddControllers();
 // Register application services
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IDataService, DataService>();
+
+// Register HttpClient for Google Maps service
+builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
+builder.Services.AddScoped<IGoogleMapsService, GoogleMapsService>();
+
+// Register HttpClient and Fleetmatics services
+builder.Services.AddHttpClient<IFleetmaticsService, FleetmaticsService>((serviceProvider, client) =>
+{
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    var baseUrl = configuration["Fleetmatics:BaseUrl"];
+    
+    if (!string.IsNullOrEmpty(baseUrl))
+    {
+        client.BaseAddress = new Uri(baseUrl);
+    }
+    
+    // Configure default timeout for Fleetmatics API calls
+    client.Timeout = TimeSpan.FromMinutes(2);
+    
+    // Add default headers if needed
+    client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-FleetmaticsClient/1.0");
+});
+builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
+
+// Register Fleetmatics background service for daily sync
+builder.Services.AddHostedService<FleetmaticsSyncService>();
 
 // Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

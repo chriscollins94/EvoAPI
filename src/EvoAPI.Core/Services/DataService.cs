@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Data.SqlClient;
+using System.Diagnostics;
 
 namespace EvoAPI.Core.Services;
 
@@ -33,6 +34,7 @@ public class DataService : IDataService
                 WITH RankedOrders AS (
                     SELECT 
                         sr.sr_id              AS sr_id,
+                        wo.wo_id              AS wo_id,
                         FORMAT(sr.sr_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') CreateDate,
                         cc.cc_name            AS CallCenter,
                         c.c_name              AS Company,
@@ -50,9 +52,13 @@ public class DataService : IDataService
                         l.l_location          AS Location,
                         a.a_address1          AS Address,
                         a.a_city              AS City,
+                        a.a_state             AS State,
+                        a.a_zip               AS Zip,
                         z.z_number            AS Zone,
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
+                        ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -75,12 +81,13 @@ public class DataService : IDataService
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
                     WHERE 
-                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected','Paid', 'Invoiced')))
+                        (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
                 SELECT
                     sr_id,
+                    wo_id,
                     CreateDate,
                     CallCenter,
                     Company,
@@ -98,9 +105,13 @@ public class DataService : IDataService
                     Location,
                     Address,
                     City,
+                    State,
+                    Zip,
                     Zone,
                     CreatedBy,
-                    Escalated
+                    Escalated,
+                    ScheduleLock,
+                    ActionableNote
                 FROM RankedOrders
                 ORDER BY sr_id desc;";
 
@@ -137,7 +148,7 @@ public class DataService : IDataService
         }
     }
 
-    public async Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays)
+    public async Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays, int? technicianId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -145,10 +156,13 @@ public class DataService : IDataService
         {
             if (numberOfDays > 1500) numberOfDays = 180;
 
-            const string sql = @" 
+            var technicianFilter = technicianId.HasValue ? "AND u.u_id = @technicianId" : "";
+
+            const string sqlTemplate = @" 
                 WITH RankedOrders AS (
                     SELECT
                         sr.sr_id              AS sr_id,
+                        wo.wo_id              AS wo_id,
                         FORMAT(sr.sr_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') CreateDate,
                         cc.cc_name            AS CallCenter,
                         c.c_name              AS Company,
@@ -166,9 +180,13 @@ public class DataService : IDataService
                         l.l_location          AS Location,
                         a.a_address1          AS Address,
                         a.a_city              AS City,
+                        a.a_state             AS State,
+                        a.a_zip               AS Zip,
                         z.z_number            AS Zone,
                             u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
+                        ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
+                        ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -194,9 +212,11 @@ public class DataService : IDataService
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND (r.r_role = 'Technician' or r.r_role is null)
+                        {technicianFilter}
                 )
                 SELECT
                     sr_id,
+                    wo_id,
                     CreateDate,
                     CallCenter,
                     Company,
@@ -214,13 +234,23 @@ public class DataService : IDataService
                     Location,
                     Address,
                     City,
+                    State,
+                    Zip,
                     Zone,
                     CreatedBy,
-                    Escalated
+                    Escalated,
+                    ScheduleLock,
+                    ActionableNote
                 FROM RankedOrders
                 ORDER BY CallCenter, Company, Trade, requestnumber;";
 
+            var sql = sqlTemplate.Replace("{technicianFilter}", technicianFilter);
             var parameters = new Dictionary<string, object> { { "@numberOfDays", numberOfDays } };
+            
+            if (technicianId.HasValue)
+            {
+                parameters.Add("@technicianId", technicianId.Value);
+            }
 
             var result = await ExecuteQueryAsync(sql, parameters);
             
@@ -295,6 +325,51 @@ public class DataService : IDataService
             });
             
             _logger.LogError(ex, "Error updating escalated status for service request {Id}", request.ServiceRequestId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateWorkOrderScheduleLockAsync(UpdateWorkOrderScheduleLockRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var sql = "UPDATE servicerequest SET sr_schedulelock = @isScheduleLocked WHERE sr_id = @serviceRequestId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@serviceRequestId", request.ServiceRequestId },
+                { "@isScheduleLocked", request.IsScheduleLocked ? 1 : 0 }
+            };
+
+            var result = await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateWorkOrderScheduleLock",
+                Detail = $"Updated schedule lock status for service request {request.ServiceRequestId} to {request.IsScheduleLocked}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateWorkOrderScheduleLock",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating schedule lock status for service request {Id}", request.ServiceRequestId);
             throw;
         }
     }
@@ -1353,6 +1428,7 @@ public class DataService : IDataService
                        u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
                        u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
                        u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
+                       u_phonedesk as PhoneDesk, u_extension as Extension,
                        u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
                        u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
                        u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
@@ -1401,19 +1477,22 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                SELECT u_id as Id, o_id as OId, a_id as AId, v_id as VId, supervisor_id as SupervisorId,
-                       u_insertdatetime as InsertDateTime, u_modifieddatetime as ModifiedDateTime,
-                       u_username as Username, u_password as Password, u_firstname as FirstName, u_lastname as LastName,
-                       u_employeenumber as EmployeeNumber, u_email as Email, u_phonehome as PhoneHome, u_phonemobile as PhoneMobile,
-                       u_active as Active, u_picture as Picture, u_ssn as SSN, u_dateofhire as DateOfHire,
-                       u_dateeligiblepto as DateEligiblePTO, u_dateeligiblevacation as DateEligibleVacation,
-                       u_daysavailablepto as DaysAvailablePTO, u_daysavailablevacation as DaysAvailableVacation,
-                       u_clothingshirt as ClothingShirt, u_clothingjacket as ClothingJacket, u_clothingpants as ClothingPants,
-                       u_wirelessprovider as WirelessProvider, u_preferrednotification as PreferredNotification,
-                       u_quickbooksname as QuickBooksName, u_passwordchanged as PasswordChanged, u_2fa as U_2FA,
-                       z_id as ZoneId, u_covidvaccinedate as CovidVaccineDate, u_note as Note, u_notedashboard as NoteDashboard
-                FROM dbo.[User]
-                WHERE u_id = @UserId";
+                SELECT u.u_id as Id, u.o_id as OId, u.a_id as AId, u.v_id as VId, u.supervisor_id as SupervisorId,
+                       u.u_insertdatetime as InsertDateTime, u.u_modifieddatetime as ModifiedDateTime,
+                       u.u_username as Username, u.u_password as Password, u.u_firstname as FirstName, u.u_lastname as LastName,
+                       u.u_employeenumber as EmployeeNumber, u.u_email as Email, u.u_phonehome as PhoneHome, u.u_phonemobile as PhoneMobile,
+                       u.u_phonedesk as PhoneDesk, u.u_extension as Extension,
+                       u.u_active as Active, u.u_picture as Picture, u.u_ssn as SSN, u.u_dateofhire as DateOfHire,
+                       u.u_dateeligiblepto as DateEligiblePTO, u.u_dateeligiblevacation as DateEligibleVacation,
+                       u.u_daysavailablepto as DaysAvailablePTO, u.u_daysavailablevacation as DaysAvailableVacation,
+                       u.u_clothingshirt as ClothingShirt, u.u_clothingjacket as ClothingJacket, u.u_clothingpants as ClothingPants,
+                       u.u_wirelessprovider as WirelessProvider, u.u_preferrednotification as PreferredNotification,
+                       u.u_quickbooksname as QuickBooksName, u.u_passwordchanged as PasswordChanged, u.u_2fa as U_2FA,
+                       u.z_id as ZoneId, u.u_covidvaccinedate as CovidVaccineDate, u.u_note as Note, u.u_notedashboard as NoteDashboard,
+                       a.a_address1 as Address1, a.a_address2 as Address2, a.a_city as City, a.a_state as State, a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN address a ON u.a_id = a.a_id
+                WHERE u.u_id = @UserId";
 
             var parameters = new Dictionary<string, object>
             {
@@ -1460,14 +1539,14 @@ public class DataService : IDataService
             const string sql = @"
                 INSERT INTO dbo.[User] 
                 (o_id, a_id, v_id, supervisor_id, u_insertdatetime, u_modifieddatetime, u_username, u_password, 
-                 u_firstname, u_lastname, u_employeenumber, u_email, u_phonehome, u_phonemobile, u_active, 
+                 u_firstname, u_lastname, u_employeenumber, u_email, u_phonehome, u_phonemobile, u_phonedesk, u_extension, u_active, 
                  u_picture, u_ssn, u_dateofhire, u_dateeligiblepto, u_dateeligiblevacation, u_daysavailablepto, 
                  u_daysavailablevacation, u_clothingshirt, u_clothingjacket, u_clothingpants, u_wirelessprovider, 
                  u_preferrednotification, u_quickbooksname, u_passwordchanged, u_2fa, z_id, u_covidvaccinedate, 
                  u_note, u_notedashboard)
                 VALUES 
                 (@OId, @AId, @VId, @SupervisorId, GETDATE(), GETDATE(), @Username, @Password,
-                 @FirstName, @LastName, @EmployeeNumber, @Email, @PhoneHome, @PhoneMobile, @Active,
+                 @FirstName, @LastName, @EmployeeNumber, @Email, @PhoneHome, @PhoneMobile, @PhoneDesk, @Extension, @Active,
                  @Picture, @SSN, @DateOfHire, @DateEligiblePTO, @DateEligibleVacation, @DaysAvailablePTO,
                  @DaysAvailableVacation, @ClothingShirt, @ClothingJacket, @ClothingPants, @WirelessProvider,
                  @PreferredNotification, @QuickBooksName, @PasswordChanged, @U_2FA, @ZoneId, @CovidVaccineDate,
@@ -1489,6 +1568,8 @@ public class DataService : IDataService
                 { "@Email", request.Email ?? (object)DBNull.Value },
                 { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
                 { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value },
+                { "@Extension", request.Extension ?? (object)DBNull.Value },
                 { "@Active", request.Active },
                 { "@Picture", request.Picture ?? (object)DBNull.Value },
                 { "@SSN", request.SSN ?? (object)DBNull.Value },
@@ -1588,6 +1669,8 @@ public class DataService : IDataService
                     u_email = @Email,
                     u_phonehome = @PhoneHome,
                     u_phonemobile = @PhoneMobile,
+                    u_phonedesk = @PhoneDesk,
+                    u_extension = @Extension,
                     u_active = @Active,
                     u_picture = @Picture,
                     u_ssn = @SSN,
@@ -1623,6 +1706,8 @@ public class DataService : IDataService
                 { "@Email", request.Email ?? (object)DBNull.Value },
                 { "@PhoneHome", request.PhoneHome ?? (object)DBNull.Value },
                 { "@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value },
+                { "@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value },
+                { "@Extension", request.Extension ?? (object)DBNull.Value },
                 { "@Active", request.Active },
                 { "@Picture", request.Picture ?? (object)DBNull.Value },
                 { "@SSN", request.SSN ?? (object)DBNull.Value },
@@ -1699,6 +1784,1123 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<bool> UpdateUserDashboardNoteAsync(int userId, string? dashboardNote)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var sql = @"
+                UPDATE dbo.[User] 
+                SET 
+                    u_notedashboard = @NoteDashboard,
+                    u_modifieddatetime = GETDATE()
+                WHERE u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@NoteDashboard", dashboardNote ?? (object)DBNull.Value }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserDashboardNote",
+                Detail = $"Updated dashboard note for user {userId}. Note: '{dashboardNote ?? "NULL"}'. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserDashboardNote",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating dashboard note for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    #region Employee Management Methods
+
+    public async Task<DataTable> GetAllEmployeesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_number as ZoneNumber,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployees",
+                Detail = $"Retrieved {result.Rows.Count} employees",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployees",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employees");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetEmployeeByIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_number as ZoneNumber,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                WHERE u.u_id = @UserId";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeById",
+                Detail = $"Retrieved employee with ID {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employee with ID {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllRolesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    r_id as Id,
+                    r_role as Name,
+                    r_description as Description,
+                    1 as Active
+                FROM dbo.Role
+                ORDER BY r_role";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllRoles",
+                Detail = $"Retrieved {result.Rows.Count} roles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving roles");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetUserRolesByUserIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xur.u_id as UserId,
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription
+                FROM dbo.XRefUserRole xur
+                INNER JOIN dbo.Role r ON xur.r_id = r.r_id
+                WHERE xur.u_id = @UserId
+                ORDER BY r.r_role";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserRolesByUserId",
+                Detail = $"Retrieved {result.Rows.Count} roles for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserRolesByUserId",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving roles for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAddressByIdAsync(int addressId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a_id as Id,
+                    a_insertdatetime as InsertDateTime,
+                    a_modifieddatetime as ModifiedDateTime,
+                    a_address1 as Address1,
+                    a_address2 as Address2,
+                    a_city as City,
+                    a_state as State,
+                    a_zip as Zip,
+                    a_phone as Phone,
+                    a_email as Email,
+                    a_notes as Notes,
+                    a_active as Active
+                FROM dbo.Address
+                WHERE a_id = @AddressId";
+            
+            var parameters = new Dictionary<string, object>
+            {
+                { "@AddressId", addressId }
+            };
+            
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressById",
+                Detail = $"Retrieved address with ID {addressId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving address with ID {AddressId}", addressId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateEmployeeAsync(CreateEmployeeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // First create address if provided
+            int? addressId = null;
+            if (!string.IsNullOrWhiteSpace(request.Address1))
+            {
+                var addressRequest = new CreateAddressRequest
+                {
+                    Address1 = request.Address1,
+                    Address2 = request.Address2,
+                    City = request.City,
+                    State = request.State,
+                    Zip = request.Zip,
+                    Active = true
+                };
+                addressId = await CreateAddressAsync(addressRequest);
+            }
+
+            // Create the user record
+            const string userSql = @"
+                INSERT INTO dbo.[User] (
+                    o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
+                    u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
+                    u_active, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
+                )
+                OUTPUT INSERTED.u_id
+                VALUES (
+                    1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
+                    @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
+                    @Active, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                )";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(userSql, connection);
+            command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Username", request.Username);
+            command.Parameters.AddWithValue("@Password", request.Password);
+            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LastName", request.LastName ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Email", request.Email ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneHome", request.PhoneHome ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Extension", request.Extension ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+
+            var userId = (int)await command.ExecuteScalarAsync();
+
+            // Assign roles if provided
+            if (request.RoleIds.Any())
+            {
+                await UpdateEmployeeRolesAsync(userId, request.RoleIds);
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployee",
+                Detail = $"Created employee {request.FirstName} {request.LastName} with ID {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return userId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployee",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating employee {FirstName} {LastName}", request.FirstName, request.LastName);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeAsync(UpdateEmployeeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Update or create address if provided
+            int? addressId = request.AddressId;
+            if (!string.IsNullOrWhiteSpace(request.Address1))
+            {
+                if (addressId.HasValue)
+                {
+                    var addressRequest = new UpdateAddressRequest
+                    {
+                        Id = addressId.Value,
+                        Address1 = request.Address1,
+                        Address2 = request.Address2,
+                        City = request.City,
+                        State = request.State,
+                        Zip = request.Zip,
+                        Active = true
+                    };
+                    await UpdateAddressAsync(addressRequest);
+                }
+                else
+                {
+                    var addressRequest = new CreateAddressRequest
+                    {
+                        Address1 = request.Address1,
+                        Address2 = request.Address2,
+                        City = request.City,
+                        State = request.State,
+                        Zip = request.Zip,
+                        Active = true
+                    };
+                    addressId = await CreateAddressAsync(addressRequest);
+                }
+            }
+
+            // Update the user record
+            var userSql = @"
+                UPDATE dbo.[User] 
+                SET 
+                    a_id = @AddressId,
+                    u_modifieddatetime = GETDATE(),
+                    u_username = @Username,
+                    u_firstname = @FirstName,
+                    u_lastname = @LastName,
+                    u_employeenumber = @EmployeeNumber,
+                    u_email = @Email,
+                    u_phonemobile = @PhoneMobile,
+                    u_phonehome = @PhoneHome,
+                    u_phonedesk = @PhoneDesk,
+                    u_extension = @Extension,
+                    u_active = @Active,
+                    u_daysavailablepto = @DaysAvailablePTO,
+                    u_daysavailablevacation = @DaysAvailableVacation,
+                    u_note = @Note,
+                    u_picture = @Picture,
+                    z_id = @ZoneId";
+
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                userSql += ", u_password = @Password";
+            }
+
+            userSql += " WHERE u_id = @UserId";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(userSql, connection);
+            command.Parameters.AddWithValue("@UserId", request.Id);
+            command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Username", request.Username);
+            command.Parameters.AddWithValue("@FirstName", request.FirstName ?? "");
+            command.Parameters.AddWithValue("@LastName", request.LastName ?? "");
+            command.Parameters.AddWithValue("@EmployeeNumber", request.EmployeeNumber ?? "");
+            command.Parameters.AddWithValue("@Email", request.Email ?? "");
+            command.Parameters.AddWithValue("@PhoneMobile", request.PhoneMobile ?? "");
+            command.Parameters.AddWithValue("@PhoneHome", request.PhoneHome ?? "");
+            command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? "");
+            command.Parameters.AddWithValue("@Extension", request.Extension ?? "");
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
+            command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
+            command.Parameters.AddWithValue("@Note", request.Note ?? "");
+            command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
+            command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                command.Parameters.AddWithValue("@Password", request.Password);
+            }
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            // Update roles
+            await UpdateEmployeeRolesAsync(request.Id, request.RoleIds);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployee",
+                Detail = $"Updated employee {request.FirstName} {request.LastName} (ID: {request.Id})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployee",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating employee {FirstName} {LastName} (ID: {Id})", request.FirstName, request.LastName, request.Id);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeRolesAsync(int userId, List<int> roleIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            // Remove all existing roles for the user
+            const string deleteSql = "DELETE FROM dbo.XRefUserRole WHERE u_id = @UserId";
+            using var deleteCommand = new SqlCommand(deleteSql, connection);
+            deleteCommand.Parameters.AddWithValue("@UserId", userId);
+            await deleteCommand.ExecuteNonQueryAsync();
+
+            // Add new roles
+            if (roleIds.Any())
+            {
+                const string insertSql = @"
+                    INSERT INTO dbo.XRefUserRole (u_id, r_id)
+                    VALUES (@UserId, @RoleId)";
+
+                foreach (var roleId in roleIds)
+                {
+                    using var insertCommand = new SqlCommand(insertSql, connection);
+                    insertCommand.Parameters.AddWithValue("@UserId", userId);
+                    insertCommand.Parameters.AddWithValue("@RoleId", roleId);
+                    await insertCommand.ExecuteNonQueryAsync();
+                }
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeRoles",
+                Detail = $"Updated roles for user {userId}. Assigned {roleIds.Count} roles.",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating roles for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateAddressAsync(CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.Address (
+                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
+                )
+                OUTPUT INSERTED.a_id
+                VALUES (
+                    GETDATE(), @Address1, @Address2, @City, @State, @Zip, @Active
+                )";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+
+            var addressId = (int)await command.ExecuteScalarAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = $"Created address with ID {addressId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return addressId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAddressAsync(UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.Address 
+                SET 
+                    a_modifieddatetime = GETDATE(),
+                    a_address1 = @Address1,
+                    a_address2 = @Address2,
+                    a_city = @City,
+                    a_state = @State,
+                    a_zip = @Zip,
+                    a_active = @Active
+                WHERE a_id = @AddressId";
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@AddressId", request.Id);
+            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Active", request.Active);
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = $"Updated address with ID {request.Id}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address with ID {AddressId}", request.Id);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllEmployeesWithRolesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_number as ZoneNumber,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip,
+                    -- Role information (nullable since LEFT JOIN)
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
+                LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRoles",
+                Detail = $"Retrieved {result.Rows.Count} employee-role records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRoles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employees with roles");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllTradeGeneralsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    tg.tg_id as Id,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as Type
+                FROM TradeGeneral tg WITH(NOLOCK)
+                ORDER BY tg.tg_type, tg.tg_trade";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTradeGenerals",
+                Detail = $"Retrieved {result.Rows.Count} trade generals",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTradeGenerals",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving trade generals");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllEmployeesWithRolesAndTradeGeneralsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    u.u_id as Id,
+                    u.u_firstname as FirstName,
+                    u.u_lastname as LastName,
+                    u.u_employeenumber as EmployeeNumber,
+                    u.u_email as Email,
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    u.u_username as Username,
+                    u.u_password as Password,
+                    u.u_active as Active,
+                    u.u_daysavailablepto as DaysAvailablePTO,
+                    u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_note as Note,
+                    u.u_vehiclenumber as VehicleNumber,
+                    u.u_picture as Picture,
+                    u.z_id as ZoneId,
+                    z.z_number as ZoneNumber,
+                    z.z_description as ZoneName,
+                    u.a_id as AddressId,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip,
+                    -- Role information (nullable since LEFT JOIN)
+                    xur.r_id as RoleId,
+                    r.r_role as RoleName,
+                    r.r_description as RoleDescription,
+                    -- Trade General information (nullable since LEFT JOIN)
+                    xutg.xutg_id as UserTradeGeneralId,
+                    xutg.tg_id as TradeGeneralId,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as TradeType
+                FROM dbo.[User] u
+                LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
+                LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
+                LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
+                LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
+                LEFT JOIN dbo.TradeGeneral tg ON xutg.tg_id = tg.tg_id
+                ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role, tg.tg_type, tg.tg_trade";
+            
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRolesAndTradeGenerals",
+                Detail = $"Retrieved {result.Rows.Count} employee records with roles and trade generals",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmployeesWithRolesAndTradeGenerals",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetUserTradeGeneralsByUserIdAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xutg.xutg_id as Id,
+                    xutg.u_id as UserId,
+                    xutg.tg_id as TradeGeneralId,
+                    tg.tg_trade as Trade,
+                    tg.tg_type as Type
+                FROM xrefUserTradeGeneral xutg WITH(NOLOCK)
+                    INNER JOIN TradeGeneral tg WITH(NOLOCK) ON xutg.tg_id = tg.tg_id
+                WHERE xutg.u_id = @userId
+                ORDER BY tg.tg_type, tg.tg_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@userId", userId }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserTradeGeneralsByUserId",
+                Detail = $"Retrieved {result.Rows.Count} user trade generals for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserTradeGeneralsByUserId",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user trade generals for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeTradeGeneralsAsync(int userId, List<int> tradeGeneralIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                // First, delete all existing trade general assignments for this user
+                const string deleteSql = "DELETE FROM xrefUserTradeGeneral WHERE u_id = @userId";
+                using (var deleteCommand = new SqlCommand(deleteSql, connection, transaction))
+                {
+                    deleteCommand.Parameters.AddWithValue("@userId", userId);
+                    await deleteCommand.ExecuteNonQueryAsync();
+                }
+
+                // Then, insert new trade general assignments
+                if (tradeGeneralIds?.Count > 0)
+                {
+                    const string insertSql = @"
+                        INSERT INTO xrefUserTradeGeneral (xutg_insertdatetime, u_id, tg_id)
+                        VALUES (GETDATE(), @userId, @tradeGeneralId)";
+
+                    foreach (var tradeGeneralId in tradeGeneralIds)
+                    {
+                        using var insertCommand = new SqlCommand(insertSql, connection, transaction);
+                        insertCommand.Parameters.AddWithValue("@userId", userId);
+                        insertCommand.Parameters.AddWithValue("@tradeGeneralId", tradeGeneralId);
+                        await insertCommand.ExecuteNonQueryAsync();
+                    }
+                }
+
+                transaction.Commit();
+                
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateEmployeeTradeGenerals",
+                    Detail = $"Updated trade generals for user {userId}, assigned {tradeGeneralIds?.Count ?? 0} trade generals",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeTradeGenerals",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Failed to update employee trade generals for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    #endregion
+
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -1708,10 +2910,6 @@ public class DataService : IDataService
         }
 
         var dataTable = new DataTable();
-        
-        // Log the exact SQL being executed
-        _logger.LogInformation("=== EXECUTING SQL ===");
-        _logger.LogInformation("SQL: {Sql}", sql);
         
         using var connection = new SqlConnection(connectionString);
         connection.ConnectionString += ";Connection Timeout=30;";
@@ -1724,15 +2922,12 @@ public class DataService : IDataService
             foreach (var param in parameters)
             {
                 command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
-                _logger.LogInformation("Parameter: {Key} = {Value}", param.Key, param.Value);
             }
         }
         
         await connection.OpenAsync();
         using var adapter = new SqlDataAdapter(command);
         adapter.Fill(dataTable);
-        
-        _logger.LogInformation("Query completed successfully. Rows returned: {Count}", dataTable.Rows.Count);
         
         return dataTable;
     }
@@ -1746,8 +2941,6 @@ public class DataService : IDataService
         }
 
         // Log the exact SQL being executed
-        _logger.LogInformation("=== EXECUTING NON-QUERY SQL ===");
-        _logger.LogInformation("SQL: {Sql}", sql);
         
         using var connection = new SqlConnection(connectionString);
         connection.ConnectionString += ";Connection Timeout=30;";
@@ -1760,14 +2953,11 @@ public class DataService : IDataService
             foreach (var param in parameters)
             {
                 command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
-                _logger.LogInformation("Parameter: {Key} = {Value}", param.Key, param.Value);
             }
         }
         
         await connection.OpenAsync();
         var rowsAffected = await command.ExecuteNonQueryAsync();
-        
-        _logger.LogInformation("Non-query completed successfully. Rows affected: {Count}", rowsAffected);
         
         return rowsAffected;
     }
@@ -1925,13 +3115,22 @@ public class DataService : IDataService
                     u.u_username as Username, 
                     u.u_email as Email, 
                     u.u_picture as Picture, 
-                    u.u_phonemobile as PhoneMobile 
-                FROM [user] u, role r, xrefUserRole x 
-                WHERE u.u_id = x.u_id 
-                    AND r.r_id = x.r_id 
-                    AND r.r_role = 'Technician' 
+                    u.u_phonemobile as PhoneMobile,
+                    u.u_phonehome as PhoneHome,
+                    u.u_phonedesk as PhoneDesk,
+                    u.u_extension as Extension,
+                    a.a_address1 as Address1,
+                    a.a_address2 as Address2,
+                    a.a_city as City,
+                    a.a_state as State,
+                    a.a_zip as Zip
+                FROM [user] u
+                INNER JOIN xrefUserRole x ON u.u_id = x.u_id
+                INNER JOIN role r ON r.r_id = x.r_id
+                LEFT JOIN address a ON u.a_id = a.a_id
+                WHERE r.r_role = 'Technician' 
                     AND u.u_active = 1 
-                ORDER BY u_lastname";
+                ORDER BY u.u_lastname";
 
             var result = await ExecuteQueryAsync(sql);
             
@@ -2174,177 +3373,182 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                WITH ranked_results AS (
-                    SELECT sr.sr_id, 
-                        sr.sr_insertdatetime, 
-                        sr.sr_totaldue,
-                        sr.sr_requestnumber,
-                        sr.sr_datenextstep,
-                        sr.sr_actionablenote,
-                        sr.sr_escalated,
-                        wo.wo_startdatetime,
-                        z.z_number + '-' + z.z_acronym zone, 
-                        cc.cc_name,
-                        c.c_name,
-                        p.p_priority,
-                        ss.ss_statussecondary,
-                        t.t_trade, 
-                        CASE 
-                            WHEN latest_note.won_insertdatetime IS NULL THEN NULL
-                            ELSE DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE())
-                        END as hours_since_last_note,
-                        CASE 
-                            WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
-                            ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
-                        END as days_in_current_status,
-                        cc.cc_attack as AttackCallCenter,
-                        p.p_attack AttackPriority, 
-                        ss.ss_attack AttackStatusSecondary,
-                        ISNULL(apn_lookup.apn_attack, 0) as AttackHoursSinceLastNote,
-                        ISNULL(aps_lookup.aps_attack, 0) as AttackDaysInStatus,
-                        ISNULL(apad_lookup.apad_attack, 0) as AttackActionableDate,
-                        (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) as AttackPoints,
-                        admin_user.u_id as admin_u_id,
-                        admin_user.u_firstname as admin_firstname,
-                        admin_user.u_lastname as admin_lastname,
-                        CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated,
-                        -- Separate ranking for non-escalated records only
-                        CASE 
-                            WHEN sr.sr_escalated IS NOT NULL THEN NULL  -- Don't rank escalated records
-                            WHEN cc.cc_name = 'Administrative' THEN NULL  -- Don't rank Administrative non-escalated 
-                            ELSE ROW_NUMBER() OVER (
-                                PARTITION BY admin_user.u_id
-                                ORDER BY (p.p_attack + ss.ss_attack + ISNULL(aps_lookup.aps_attack, 0) + ISNULL(apn_lookup.apn_attack, 0) + cc.cc_attack + ISNULL(apad_lookup.apad_attack, 0)) DESC
-                            )
-                        END as rn_non_escalated
-                    FROM servicerequest sr
-                    INNER JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
-                    INNER JOIN Company c ON xccc.c_id = c.c_id
-                    INNER JOIN callcenter cc ON xccc.cc_id = cc.cc_id
-                    INNER JOIN workorder wo ON sr.wo_id_primary = wo.wo_id
-                    LEFT JOIN xrefWorkOrderUser xwou ON xwou.wo_id = wo.wo_id AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
-                    LEFT JOIN [user] u ON xwou.u_id = u.u_id
-                    INNER JOIN location l ON sr.l_id = l.l_id
-                    INNER JOIN address a ON l.a_id = a.a_id
-                    INNER JOIN tax ON LEFT(a.a_zip,5) = tax.tax_zip
-                    INNER JOIN ZoneMicro zm ON tax.zm_id = zm.zm_id
-                    INNER JOIN zone z ON CASE 
-                        WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
-                        ELSE zm.z_id 
-                    END = z.z_id
-                    INNER JOIN statussecondary ss ON wo.ss_id = ss.ss_id
-                    INNER JOIN Priority p ON sr.p_id = p.p_id
-                    LEFT JOIN trade t ON sr.t_id = t.t_id
-                    INNER JOIN xrefadminzonestatussecondary xazss ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
-                    INNER JOIN [user] admin_user ON xazss.u_id = admin_user.u_id
-                    LEFT JOIN (
-                        SELECT sr_inner.sr_id,
-                            won.won_insertdatetime,
-                            ROW_NUMBER() OVER (PARTITION BY sr_inner.sr_id ORDER BY won.won_insertdatetime DESC) as rn
-                        FROM servicerequest sr_inner
-                        INNER JOIN xrefCompanyCallCenter xccc_inner ON sr_inner.xccc_id = xccc_inner.xccc_id
-                        INNER JOIN Company c_inner ON xccc_inner.c_id = c_inner.c_id
-                        INNER JOIN workorder wo_inner ON wo_inner.sr_id = sr_inner.sr_id
-                        INNER JOIN workordernote won ON won.wo_id = wo_inner.wo_id
-                        WHERE sr_inner.s_id NOT IN (9, 6)
-                        AND c_inner.c_name NOT IN ('Metro Pipe Program')
-                        AND (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            OR wo_inner.wo_startdatetime IS NULL)
-                    ) latest_note ON latest_note.sr_id = sr.sr_id AND latest_note.rn = 1
-                    LEFT JOIN (
-                        SELECT sr_inner.sr_id,
-                            wo_inner.wo_id,
-                            ssc.ssc_insertdatetime,
-                            ROW_NUMBER() OVER (PARTITION BY wo_inner.wo_id ORDER BY ssc.ssc_insertdatetime DESC) as rn
-                        FROM servicerequest sr_inner
-                        INNER JOIN xrefCompanyCallCenter xccc_inner ON sr_inner.xccc_id = xccc_inner.xccc_id
-                        INNER JOIN Company c_inner ON xccc_inner.c_id = c_inner.c_id
-                        INNER JOIN workorder wo_inner ON sr_inner.wo_id_primary = wo_inner.wo_id
-                        INNER JOIN statussecondarychange ssc ON ssc.wo_id = wo_inner.wo_id
-                        WHERE sr_inner.s_id NOT IN (9, 6)
-                        AND c_inner.c_name NOT IN ('Metro Pipe Program')
-                        AND (wo_inner.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                            OR wo_inner.wo_startdatetime IS NULL)
-                    ) latest_status_change ON latest_status_change.wo_id = wo.wo_id AND latest_status_change.rn = 1
-                    OUTER APPLY (
-                        SELECT TOP 1 aps_attack
-                        FROM AttackPointStatus 
-                        WHERE CASE 
-                                WHEN latest_status_change.ssc_insertdatetime IS NULL THEN 0
-                                ELSE DATEDIFF(DAY, latest_status_change.ssc_insertdatetime, GETDATE())
-                            END >= aps_daysinstatus
-                        ORDER BY aps_daysinstatus DESC, aps_id DESC
-                    ) aps_lookup
-                    OUTER APPLY (
-                        SELECT TOP 1 
-                            CASE 
-                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
-                                ELSE apn_attack
-                            END as apn_attack
-                        FROM AttackPointNote 
-                        WHERE 
-                            (latest_note.won_insertdatetime IS NULL AND apn_id = 1)  
-                            OR 
-                            (latest_note.won_insertdatetime IS NOT NULL 
-                            AND DATEDIFF(HOUR, latest_note.won_insertdatetime, GETDATE()) >= apn_hours
-                            AND apn_id > 1)  
-                        ORDER BY 
-                            CASE
-                                WHEN latest_note.won_insertdatetime IS NULL THEN 0
-                                ELSE apn_hours
-                            END DESC
-                    ) apn_lookup
-                    OUTER APPLY (
-                        SELECT TOP 1 apad_attack
-                        FROM AttackPointActionableDate 
-                        WHERE 
-                            (sr.sr_datenextstep IS NULL AND apad_id = 1)  
-                            OR 
-                            (sr.sr_datenextstep IS NOT NULL 
-                            AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
-                            AND apad_id > 1)  
-                        ORDER BY 
-                            CASE
-                                WHEN sr.sr_datenextstep IS NULL THEN 0
-                                ELSE apad_days
-                            END ASC
-                    ) apad_lookup
-                    WHERE sr.s_id NOT IN (9, 6)  -- Exclude Paid, Rejected
+            -- Ultra-Optimized Version with Temp Tables
+                    DECLARE @CutoffDate DATETIME = DATEADD(DAY, -730, GETDATE());
+                    DECLARE @FutureDate DATETIME = DATEADD(DAY, 180, GETDATE());
+
+                    -- Create temp tables with proper filtering
+                    IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
+                    IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
+                    IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
+
+                    -- First, get the base set of work orders we care about
+                    SELECT DISTINCT wo.wo_id
+                    INTO #BaseData
+                    FROM servicerequest sr WITH (NOLOCK)
+                    INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+                    INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                    WHERE sr.s_id NOT IN (9, 6)
                     AND c.c_name NOT IN ('Metro Pipe Program')
-                    AND (wo.wo_startdatetime BETWEEN DATEADD(DAY, -730, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) 
-                        OR wo.wo_startdatetime IS NULL)
-                    -- NO call center filtering here - handled by ranking logic instead
-                )
-                SELECT sr_id, 
-                    sr_insertdatetime, 
-                    sr_totaldue,
-                    sr_requestnumber,
-                    sr_datenextstep,
-                    sr_actionablenote,
-                    sr_escalated,
-                    wo_startdatetime,
-                    zone, 
-                    admin_u_id,
-                    admin_firstname,
-                    admin_lastname,
-                    cc_name,
-                    c_name,
-                    p_priority,
-                    ss_statussecondary,
-                    t_trade, 
-                    hours_since_last_note,
-                    days_in_current_status,
-                    AttackCallCenter,
-                    AttackPriority, 
-                    AttackStatusSecondary,
-                    AttackHoursSinceLastNote,
-                    AttackDaysInStatus,
-                    AttackActionableDate,
-                    AttackPoints,
-                    is_escalated
-                FROM ranked_results 
-                WHERE (rn_non_escalated <= @TopCount) OR (is_escalated = 1)  -- Top 15 non-escalated per admin + ALL escalated
-                ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
+                    AND (wo.wo_startdatetime BETWEEN @CutoffDate AND @FutureDate OR wo.wo_startdatetime IS NULL);
+
+                    CREATE CLUSTERED INDEX IX_BaseData ON #BaseData(wo_id);
+
+                    -- Get latest notes only for relevant work orders
+                    SELECT won.wo_id, MAX(won.won_insertdatetime) as latest_note_datetime
+                    INTO #WorkOrderNotes
+                    FROM WorkOrderNote won WITH (NOLOCK)
+                    WHERE won.wo_id IN (SELECT wo_id FROM #BaseData)
+                    GROUP BY won.wo_id;
+
+                    CREATE CLUSTERED INDEX IX_WON ON #WorkOrderNotes(wo_id);
+
+                    -- Get latest status changes only for relevant work orders  
+                    SELECT ssc.wo_id, MAX(ssc.ssc_insertdatetime) as latest_status_datetime
+                    INTO #StatusChanges
+                    FROM StatusSecondaryChange ssc WITH (NOLOCK)
+                    WHERE ssc.wo_id IN (SELECT wo_id FROM #BaseData)
+                    GROUP BY ssc.wo_id;
+
+                    CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
+
+                    -- Main query using pre-filtered data
+                    WITH ranked_results AS (
+                        SELECT sr.sr_id, 
+                            sr.sr_insertdatetime, 
+                            sr.sr_totaldue,
+                            sr.sr_requestnumber,
+                            sr.sr_datenextstep,
+                            sr.sr_actionablenote,
+                            sr.sr_escalated,
+                            wo.wo_startdatetime,
+                            z.z_number + '-' + z.z_acronym zone, 
+                            cc.cc_name,
+                            c.c_name,
+                            p.p_priority,
+                            ss.ss_statussecondary,
+                            t.t_trade,
+                            CASE 
+                                WHEN won.latest_note_datetime IS NULL THEN NULL
+                                ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
+                            END as hours_since_last_note,
+                            ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
+                            cc.cc_attack as AttackCallCenter,
+                            p.p_attack as AttackPriority, 
+                            ss.ss_attack as AttackStatusSecondary,
+                            -- Inline attack point calculations
+                            ISNULL((
+                                SELECT TOP 1 aps_attack
+                                FROM AttackPointStatus WITH (NOLOCK)
+                                WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
+                                ORDER BY aps_daysinstatus DESC, aps_id DESC
+                            ), 0) as AttackDaysInStatus,
+                            ISNULL((
+                                SELECT TOP 1 
+                                    CASE 
+                                        WHEN won.latest_note_datetime IS NULL THEN apn_attack
+                                        WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
+                                            CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
+                                        ELSE apn_attack
+                                    END
+                                FROM AttackPointNote WITH (NOLOCK)
+                                WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
+                                OR (won.latest_note_datetime IS NOT NULL 
+                                    AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
+                                    AND apn_id > 1)
+                                ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
+                            ), 0) as AttackHoursSinceLastNote,
+                            ISNULL((
+                                SELECT TOP 1 apad_attack
+                                FROM AttackPointActionableDate WITH (NOLOCK)
+                                WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
+                                OR (sr.sr_datenextstep IS NOT NULL 
+                                    AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
+                                    AND apad_id > 1)
+                                ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
+                            ), 0) as AttackActionableDate,
+                            admin_user.u_id as admin_u_id,
+                            admin_user.u_firstname as admin_firstname,
+                            admin_user.u_lastname as admin_lastname,
+                            CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated
+                        FROM servicerequest sr WITH (NOLOCK)
+                        INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+                        INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id -- Use filtered base
+                        INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+                        INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                        INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
+                        LEFT JOIN xrefWorkOrderUser xwou WITH (NOLOCK) ON xwou.wo_id = wo.wo_id 
+                            AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
+                        LEFT JOIN [user] u WITH (NOLOCK) ON xwou.u_id = u.u_id
+                        INNER JOIN location l WITH (NOLOCK) ON sr.l_id = l.l_id
+                        INNER JOIN address a WITH (NOLOCK) ON l.a_id = a.a_id
+                        INNER JOIN tax WITH (NOLOCK) ON LEFT(a.a_zip,5) = tax.tax_zip
+                        INNER JOIN ZoneMicro zm WITH (NOLOCK) ON tax.zm_id = zm.zm_id
+                        INNER JOIN zone z WITH (NOLOCK) ON CASE 
+                            WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
+                            ELSE zm.z_id 
+                        END = z.z_id
+                        INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
+                        INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
+                        LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
+                        INNER JOIN xrefadminzonestatussecondary xazss WITH (NOLOCK) ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
+                        INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
+                        LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
+                        LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
+                        WHERE sr.s_id NOT IN (9, 6)
+                        AND c.c_name NOT IN ('Metro Pipe Program')
+                    ),
+                    final_with_attack_points AS (
+                        SELECT *,
+                            (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
+                            AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
+                            CASE 
+                                WHEN is_escalated = 1 THEN NULL
+                                WHEN cc_name = 'Administrative' THEN NULL
+                                ELSE ROW_NUMBER() OVER (
+                                    PARTITION BY admin_u_id
+                                    ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
+                                            AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
+                                )
+                            END as rn_non_escalated
+                        FROM ranked_results
+                    )
+                    SELECT sr_id, 
+                        sr_insertdatetime, 
+                        sr_totaldue,
+                        sr_requestnumber,
+                        sr_datenextstep,
+                        sr_actionablenote,
+                        sr_escalated,
+                        wo_startdatetime,
+                        zone, 
+                        admin_u_id,
+                        admin_firstname,
+                        admin_lastname,
+                        cc_name,
+                        c_name,
+                        p_priority,
+                        ss_statussecondary,
+                        t_trade, 
+                        hours_since_last_note,
+                        days_in_current_status,
+                        AttackCallCenter,
+                        AttackPriority, 
+                        AttackStatusSecondary,
+                        AttackHoursSinceLastNote,
+                        AttackDaysInStatus,
+                        AttackActionableDate,
+                        AttackPoints,
+                        is_escalated
+                    FROM final_with_attack_points
+                    WHERE (rn_non_escalated <= @TopCount) OR (is_escalated = 1)
+                    ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
+
+                    -- Clean up
+                    DROP TABLE #BaseData;
+                    DROP TABLE #WorkOrderNotes;
+                    DROP TABLE #StatusChanges;
             ";
 
             
@@ -2688,13 +3892,92 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTechActivityDashboardAsync()
+    public async Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            var sql = @"
+                SELECT TOP 5
+                    u.u_id, 
+                    u.u_firstname, 
+                    u.u_lastname, 
+                    perf.perf_id, 
+                    CONVERT(DATE, perf.perf_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time') AS perf_insertdate, 
+                    perf.perf_utilization, 
+                    perf.perf_profitability, 
+                    perf.perf_attendance, 
+                    perf.perf_comment,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    z.z_id,
+                    z.z_number
+                FROM performance perf
+                JOIN [user] u ON perf.u_id = u.u_id
+                LEFT JOIN address a ON u.a_id = a.a_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE u.u_active = 1 
+                    AND perf.u_id = @technicianId
+                ORDER BY perf.perf_insertdatetime DESC;
+            ";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@technicianId", technicianId }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechDetailByTechnician",
+                Detail = $"Retrieved {result.Rows.Count} performance records for technician {technicianId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechDetailByTechnician",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving tech detail data for technician {TechnicianId}", technicianId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            
+            // Default to 90 days if no dates provided
+            var effectiveStartDate = startDate ?? DateTime.Now.AddDays(-90);
+            var effectiveEndDate = endDate ?? DateTime.Now;
             
             const string sql = @"
                 SELECT 
@@ -2743,7 +4026,8 @@ FROM DailyTechSummary;
                     LEFT JOIN zone srz ON zm.z_id = srz.z_id
                     -- Residential zone lookup
                     LEFT JOIN zone resz ON resz.z_acronym = 'Residential'
-                WHERE tt.tt_begin >= DATEADD(DAY, -30, GETDATE()) 
+                WHERE tt.tt_begin >= @StartDate 
+                    AND tt.tt_begin <= @EndDate
                     AND ttt.ttt_id NOT IN (1)
                 ORDER BY tt.tt_id DESC;
             ";
@@ -2753,6 +4037,8 @@ FROM DailyTechSummary;
                 await connection.OpenAsync();
                 using (var command = new SqlCommand(sql, connection))
                 {
+                    command.Parameters.AddWithValue("@StartDate", effectiveStartDate);
+                    command.Parameters.AddWithValue("@EndDate", effectiveEndDate);
                     command.CommandTimeout = 60;
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();
@@ -2763,7 +4049,7 @@ FROM DailyTechSummary;
                     {
                         Name = "DataService",
                         Description = "GetTechActivityDashboard",
-                        Detail = $"Retrieved {dataTable.Rows.Count} tech activity records",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech activity records from {effectiveStartDate:yyyy-MM-dd} to {effectiveEndDate:yyyy-MM-dd}",
                         ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                         MachineName = Environment.MachineName
                     });
@@ -2864,6 +4150,76 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetActiveServiceRequestsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            const string sql = @"
+                select sr.sr_id, sr.sr_requestnumber, sr.sr_insertdatetime, s.s_status, u.u_firstname, u.u_lastname, u.u_active
+                from servicerequest sr, workorder wo, xrefworkorderuser x, status s, [user] u, xrefWorkOrderUser xwou
+                where wo.wo_id = x.wo_id
+                and sr.sr_id = wo.sr_id
+                and sr.s_id = s.s_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and s.s_id not in (
+                    select cast(value as int) 
+                    from configsetting cs
+                    cross apply string_split(cs.cs_value, ',')
+                    where cs.cs_identifier = 'WorkOrderStatusActive'
+                )
+                order by u_lastname
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+                    
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetActiveServiceRequests",
+                        Detail = $"Retrieved {dataTable.Rows.Count} active service requests records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveServiceRequests",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving active service requests data");
+            throw;
+        }
+    }
+
     public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2934,6 +4290,78 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsByUserAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT u.u_id, rm.rm_id, rm_dateupload, rm_datereceipt, rm_description, rm_amount, 
+                       u.u_firstname, u.u_lastname, u.u_employeenumber
+                FROM receiptmissing rm
+                INNER JOIN [user] u ON u.u_employeenumber = rm.u_employeenumber
+                WHERE u.u_id = @userId
+                  AND CAST(CAST(rm.rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) = (
+                    SELECT MAX(CAST(CAST(rm_dateupload AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE)) 
+                    FROM receiptmissing
+                )
+                ORDER BY rm.rm_id DESC";
+
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@userId", userId);
+            
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+            
+            var receipts = new List<MissingReceiptDashboardDto>();
+            
+            while (await reader.ReadAsync())
+            {
+                receipts.Add(new MissingReceiptDashboardDto
+                {
+                    UId = ConvertToInt(reader["u_id"]),
+                    RmId = ConvertToInt(reader["rm_id"]),
+                    RmDateUpload = reader["rm_dateupload"] as DateTime?,
+                    RmDateReceipt = reader["rm_datereceipt"] as DateTime?,
+                    RmDescription = reader["rm_description"]?.ToString(),
+                    RmAmount = reader["rm_amount"] as decimal?,
+                    UFirstName = reader["u_firstname"]?.ToString(),
+                    ULastName = reader["u_lastname"]?.ToString(),
+                    UEmployeeNumber = reader["u_employeenumber"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            // {
+            //     Name = "DataService",
+            //     Description = "GetMissingReceiptsByUser",
+            //     Detail = $"Retrieved {receipts.Count} missing receipts for user {userId}",
+            //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+            //     MachineName = Environment.MachineName
+            // });
+
+            return receipts;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMissingReceiptsByUser",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving missing receipts for user {UserId}", userId);
+            throw;
+        }
+    }
+
     public async Task<int> UploadMissingReceiptsAsync(List<MissingReceiptUploadDto> receipts)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2954,8 +4382,6 @@ FROM DailyTechSummary;
                 using var deleteCommand = new SqlCommand(deleteSql, connection, transaction);
                 var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
                 
-                _logger.LogInformation("Deleted {DeletedRows} existing records for today", deletedRows);
-
                 // Insert new records with Central Time
                 const string insertSql = @"
                     INSERT INTO ReceiptMissing (rm_dateupload, rm_datereceipt, rm_description, rm_amount, u_employeenumber)
@@ -3139,8 +4565,8 @@ FROM DailyTechSummary;
                     -- Current work order
                     current_wo,
                     current_sr_id,
-                    FORMAT(current_start, 'MM/dd/yyyy hh:mm tt') as current_start_formatted,
-                    FORMAT(current_end, 'MM/dd/yyyy hh:mm tt') as current_end_formatted,
+                    FORMAT(current_start AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as current_start_formatted,
+                    FORMAT(current_end AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as current_end_formatted,
                     current_description,
                     current_address,
                     current_location,
@@ -3148,8 +4574,8 @@ FROM DailyTechSummary;
                     -- Next work order
                     next_wo,
                     next_sr_id,
-                    FORMAT(next_start, 'MM/dd/yyyy hh:mm tt') as next_start_formatted,
-                    FORMAT(next_end, 'MM/dd/yyyy hh:mm tt') as next_end_formatted,
+                    FORMAT(next_start AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as next_start_formatted,
+                    FORMAT(next_end AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'MM/dd/yyyy hh:mm tt') as next_end_formatted,
                     next_description,
                     next_address,
                     next_location,
@@ -3315,6 +4741,668 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetArrivingLateReportAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                WITH Upcoming AS (
+                    SELECT
+                        cc.cc_name,
+                        t.t_trade,
+                        wo.wo_workordernumber,
+                        sr.sr_id,
+                        u.u_id,
+                        u.u_employeenumber,
+                        u.u_firstname,
+                        u.u_lastname,
+                        u.u_vehiclenumber,
+                        wo.wo_startdatetime,
+                        a.a_address1,
+                        a.a_city,
+                        a.a_state,
+                        a.a_zip,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY u.u_id
+                            ORDER BY wo.wo_startdatetime ASC
+                        ) AS rn
+                    FROM workorder          wo
+                    JOIN servicerequest     sr  ON sr.sr_id = wo.sr_id
+                    JOIN location           l   ON l.l_id = sr.l_id
+                    JOIN address            a   ON a.a_id = l.a_id
+                    JOIN xrefWorkOrderUser  xwou ON xwou.wo_id = wo.wo_id
+                    JOIN [user]             u   ON u.u_id = xwou.u_id
+                    JOIN xrefCompanyCallCenter xccc on sr.xccc_id = xccc.xccc_id
+                    JOIN CallCenter         cc  ON xccc.cc_id = cc.cc_id
+                    JOIN Trade              t   ON sr.t_id = t.t_id
+                    WHERE wo.wo_startdatetime > GETDATE()
+                      AND wo.wo_startdatetime <= DATEADD(HOUR, 8, GETDATE())
+                      AND cc.cc_name not in ('Administrative', 'Administrative - Automotive')
+                      AND u.u_vehiclenumber not in ('', 'NULL')
+                      AND u.u_vehiclenumber IS NOT NULL
+                )
+                SELECT
+                    cc_name,
+                    t_trade,
+                    wo_workordernumber,
+                    sr_id,
+                    u_id,
+                    u_employeenumber,
+                    u_firstname,
+                    u_lastname,
+                    u_vehiclenumber,
+                    FORMAT(wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time', 'yyyy-MM-dd HH:mm') AS wo_startdatetime,
+                    a_address1,
+                    a_city,
+                    a_state,
+                    a_zip
+                FROM Upcoming
+                WHERE rn = 1
+                ORDER BY 1;";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetArrivingLateReport",
+                Detail = $"Retrieved {result.Rows.Count} arriving late report records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetArrivingLateReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving arriving late report");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    att_id,
+                    att_insertdatetime,
+                    att_filename,
+                    att_description,
+                    att_active,
+                    att_receipt,
+                    att_public,
+                    att_signoff,
+                    att_submittedby,
+                    att_receiptamount,
+                    sr_id
+                FROM attachment 
+                WHERE sr_id = @sr_id
+                ORDER BY att_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@sr_id"] = srId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByServiceRequest",
+                Detail = $"Retrieved {result.Rows.Count} attachments for service request {srId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByServiceRequest",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachments for service request {SrId}", srId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetPendingTechInfoAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    wo.sr_id, 
+                    xwou.xwou_id, 
+                    sr.sr_requestnumber, 
+                    u.u_firstname, 
+                    u.u_lastname, 
+                    wo.wo_insertdatetime, 
+                    t.t_trade, 
+                    c.c_name, 
+                    wo.wo_startdatetime
+                FROM servicerequest sr, 
+                     workorder wo, 
+                     statussecondary ss, 
+                     xrefworkorderuser xwou, 
+                     [user] u, 
+                     trade t, 
+                     xrefcompanycallcenter xccc, 
+                     company c
+                WHERE ss.ss_statussecondary LIKE 'Pending Tech Info%'
+                AND wo.sr_id = sr.sr_id
+                AND sr.xccc_id = xccc.xccc_id
+                AND xccc.c_id = c.c_id
+                AND wo.ss_id = ss.ss_id
+                AND wo.wo_id = xwou.wo_id
+                AND xwou.u_id = u.u_id
+                AND sr.t_id = t.t_id
+                AND xwou.u_id = @u_id 
+                ORDER BY wo.wo_insertdatetime";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@u_id"] = userId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfo",
+                Detail = $"Retrieved {result.Rows.Count} pending tech info records for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfo",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving pending tech info for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<MapDistanceDto?> GetCachedDistanceAsync(string fromAddress, string toAddress)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Normalize addresses for consistent caching
+            var normalizedFrom = fromAddress.Trim().ToLowerInvariant();
+            var normalizedTo = toAddress.Trim().ToLowerInvariant();
+
+            const string sql = @"
+                SELECT TOP 1
+                    md_id,
+                    md_address1,
+                    md_address2,
+                    md_distance_miles,
+                    md_distance_text,
+                    md_traveltime_minutes,
+                    md_traveltime_text,
+                    md_traveltime_traffic_minutes,
+                    md_traveltime_traffic_text,
+                    md_insertdatetime,
+                    md_modifieddatetime
+                FROM MapDistance
+                WHERE LOWER(LTRIM(RTRIM(md_address1))) = @fromAddress
+                AND LOWER(LTRIM(RTRIM(md_address2))) = @toAddress
+                ORDER BY ISNULL(md_modifieddatetime, md_insertdatetime) DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@fromAddress", normalizedFrom },
+                { "@toAddress", normalizedTo }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            // {
+            //     Name = "DataService",
+            //     Description = "GetCachedDistance",
+            //     Detail = $"Retrieved cached distance from '{fromAddress}' to '{toAddress}', found: {result.Rows.Count > 0}",
+            //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+            //     MachineName = Environment.MachineName
+            // });
+
+            if (result.Rows.Count == 0)
+                return null;
+
+            var row = result.Rows[0];
+            return new MapDistanceDto
+            {
+                md_id = ConvertToInt(row["md_id"]),
+                md_address1 = row["md_address1"]?.ToString() ?? string.Empty,
+                md_address2 = row["md_address2"]?.ToString() ?? string.Empty,
+                md_distance_miles = row["md_distance_miles"] != DBNull.Value ? Convert.ToDecimal(row["md_distance_miles"]) : null,
+                md_distance_meters = null, // Not available in database
+                md_distance_text = row["md_distance_text"]?.ToString(),
+                md_traveltime_minutes = row["md_traveltime_minutes"] != DBNull.Value ? ConvertToInt(row["md_traveltime_minutes"]) : null,
+                md_traveltime_seconds = null, // Not available in database  
+                md_traveltime_text = row["md_traveltime_text"]?.ToString(),
+                md_traveltime_traffic_minutes = row["md_traveltime_traffic_minutes"] != DBNull.Value ? ConvertToInt(row["md_traveltime_traffic_minutes"]) : null,
+                md_traveltime_traffic_seconds = null, // Not available in database
+                md_traveltime_traffic_text = row["md_traveltime_traffic_text"]?.ToString(),
+                md_created_date = row["md_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_insertdatetime"]) : DateTime.MinValue,
+                md_last_updated = row["md_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_modifieddatetime"]) : 
+                                 (row["md_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["md_insertdatetime"]) : DateTime.MinValue)
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving cached distance from '{FromAddress}' to '{ToAddress}'", fromAddress, toAddress);
+            throw;
+        }
+    }
+
+    public async Task<int> SaveCachedDistanceAsync(SaveMapDistanceRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Normalize addresses for consistent caching
+            var normalizedFrom = request.FromAddress.Trim().ToLowerInvariant();
+            var normalizedTo = request.ToAddress.Trim().ToLowerInvariant();
+
+            // Check if entry already exists
+            const string checkSql = @"
+                SELECT md_id 
+                FROM MapDistance
+                WHERE LOWER(LTRIM(RTRIM(md_address1))) = @fromAddress
+                AND LOWER(LTRIM(RTRIM(md_address2))) = @toAddress";
+
+            var checkParams = new Dictionary<string, object>
+            {
+                { "@fromAddress", normalizedFrom },
+                { "@toAddress", normalizedTo }
+            };
+
+            var existingResult = await ExecuteQueryAsync(checkSql, checkParams);
+
+            string sql;
+            Dictionary<string, object> parameters;
+
+            if (existingResult.Rows.Count > 0)
+            {
+                // Update existing record
+                var existingId = ConvertToInt(existingResult.Rows[0]["md_id"]);
+                
+                sql = @"
+                    UPDATE MapDistance 
+                    SET 
+                        md_distance_miles = @distanceMiles,
+                        md_distance_text = @distanceText,
+                        md_traveltime_minutes = @travelTimeMinutes,
+                        md_traveltime_text = @travelTimeText,
+                        md_traveltime_traffic_minutes = @travelTimeTrafficMinutes,
+                        md_traveltime_traffic_text = @travelTimeTrafficText,
+                        md_modifieddatetime = GETUTCDATE()
+                    WHERE md_id = @id";
+
+                parameters = new Dictionary<string, object>
+                {
+                    { "@id", existingId },
+                    { "@distanceMiles", (object?)request.DistanceMiles ?? DBNull.Value },
+                    { "@distanceText", (object?)request.DistanceText ?? DBNull.Value },
+                    { "@travelTimeMinutes", (object?)request.TravelTimeMinutes ?? DBNull.Value },
+                    { "@travelTimeText", (object?)request.TravelTimeText ?? DBNull.Value },
+                    { "@travelTimeTrafficMinutes", (object?)request.TravelTimeTrafficMinutes ?? DBNull.Value },
+                    { "@travelTimeTrafficText", (object?)request.TravelTimeTrafficText ?? DBNull.Value }
+                };
+
+                await ExecuteNonQueryAsync(sql, parameters);
+                
+                stopwatch.Stop();
+                // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                // {
+                //     Name = "DataService",
+                //     Description = "SaveCachedDistance",
+                //     Detail = $"Updated cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                //     MachineName = Environment.MachineName
+                // });
+
+                return existingId;
+            }
+            else
+            {
+                // Insert new record
+                sql = @"
+                    INSERT INTO MapDistance (
+                        md_address1, md_address2, md_distance_miles, md_distance_text,
+                        md_traveltime_minutes, md_traveltime_text,
+                        md_traveltime_traffic_minutes, md_traveltime_traffic_text,
+                        md_insertdatetime
+                    ) 
+                    OUTPUT INSERTED.md_id
+                    VALUES (
+                        @fromAddress, @toAddress, @distanceMiles, @distanceText,
+                        @travelTimeMinutes, @travelTimeText,
+                        @travelTimeTrafficMinutes, @travelTimeTrafficText,
+                        GETUTCDATE()
+                    )";
+
+                parameters = new Dictionary<string, object>
+                {
+                    { "@fromAddress", request.FromAddress.Trim() },
+                    { "@toAddress", request.ToAddress.Trim() },
+                    { "@distanceMiles", (object?)request.DistanceMiles ?? DBNull.Value },
+                    { "@distanceText", (object?)request.DistanceText ?? DBNull.Value },
+                    { "@travelTimeMinutes", (object?)request.TravelTimeMinutes ?? DBNull.Value },
+                    { "@travelTimeText", (object?)request.TravelTimeText ?? DBNull.Value },
+                    { "@travelTimeTrafficMinutes", (object?)request.TravelTimeTrafficMinutes ?? DBNull.Value },
+                    { "@travelTimeTrafficText", (object?)request.TravelTimeTrafficText ?? DBNull.Value }
+                };
+
+                var insertResult = await ExecuteQueryAsync(sql, parameters);
+                var newId = ConvertToInt(insertResult.Rows[0][0]);
+                
+                stopwatch.Stop();
+                // await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                // {
+                //     Name = "DataService",
+                //     Description = "SaveCachedDistance",
+                //     Detail = $"Inserted new cached distance from '{request.FromAddress}' to '{request.ToAddress}'",
+                //     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                //     MachineName = Environment.MachineName
+                // });
+
+                return newId;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "SaveCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error saving cached distance from '{FromAddress}' to '{ToAddress}'", request.FromAddress, request.ToAddress);
+            throw;
+        }
+    }
+
+    public async Task<int> CleanupCachedDistanceAsync(int olderThanDays)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM MapDistance 
+                WHERE md_created_date < DATEADD(DAY, -@olderThanDays, GETUTCDATE())";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@olderThanDays", olderThanDays }
+            };
+
+            var deletedCount = await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CleanupCachedDistance",
+                Detail = $"Deleted {deletedCount} cached distance entries older than {olderThanDays} days",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return deletedCount;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CleanupCachedDistance",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error cleaning up cached distance data older than {OlderThanDays} days", olderThanDays);
+            throw;
+        }
+    }
+
+    public async Task<DrivingScorecard> GetDrivingScorecardAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var sql = @"
+                SELECT 
+                    u.u_id,
+                    SUM(CASE WHEN ag.ag_name = 'Speeding over 10' THEN 1 ELSE 0 END) AS SpeedingOver10,
+                    SUM(CASE WHEN ag.ag_name = 'Speeding over 20' THEN 1 ELSE 0 END) AS SpeedingOver20,
+                    SUM(CASE WHEN ag.ag_name = 'Hard Breaking' THEN 1 ELSE 0 END) AS HardBreaking,
+                    SUM(CASE WHEN ag.ag_name = 'Hard Breaking Severe' THEN 1 ELSE 0 END) AS HardBreakingSevere,
+                    SUM(CASE WHEN ag.ag_name = 'Hard Accelerating Severe' THEN 1 ELSE 0 END) AS HardAcceleratingSevere,
+                    SUM(CASE WHEN ag.ag_name = 'Harsh Cornering Severe' THEN 1 ELSE 0 END) AS HarshCorneringSevere
+                FROM alertgps ag
+                JOIN [user] u ON u.u_employeenumber = ag.u_employeenumber
+                WHERE ag.ag_name NOT IN ('Tech Home', 'Driver Home')
+                  AND ag.ag_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' 
+                        >= DATEADD(DAY, -7, GETDATE())
+                  AND u.u_id = @userId
+                GROUP BY u.u_id
+            ";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@userId", userId }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            var drivingScorecard = new DrivingScorecard
+            {
+                UserId = userId,
+                SpeedingOver10 = 0,
+                SpeedingOver20 = 0,
+                HardBreaking = 0,
+                HardBreakingSevere = 0,
+                HardAcceleratingSevere = 0,
+                HarshCorneringSevere = 0
+            };
+
+            if (result.Rows.Count > 0)
+            {
+                var row = result.Rows[0];
+                drivingScorecard.UserId = ConvertToInt(row["u_id"]);
+                drivingScorecard.SpeedingOver10 = ConvertToInt(row["SpeedingOver10"]);
+                drivingScorecard.SpeedingOver20 = ConvertToInt(row["SpeedingOver20"]);
+                drivingScorecard.HardBreaking = ConvertToInt(row["HardBreaking"]);
+                drivingScorecard.HardBreakingSevere = ConvertToInt(row["HardBreakingSevere"]);
+                drivingScorecard.HardAcceleratingSevere = ConvertToInt(row["HardAcceleratingSevere"]);
+                drivingScorecard.HarshCorneringSevere = ConvertToInt(row["HarshCorneringSevere"]);
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetDrivingScorecard",
+                Detail = $"Retrieved driving scorecard for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return drivingScorecard;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetDrivingScorecard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving driving scorecard for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<List<DrivingScorecardWithTechnicianInfo>> GetAllDrivingScorecardsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var sql = @"
+                SELECT 
+                    u.u_id,
+                    u.u_firstname,
+                    u.u_lastname,
+                    u.u_employeenumber,
+                    COALESCE(violations.SpeedingOver10, 0) AS SpeedingOver10,
+                    COALESCE(violations.SpeedingOver20, 0) AS SpeedingOver20,
+                    COALESCE(violations.HardBreaking, 0) AS HardBreaking,
+                    COALESCE(violations.HardBreakingSevere, 0) AS HardBreakingSevere,
+                    COALESCE(violations.HardAcceleratingSevere, 0) AS HardAcceleratingSevere,
+                    COALESCE(violations.HarshCorneringSevere, 0) AS HarshCorneringSevere
+                FROM [user] u
+                INNER JOIN xrefUserRole x ON u.u_id = x.u_id
+                INNER JOIN role r ON r.r_id = x.r_id
+                LEFT JOIN (
+                    SELECT 
+                        u.u_id,
+                        SUM(CASE WHEN ag.ag_name = 'Speeding over 10' THEN 1 ELSE 0 END) AS SpeedingOver10,
+                        SUM(CASE WHEN ag.ag_name = 'Speeding over 20' THEN 1 ELSE 0 END) AS SpeedingOver20,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Breaking' THEN 1 ELSE 0 END) AS HardBreaking,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Breaking Severe' THEN 1 ELSE 0 END) AS HardBreakingSevere,
+                        SUM(CASE WHEN ag.ag_name = 'Hard Accelerating Severe' THEN 1 ELSE 0 END) AS HardAcceleratingSevere,
+                        SUM(CASE WHEN ag.ag_name = 'Harsh Cornering Severe' THEN 1 ELSE 0 END) AS HarshCorneringSevere
+                    FROM alertgps ag
+                    JOIN [user] u ON u.u_employeenumber = ag.u_employeenumber
+                    WHERE ag.ag_name NOT IN ('Tech Home', 'Driver Home')
+                      AND ag.ag_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' 
+                            >= DATEADD(DAY, -7, GETDATE())
+                    GROUP BY u.u_id
+                ) violations ON u.u_id = violations.u_id
+                WHERE r.r_role = 'Technician' 
+                    AND u.u_active = 1 
+                ORDER BY u.u_lastname, u.u_firstname
+            ";
+
+            var result = await ExecuteQueryAsync(sql);
+            var scorecards = new List<DrivingScorecardWithTechnicianInfo>();
+
+            foreach (DataRow row in result.Rows)
+            {
+                var scorecard = new DrivingScorecardWithTechnicianInfo
+                {
+                    UserId = ConvertToInt(row["u_id"]),
+                    FirstName = row["u_firstname"]?.ToString() ?? "",
+                    LastName = row["u_lastname"]?.ToString() ?? "",
+                    EmployeeNumber = row["u_employeenumber"]?.ToString() ?? "",
+                    SpeedingOver10 = ConvertToInt(row["SpeedingOver10"]),
+                    SpeedingOver20 = ConvertToInt(row["SpeedingOver20"]),
+                    HardBreaking = ConvertToInt(row["HardBreaking"]),
+                    HardBreakingSevere = ConvertToInt(row["HardBreakingSevere"]),
+                    HardAcceleratingSevere = ConvertToInt(row["HardAcceleratingSevere"]),
+                    HarshCorneringSevere = ConvertToInt(row["HarshCorneringSevere"])
+                };
+                
+                scorecards.Add(scorecard);
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllDrivingScorecard",
+                Detail = $"Retrieved driving scorecards for all technicians. Count: {scorecards.Count}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return scorecards;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllDrivingScorecard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving all driving scorecards");
+            throw;
+        }
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -3324,5 +5412,653 @@ FROM DailyTechSummary;
             return result;
             
         return 0;
+    }
+
+    public async Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var users = new List<UserFleetmaticsDto>();
+
+        try
+        {
+            _logger.LogDebug("Getting users for Fleetmatics sync");
+
+            var sql = @"
+                SELECT u_id, u_username, u_firstname, u_lastname, u_employeenumber, u_vehiclenumber, u_active
+                FROM [user] 
+                WHERE u_active = 1 
+                AND u_employeenumber IS NOT NULL 
+                AND u_employeenumber != ''
+                AND LEN(TRIM(u_employeenumber)) > 0
+                ORDER BY u_employeenumber";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            foreach (DataRow row in result.Rows)
+            {
+                var user = new UserFleetmaticsDto
+                {
+                    UserId = ConvertToInt(row["u_id"]),
+                    Username = row["u_username"]?.ToString() ?? "",
+                    FirstName = row["u_firstname"]?.ToString() ?? "",
+                    LastName = row["u_lastname"]?.ToString() ?? "",
+                    EmployeeNumber = row["u_employeenumber"]?.ToString() ?? "",
+                    CurrentVehicleNumber = row["u_vehiclenumber"]?.ToString(),
+                    IsActive = Convert.ToBoolean(row["u_active"])
+                };
+
+                users.Add(user);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUsersForFleetmaticsSync",
+                Detail = $"Retrieved {users.Count} users eligible for Fleetmatics sync",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return users;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUsersForFleetmaticsSync",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving users for Fleetmatics sync");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserVehicleNumberAsync(int userId, string vehicleNumber)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogDebug("Updating vehicle number for user {UserId}: {VehicleNumber}", userId, vehicleNumber);
+
+            var sql = @"
+                UPDATE [user] 
+                SET u_vehiclenumber = @VehicleNumber,
+                    u_lastmodified = GETUTCDATE()
+                WHERE u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@VehicleNumber", vehicleNumber }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserVehicleNumber",
+                Detail = $"Updated vehicle number for user {userId}: {vehicleNumber}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserVehicleNumber",
+                Detail = $"Error updating vehicle number for user {userId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating vehicle number for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<List<VehicleMaintenanceDto>> GetVehicleMaintenanceRecordsAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("Database connection string is not configured");
+        }
+
+        try
+        {
+            var results = new List<VehicleMaintenanceDto>();
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            const string sql = @"
+                SELECT 
+                    vd_id, vd_insertdatetime, vd_modifieddatetime, vd_dateupload,
+                    vd_maintproduct, vd_monthsoncurrentservice, vd_custname, vd_driver,
+                    vd_vin, vd_maintcostcode, vd_customervehicleid, vd_year, vd_make,
+                    vd_model, vd_series, vd_vehicle, vd_openrecall, vd_oilchangedate,
+                    vd_oilchangemileage, vd_estmileagesinceoilchange, vd_contractedbrakesets,
+                    vd_availablebrakesets, vd_brakereplacementdate, vd_frontrearboth,
+                    vd_brakereplacementmileage, vd_estmileagesincebrakereplacement,
+                    vd_contractedtires, vd_availabletires, vd_tirereplacementdate,
+                    vd_tirereplacementmileage, vd_estmileagesincetirereplacement,
+                    vd_estimatedcurrentmileage, u_employeenumber
+                FROM VehicleDetail 
+                WHERE CAST(vd_dateupload AS DATE) = (
+                    SELECT MAX(CAST(vd_dateupload AS DATE)) 
+                    FROM VehicleDetail 
+                    WHERE vd_dateupload IS NOT NULL
+                )
+                ORDER BY vd_insertdatetime DESC";
+
+            using var command = new SqlCommand(sql, connection);
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                results.Add(new VehicleMaintenanceDto
+                {
+                    vd_id = reader.GetInt32("vd_id"),
+                    vd_insertdatetime = reader.GetDateTime("vd_insertdatetime"),
+                    vd_modifieddatetime = reader.IsDBNull("vd_modifieddatetime") ? null : reader.GetDateTime("vd_modifieddatetime"),
+                    vd_dateupload = reader.IsDBNull("vd_dateupload") ? null : reader.GetDateTime("vd_dateupload"),
+                    vd_maintproduct = reader.IsDBNull("vd_maintproduct") ? null : reader.GetString("vd_maintproduct"),
+                    vd_monthsoncurrentservice = reader.IsDBNull("vd_monthsoncurrentservice") ? null : reader.GetInt32("vd_monthsoncurrentservice"),
+                    vd_custname = reader.IsDBNull("vd_custname") ? null : reader.GetString("vd_custname"),
+                    vd_driver = reader.IsDBNull("vd_driver") ? null : reader.GetString("vd_driver"),
+                    vd_vin = reader.IsDBNull("vd_vin") ? null : reader.GetString("vd_vin"),
+                    vd_maintcostcode = reader.IsDBNull("vd_maintcostcode") ? null : reader.GetString("vd_maintcostcode"),
+                    vd_customervehicleid = reader.IsDBNull("vd_customervehicleid") ? null : reader.GetString("vd_customervehicleid"),
+                    vd_year = reader.IsDBNull("vd_year") ? null : reader.GetInt32("vd_year"),
+                    vd_make = reader.IsDBNull("vd_make") ? null : reader.GetString("vd_make"),
+                    vd_model = reader.IsDBNull("vd_model") ? null : reader.GetString("vd_model"),
+                    vd_series = reader.IsDBNull("vd_series") ? null : reader.GetString("vd_series"),
+                    vd_vehicle = reader.IsDBNull("vd_vehicle") ? null : reader.GetString("vd_vehicle"),
+                    vd_openrecall = reader.IsDBNull("vd_openrecall") ? null : reader.GetString("vd_openrecall"),
+                    vd_oilchangedate = reader.IsDBNull("vd_oilchangedate") ? null : reader.GetDateTime("vd_oilchangedate"),
+                    vd_oilchangemileage = reader.IsDBNull("vd_oilchangemileage") ? null : reader.GetInt32("vd_oilchangemileage"),
+                    vd_estmileagesinceoilchange = reader.IsDBNull("vd_estmileagesinceoilchange") ? null : reader.GetInt32("vd_estmileagesinceoilchange"),
+                    vd_contractedbrakesets = reader.IsDBNull("vd_contractedbrakesets") ? null : reader.GetInt32("vd_contractedbrakesets"),
+                    vd_availablebrakesets = reader.IsDBNull("vd_availablebrakesets") ? null : reader.GetInt32("vd_availablebrakesets"),
+                    vd_brakereplacementdate = reader.IsDBNull("vd_brakereplacementdate") ? null : reader.GetDateTime("vd_brakereplacementdate"),
+                    vd_frontrearboth = reader.IsDBNull("vd_frontrearboth") ? null : reader.GetString("vd_frontrearboth"),
+                    vd_brakereplacementmileage = reader.IsDBNull("vd_brakereplacementmileage") ? null : reader.GetInt32("vd_brakereplacementmileage"),
+                    vd_estmileagesincebrakereplacement = reader.IsDBNull("vd_estmileagesincebrakereplacement") ? null : reader.GetInt32("vd_estmileagesincebrakereplacement"),
+                    vd_contractedtires = reader.IsDBNull("vd_contractedtires") ? null : reader.GetInt32("vd_contractedtires"),
+                    vd_availabletires = reader.IsDBNull("vd_availabletires") ? null : reader.GetInt32("vd_availabletires"),
+                    vd_tirereplacementdate = reader.IsDBNull("vd_tirereplacementdate") ? null : reader.GetDateTime("vd_tirereplacementdate"),
+                    vd_tirereplacementmileage = reader.IsDBNull("vd_tirereplacementmileage") ? null : reader.GetInt32("vd_tirereplacementmileage"),
+                    vd_estmileagesincetirereplacement = reader.IsDBNull("vd_estmileagesincetirereplacement") ? null : reader.GetInt32("vd_estmileagesincetirereplacement"),
+                    vd_estimatedcurrentmileage = reader.IsDBNull("vd_estimatedcurrentmileage") ? null : reader.GetInt32("vd_estimatedcurrentmileage"),
+                    u_employeenumber = reader.IsDBNull("u_employeenumber") ? null : reader.GetString("u_employeenumber")
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceRecords",
+                Detail = $"Retrieved {results.Count} vehicle maintenance records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving vehicle maintenance records");
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceRecords",
+                Detail = $"Error retrieving vehicle maintenance records: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<VehicleMaintenanceDto?> GetVehicleMaintenanceByEmployeeNumberAsync(string employeeNumber)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("Database connection string is not configured");
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            const string sql = @"
+                SELECT 
+                    vd_id, vd_insertdatetime, vd_modifieddatetime, vd_dateupload,
+                    vd_maintproduct, vd_monthsoncurrentservice, vd_custname, vd_driver,
+                    vd_vin, vd_maintcostcode, vd_customervehicleid, vd_year, vd_make,
+                    vd_model, vd_series, vd_vehicle, vd_openrecall, vd_oilchangedate,
+                    vd_oilchangemileage, vd_estmileagesinceoilchange, vd_contractedbrakesets,
+                    vd_availablebrakesets, vd_brakereplacementdate, vd_frontrearboth,
+                    vd_brakereplacementmileage, vd_estmileagesincebrakereplacement,
+                    vd_contractedtires, vd_availabletires, vd_tirereplacementdate,
+                    vd_tirereplacementmileage, vd_estmileagesincetirereplacement,
+                    vd_estimatedcurrentmileage, u_employeenumber
+                FROM VehicleDetail 
+                WHERE (u_employeenumber = @employeeNumber 
+                       OR (ISNUMERIC(@employeeNumber) = 1 AND ISNUMERIC(u_employeenumber) = 1 
+                           AND CAST(u_employeenumber AS INT) = CAST(@employeeNumber AS INT)))
+                AND CAST(vd_dateupload AS DATE) = (
+                    SELECT MAX(CAST(vd_dateupload AS DATE)) 
+                    FROM VehicleDetail 
+                    WHERE vd_dateupload IS NOT NULL
+                )
+                ORDER BY vd_insertdatetime DESC";
+
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@employeeNumber", employeeNumber ?? (object)DBNull.Value);
+
+            using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                var result = new VehicleMaintenanceDto
+                {
+                    vd_id = reader.GetInt32("vd_id"),
+                    vd_insertdatetime = reader.GetDateTime("vd_insertdatetime"),
+                    vd_modifieddatetime = reader.IsDBNull("vd_modifieddatetime") ? null : reader.GetDateTime("vd_modifieddatetime"),
+                    vd_dateupload = reader.IsDBNull("vd_dateupload") ? null : reader.GetDateTime("vd_dateupload"),
+                    vd_maintproduct = reader.IsDBNull("vd_maintproduct") ? null : reader.GetString("vd_maintproduct"),
+                    vd_monthsoncurrentservice = reader.IsDBNull("vd_monthsoncurrentservice") ? null : reader.GetInt32("vd_monthsoncurrentservice"),
+                    vd_custname = reader.IsDBNull("vd_custname") ? null : reader.GetString("vd_custname"),
+                    vd_driver = reader.IsDBNull("vd_driver") ? null : reader.GetString("vd_driver"),
+                    vd_vin = reader.IsDBNull("vd_vin") ? null : reader.GetString("vd_vin"),
+                    vd_maintcostcode = reader.IsDBNull("vd_maintcostcode") ? null : reader.GetString("vd_maintcostcode"),
+                    vd_customervehicleid = reader.IsDBNull("vd_customervehicleid") ? null : reader.GetString("vd_customervehicleid"),
+                    vd_year = reader.IsDBNull("vd_year") ? null : reader.GetInt32("vd_year"),
+                    vd_make = reader.IsDBNull("vd_make") ? null : reader.GetString("vd_make"),
+                    vd_model = reader.IsDBNull("vd_model") ? null : reader.GetString("vd_model"),
+                    vd_series = reader.IsDBNull("vd_series") ? null : reader.GetString("vd_series"),
+                    vd_vehicle = reader.IsDBNull("vd_vehicle") ? null : reader.GetString("vd_vehicle"),
+                    vd_openrecall = reader.IsDBNull("vd_openrecall") ? null : reader.GetString("vd_openrecall"),
+                    vd_oilchangedate = reader.IsDBNull("vd_oilchangedate") ? null : reader.GetDateTime("vd_oilchangedate"),
+                    vd_oilchangemileage = reader.IsDBNull("vd_oilchangemileage") ? null : reader.GetInt32("vd_oilchangemileage"),
+                    vd_estmileagesinceoilchange = reader.IsDBNull("vd_estmileagesinceoilchange") ? null : reader.GetInt32("vd_estmileagesinceoilchange"),
+                    vd_contractedbrakesets = reader.IsDBNull("vd_contractedbrakesets") ? null : reader.GetInt32("vd_contractedbrakesets"),
+                    vd_availablebrakesets = reader.IsDBNull("vd_availablebrakesets") ? null : reader.GetInt32("vd_availablebrakesets"),
+                    vd_brakereplacementdate = reader.IsDBNull("vd_brakereplacementdate") ? null : reader.GetDateTime("vd_brakereplacementdate"),
+                    vd_frontrearboth = reader.IsDBNull("vd_frontrearboth") ? null : reader.GetString("vd_frontrearboth"),
+                    vd_brakereplacementmileage = reader.IsDBNull("vd_brakereplacementmileage") ? null : reader.GetInt32("vd_brakereplacementmileage"),
+                    vd_estmileagesincebrakereplacement = reader.IsDBNull("vd_estmileagesincebrakereplacement") ? null : reader.GetInt32("vd_estmileagesincebrakereplacement"),
+                    vd_contractedtires = reader.IsDBNull("vd_contractedtires") ? null : reader.GetInt32("vd_contractedtires"),
+                    vd_availabletires = reader.IsDBNull("vd_availabletires") ? null : reader.GetInt32("vd_availabletires"),
+                    vd_tirereplacementdate = reader.IsDBNull("vd_tirereplacementdate") ? null : reader.GetDateTime("vd_tirereplacementdate"),
+                    vd_tirereplacementmileage = reader.IsDBNull("vd_tirereplacementmileage") ? null : reader.GetInt32("vd_tirereplacementmileage"),
+                    vd_estmileagesincetirereplacement = reader.IsDBNull("vd_estmileagesincetirereplacement") ? null : reader.GetInt32("vd_estmileagesincetirereplacement"),
+                    vd_estimatedcurrentmileage = reader.IsDBNull("vd_estimatedcurrentmileage") ? null : reader.GetInt32("vd_estimatedcurrentmileage"),
+                    u_employeenumber = reader.IsDBNull("u_employeenumber") ? null : reader.GetString("u_employeenumber")
+                };
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "GetVehicleMaintenanceByEmployeeNumber",
+                    Detail = $"Retrieved vehicle maintenance data for employee {employeeNumber}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return result;
+            }
+
+            // No data found for this employee
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceByEmployeeNumber",
+                Detail = $"No vehicle maintenance data found for employee {employeeNumber}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving vehicle maintenance data for employee {EmployeeNumber}", employeeNumber);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetVehicleMaintenanceByEmployeeNumber",
+                Detail = $"Error retrieving vehicle maintenance data for employee {employeeNumber}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int> UploadVehicleMaintenanceRecordsAsync(List<VehicleMaintenanceUploadDto> records)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("Database connection string is not configured");
+        }
+
+        try
+        {
+            var uploadDate = DateTime.Today;
+            
+            // Log sample of incoming data for debugging
+            if (records.Count > 0)
+            {
+                var firstRecord = records[0];
+            }
+            
+            DateTime? ParseDateTest(string? dateStr)
+            {
+                if (string.IsNullOrWhiteSpace(dateStr)) return null;
+                
+                // Try standard parsing first
+                if (DateTime.TryParse(dateStr, out var date))
+                    return date;
+                
+                // Try specific common formats for Excel data
+                string[] formats = {
+                    "M/d/yyyy",     // 4/2/2025
+                    "MM/dd/yyyy",   // 04/02/2025
+                    "M/d/yy",       // 4/2/25
+                    "MM/dd/yy",     // 04/02/25
+                    "yyyy-MM-dd",   // 2025-04-02
+                    "M-d-yyyy",     // 4-2-2025
+                    "MM-dd-yyyy",   // 04-02-2025
+                    "d/M/yyyy",     // 2/4/2025 (day/month format)
+                    "dd/MM/yyyy"    // 02/04/2025 (day/month format)
+                };
+                
+                foreach (var format in formats)
+                {
+                    if (DateTime.TryParseExact(dateStr, format, System.Globalization.CultureInfo.InvariantCulture, 
+                        System.Globalization.DateTimeStyles.None, out date))
+                    {
+                        return date;
+                    }
+                }
+                
+                return null;
+            }
+            var insertedCount = 0;
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            // Clear existing records for today (rip and replace)
+            const string deleteSql = @"DELETE FROM VehicleDetail WHERE CAST(vd_dateupload AS DATE) = @uploadDate";
+            using var deleteCommand = new SqlCommand(deleteSql, connection);
+            deleteCommand.Parameters.AddWithValue("@uploadDate", uploadDate);
+            await deleteCommand.ExecuteNonQueryAsync();
+
+            // Insert new records
+            const string insertSql = @"
+                INSERT INTO VehicleDetail (
+                    vd_dateupload, vd_maintproduct, vd_monthsoncurrentservice, vd_custname, vd_driver,
+                    vd_vin, vd_maintcostcode, vd_customervehicleid, vd_year, vd_make, vd_model,
+                    vd_series, vd_vehicle, vd_openrecall, vd_oilchangedate, vd_oilchangemileage,
+                    vd_estmileagesinceoilchange, vd_contractedbrakesets, vd_availablebrakesets,
+                    vd_brakereplacementdate, vd_frontrearboth, vd_brakereplacementmileage,
+                    vd_estmileagesincebrakereplacement, vd_contractedtires, vd_availabletires,
+                    vd_tirereplacementdate, vd_tirereplacementmileage, vd_estmileagesincetirereplacement,
+                    vd_estimatedcurrentmileage, u_employeenumber
+                ) VALUES (
+                    @uploadDate, @maintProduct, @monthsOnCurrentService, @custName, @driver,
+                    @vin, @maintCostCode, @customerVehicleId, @year, @make, @model,
+                    @series, @vehicle, @openRecall, @oilChangeDate, @oilChangeMileage,
+                    @estMileageSinceOilChange, @contractedBrakeSets, @availableBrakeSets,
+                    @brakeReplacementDate, @frontRearBoth, @brakeReplacementMileage,
+                    @estMileageSinceBrakeReplacement, @contractedTires, @availableTires,
+                    @tireReplacementDate, @tireReplacementMileage, @estMileageSinceTireReplacement,
+                    @estimatedCurrentMileage, @employeeNumber
+                )";
+
+            foreach (var record in records)
+            {
+                using var insertCommand = new SqlCommand(insertSql, connection);
+                
+                // Helper function to parse dates with multiple format support
+                DateTime? ParseDate(string? dateStr)
+                {
+                    if (string.IsNullOrWhiteSpace(dateStr)) return null;
+                    
+                    // Try standard parsing first
+                    if (DateTime.TryParse(dateStr, out var date))
+                        return date;
+                    
+                    // Try specific common formats for Excel data
+                    string[] formats = {
+                        "M/d/yyyy",     // 4/2/2025
+                        "MM/dd/yyyy",   // 04/02/2025
+                        "M/d/yy",       // 4/2/25
+                        "MM/dd/yy",     // 04/02/25
+                        "yyyy-MM-dd",   // 2025-04-02
+                        "M-d-yyyy",     // 4-2-2025
+                        "MM-dd-yyyy",   // 04-02-2025
+                        "d/M/yyyy",     // 2/4/2025 (day/month format)
+                        "dd/MM/yyyy"    // 02/04/2025 (day/month format)
+                    };
+                    
+                    foreach (var format in formats)
+                    {
+                        if (DateTime.TryParseExact(dateStr, format, System.Globalization.CultureInfo.InvariantCulture, 
+                            System.Globalization.DateTimeStyles.None, out date))
+                        {
+                            return date;
+                        }
+                    }
+                    
+                    return null;
+                }
+
+                // Helper function to safely truncate strings to prevent SQL truncation errors
+                string? SafeTruncate(string? value, int maxLength)
+                {
+                    if (string.IsNullOrEmpty(value)) return value;
+                    return value.Length > maxLength ? value.Substring(0, maxLength) : value;
+                }
+
+                insertCommand.Parameters.AddWithValue("@uploadDate", uploadDate);
+                insertCommand.Parameters.AddWithValue("@maintProduct", (object?)SafeTruncate(record.vdMaintProduct, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@monthsOnCurrentService", (object?)record.vdMonthsOnCurrentService ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@custName", (object?)SafeTruncate(record.vdCustName, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@driver", (object?)SafeTruncate(record.vdDriver, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@vin", (object?)SafeTruncate(record.vdVin, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@maintCostCode", (object?)SafeTruncate(record.vdMaintCostCode, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@customerVehicleId", (object?)SafeTruncate(record.vdCustomerVehicleId, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@year", (object?)record.vdYear ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@make", (object?)SafeTruncate(record.vdMake, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@model", (object?)SafeTruncate(record.vdModel, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@series", (object?)SafeTruncate(record.vdSeries, 100) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@vehicle", (object?)SafeTruncate(record.vdVehicle, 255) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@openRecall", (object?)SafeTruncate(record.vdOpenRecall, 255) ?? DBNull.Value);
+                
+                // Parse and add date fields
+                var oilChangeDate = ParseDate(record.vdOilChangeDate);
+                if (oilChangeDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@oilChangeDate", oilChangeDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@oilChangeDate", DBNull.Value);
+                
+                insertCommand.Parameters.AddWithValue("@oilChangeMileage", (object?)record.vdOilChangeMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceOilChange", (object?)record.vdEstMileageSinceOilChange ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@contractedBrakeSets", (object?)record.vdContractedBrakeSets ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@availableBrakeSets", (object?)record.vdAvailableBrakeSets ?? DBNull.Value);
+                
+                var brakeReplacementDate = ParseDate(record.vdBrakeReplacementDate);
+                if (brakeReplacementDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@brakeReplacementDate", brakeReplacementDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@brakeReplacementDate", DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@frontRearBoth", (object?)SafeTruncate(record.vdFrontRearBoth, 50) ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@brakeReplacementMileage", (object?)record.vdBrakeReplacementMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceBrakeReplacement", (object?)record.vdEstMileageSinceBrakeReplacement ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@contractedTires", (object?)record.vdContractedTires ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@availableTires", (object?)record.vdAvailableTires ?? DBNull.Value);
+                
+                var tireReplacementDate = ParseDate(record.vdTireReplacementDate);
+                if (tireReplacementDate.HasValue)
+                    insertCommand.Parameters.AddWithValue("@tireReplacementDate", tireReplacementDate.Value);
+                else
+                    insertCommand.Parameters.AddWithValue("@tireReplacementDate", DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@tireReplacementMileage", (object?)record.vdTireReplacementMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estMileageSinceTireReplacement", (object?)record.vdEstMileageSinceTireReplacement ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@estimatedCurrentMileage", (object?)record.vdEstimatedCurrentMileage ?? DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@employeeNumber", (object?)SafeTruncate(record.uEmployeeNumber, 50) ?? DBNull.Value);
+
+                try
+                {
+                    await insertCommand.ExecuteNonQueryAsync();
+                    insertedCount++;
+                }
+                catch (SqlException sqlEx) when (sqlEx.Message.Contains("truncated"))
+                {
+                    // Log detailed information about the problematic record
+                    var problemFields = new List<string>();
+                    if (!string.IsNullOrEmpty(record.vdMaintProduct) && record.vdMaintProduct.Length > 255) 
+                        problemFields.Add($"MaintProduct: {record.vdMaintProduct.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdCustName) && record.vdCustName.Length > 255) 
+                        problemFields.Add($"CustName: {record.vdCustName.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdDriver) && record.vdDriver.Length > 255) 
+                        problemFields.Add($"Driver: {record.vdDriver.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdVin) && record.vdVin.Length > 50) 
+                        problemFields.Add($"VIN: {record.vdVin.Length} chars");
+                    if (!string.IsNullOrEmpty(record.vdCustomerVehicleId) && record.vdCustomerVehicleId.Length > 100) 
+                        problemFields.Add($"CustomerVehicleId: {record.vdCustomerVehicleId.Length} chars");
+                    if (!string.IsNullOrEmpty(record.uEmployeeNumber) && record.uEmployeeNumber.Length > 50) 
+                        problemFields.Add($"EmployeeNumber: {record.uEmployeeNumber.Length} chars");
+                    
+                    await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "UploadVehicleMaintenanceRecords - Data Truncation",
+                        Detail = $"Record caused truncation error. Problematic fields: {string.Join(", ", problemFields)}. VIN: {record.vdVin}. Error: {sqlEx.Message}",
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    // Skip this record and continue with the next one
+                    continue;
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UploadVehicleMaintenanceRecords",
+                Detail = $"Uploaded {insertedCount} vehicle maintenance records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return insertedCount;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error uploading vehicle maintenance records");
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UploadVehicleMaintenanceRecords",
+                Detail = $"Error uploading vehicle maintenance records: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime)
+                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime)";
+
+            var parameters = new Dictionary<string, object>
+            {
+                {"@u_id", userId},
+                {"@ttt_id", tttId},
+                {"@wo_id", woId ?? (object)DBNull.Value},
+                {"@ttd_insertdatetime", DateTime.UtcNow}
+            };
+
+            using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
+            await connection.OpenAsync();
+
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            stopwatch.Stop();
+
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeTrackingDetail",
+                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error inserting time tracking detail for User {UserId}, TTT_ID {TttId}, WO_ID {WoId}", 
+                userId, tttId, woId);
+            
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeTrackingDetail",
+                Detail = $"Error inserting time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            throw;
+        }
     }
 }

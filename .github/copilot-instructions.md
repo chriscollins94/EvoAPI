@@ -126,12 +126,99 @@ dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi
 
 **Important Note**: The `dotnet run` command to start the EvoAPI will be run manually by Chris. AI systems should not attempt to run or automate this command.
 
+## Local Development Configuration
+
+### Secrets Management
+For local development, EvoAPI uses `appsettings.secrets.json` to store sensitive configuration values like API keys and database passwords. This file is **NOT** committed to version control.
+
+**Location**: `src/EvoAPI.Api/appsettings.secrets.json`
+
+**Structure**:
+```json
+{
+  "GoogleMaps": {
+    "ApiKey": "AIzaSy..."
+  },
+  "DB_PASSWORD": "actual_password_here"
+}
+```
+
+### Configuration Hierarchy
+The configuration system loads values in this order (later sources override earlier ones):
+1. `appsettings.json` (base settings)
+2. `appsettings.{Environment}.json` (environment-specific settings)
+3. `appsettings.secrets.json` (local secrets - **only for local development**)
+4. Environment variables (for Test/Production Azure deployments)
+
+### Environment-Specific Configuration
+- **Local Development**: Uses `appsettings.secrets.json` for sensitive values
+- **Test Environment (Azure)**: Uses environment variables (`GOOGLE_MAPS_API_KEY`, `DB_PASSWORD`)
+- **Production Environment (Azure)**: Uses environment variables (`GOOGLE_MAPS_API_KEY`, `DB_PASSWORD`)
+
+### Configuration Loading (Program.cs)
+The `Program.cs` automatically loads the secrets file for local development:
+```csharp
+// Add secrets file if it exists (for local development in any environment)
+var secretsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.secrets.json");
+if (File.Exists(secretsPath))
+{
+    builder.Configuration.AddJsonFile("appsettings.secrets.json", optional: true, reloadOnChange: true);
+}
+```
+
+### Adding New Secrets
+1. **For local development**: Add to `appsettings.secrets.json`
+2. **For Test/Production**: Set as environment variables in Azure
+3. **Configuration files**: Use placeholder format `"ApiKey": "${ENVIRONMENT_VARIABLE_NAME}"`
+
+### Important Security Notes
+- `appsettings.secrets.json` is in `.gitignore` and **never** committed to source control
+- Environment-specific config files (`appsettings.Test.json`, etc.) use placeholders like `${GOOGLE_MAPS_API_KEY}`
+- Real values are only in the secrets file (local) or environment variables (Azure)
+
 ### Adding New Endpoints
 1. **Create controller** inheriting from `BaseController`
 2. **Use appropriate authorization** attributes
 3. **Return `ApiResponse<T>`** wrapper with timing
 4. **Add audit logging** using BaseController methods
 5. **Test authentication** with existing JWT tokens
+
+### Database Schema Verification
+**Always** verify database schema and relationships before implementing new endpoints:
+
+**Critical Practice**: Before creating APIs that access user data or any multi-table operations:
+1. **Examine actual database structure** - Don't assume table contents or relationships
+2. **Check for foreign keys** - Look for `_id` fields that may reference other tables  
+3. **Verify field names** - Column names in database may differ from expected DTO properties
+4. **Test JOIN requirements** - Many data operations require JOINs (e.g., User + Address tables)
+5. **Validate data relationships** - Understand which tables store what data components
+
+**Common Schema Patterns to Check:**
+```sql
+-- User table may only contain foreign keys to other detail tables
+SELECT * FROM [user] LIMIT 1;  -- Check what fields actually exist
+
+-- Address data often stored separately with foreign key relationship  
+SELECT u.*, a.* FROM [user] u 
+LEFT JOIN address a ON u.a_id = a.a_id 
+WHERE u.u_id = @userId;
+
+-- Always verify field existence before SQL operations
+DESCRIBE [tablename]; -- or equivalent schema inspection
+```
+
+**Before Implementation Checklist:**
+- ✅ Inspect actual database tables and their columns
+- ✅ Identify foreign key relationships (e.g., `u.a_id → address.a_id`)
+- ✅ Verify which tables contain the data you need  
+- ✅ Test SQL queries with real data to confirm field availability
+- ✅ Check for naming conventions (e.g., `u_fieldname` vs `fieldname`)
+
+**Red Flags - Stop and Verify Schema:**
+- SQL errors mentioning "Invalid column name"
+- Missing data in API responses that should be available
+- 500 errors from backend when accessing related data
+- DTO properties that don't match database column names
 
 ### Audit Logging Pattern
 ```csharp
@@ -199,9 +286,124 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 
 - `Controllers/BaseController.cs` - **Authentication base class**
 - `Controllers/EvoApiController.cs` - Main business endpoints
+- `Controllers/MappingController.cs` - **Google Maps API proxy and caching**
+- `Controllers/FleetmaticsController.cs` - **Fleetmatics API integration and vehicle assignment sync**
 - `Shared/Attributes/` - `EvoAuthorize`, `AdminOnly` attributes
 - `Shared/Models/ApiResponse.cs` - Standard response wrapper
 - `Shared/DTOs/` - Data transfer objects for API responses
+
+## Fleetmatics Integration
+
+### Fleetmatics API Architecture
+The Fleetmatics integration provides automated vehicle assignment synchronization with the following components:
+- **FleetmaticsService** - Core API integration with token management and driver lookups
+- **FleetmaticsSyncService** - Daily background service for automated synchronization
+- **FleetmaticsController** - Admin-only REST endpoints for manual operations
+
+### Authentication Flow
+Fleetmatics uses a **two-step authentication process**:
+1. **Token Endpoint**: `POST /token` with Basic Auth → Returns JWT token directly (not JSON wrapped)
+2. **API Calls**: Use special "Atmosphere" authorization format with app ID + Bearer token
+
+```csharp
+// Step 1: Get JWT token (returns raw JWT string, not JSON)
+var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+httpClient.DefaultRequestHeaders.Authorization = 
+    new AuthenticationHeaderValue("Basic", credentials);
+var tokenResponse = await httpClient.PostAsync("/token", content);
+var jwtToken = await tokenResponse.Content.ReadAsStringAsync(); // Direct JWT string
+
+// Step 2: Use Atmosphere authorization for API calls
+httpClient.DefaultRequestHeaders.Authorization = 
+    new AuthenticationHeaderValue("Atmosphere", 
+        $"atmosphere_app_id={atmosphereAppId}, Bearer {jwtToken}");
+```
+
+### Configuration Requirements
+```json
+{
+  "Fleetmatics": {
+    "BaseUrl": "${FLEETMATICS__BASEURL}",           // https://fim.api.us.fleetmatics.com
+    "Username": "${FLEETMATICS__USERNAME}",         // REST_EvoTrakkerAPI_XXXX@XXXXXXX.com
+    "Password": "${FLEETMATICS__PASSWORD}",         // API password
+    "AtmosphereAppId": "${FLEETMATICS__ATMOSPHEREAPPID}", // fleetmatics-p-us-XXXXXXXXXX
+    "SyncHour": 2                                   // Daily sync time (2:00 AM)
+  }
+}
+```
+
+### Environment Variables (Azure)
+- `Fleetmatics__BaseUrl` - Fleetmatics API base URL
+- `Fleetmatics__Username` - API username
+- `Fleetmatics__Password` - API password  
+- `Fleetmatics__AtmosphereAppId` - Required for Atmosphere authorization format
+
+### API Endpoints Structure
+```csharp
+[ApiController]
+[Route("EvoApi/fleetmatics")]  // Note: Azure maps /api/EvoApi/fleetmatics to this route
+public class FleetmaticsController : BaseController
+{
+    [HttpPost("sync-vehicle-assignments")]  // Manual sync all users
+    [HttpGet("driver-assignment/{employeeNumber}")]  // Individual lookup
+    [HttpGet("test-connection")]  // Connection test
+    [HttpGet("sync-service-status")]  // Background service status
+}
+```
+
+### Data Mapping Pattern
+Fleetmatics API returns employee-based vehicle assignments:
+```json
+{
+  "DriverNumber": "099",
+  "VehicleNumber": "82651H2", 
+  "StartDateUTC": "2022-01-20T21:34:00"
+}
+```
+
+Maps to EvoAPI user table updates:
+```sql
+UPDATE [user] 
+SET u_vehiclenumber = @VehicleNumber
+WHERE u_id = @UserId
+-- Note: u_lastmodified handled by database trigger
+```
+
+### Background Service Pattern
+```csharp
+public class FleetmaticsSyncService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var now = DateTime.Now;
+            var nextRun = DateTime.Today.AddHours(_syncHour);
+            
+            if (now >= nextRun)
+                nextRun = nextRun.AddDays(1);
+                
+            var delay = nextRun - now;
+            await Task.Delay(delay, stoppingToken);
+            
+            // Daily sync logic
+            await SyncVehicleAssignments();
+        }
+    }
+}
+```
+
+### Integration Patterns
+**Employee Number Lookup**: Uses `u_employeenumber` field from user table to match Fleetmatics driver assignments
+**Vehicle Assignment**: Updates `u_vehiclenumber` field with current vehicle assignment
+**Audit Logging**: Comprehensive logging of all API calls, errors, and database updates
+**Error Handling**: Graceful handling of missing assignments, API errors, and retry logic
+
+### Common Troubleshooting
+- **"Required Header Parameter Missing: atmosphere_app_id"** → Check AtmosphereAppId configuration
+- **"'e' is an invalid start of a value"** → JWT token parsing issue, ensure handling direct token response
+- **"Invalid column name 'u_lastmodified'"** → Remove from SQL update, handled by database trigger
+- **404 on endpoints** → Check route mapping, use `EvoApi/fleetmatics` not `api/EvoApi/fleetmatics`
 
 ## Critical Don'ts
 - **Never** bypass `BaseController` for authenticated endpoints
@@ -209,6 +411,12 @@ public async Task<ActionResult<ApiResponse<DataDto>>> GetData()
 - **Never** forget timing measurement with `Stopwatch`
 - **Never** add `ResponseTime` property to `ApiResponse<T>` objects - this property doesn't exist
 - **Never** pass `TimeSpan` to `LogAuditAsync` - convert to string first: `timeSpan.TotalSeconds.ToString("0.00")`
+- **Never** use standard Bearer authorization for Fleetmatics API calls - use Atmosphere format
+- **Never** expect JSON-wrapped token response from Fleetmatics - handle direct JWT string
+- **Never** include `u_lastmodified` in SQL updates - handled by database triggers
+- **Never** use employee numbers directly without URI encoding in API URLs
 - **Always** use async/await patterns consistently
 - **Always** include proper error handling and audit logging
 - **Always** verify `ApiResponse<T>` property names match the actual class definition
+- **Always** use `Fleetmatics__` prefix for environment variables (double underscore for nested config)
+- **Always** validate Fleetmatics DTO property names match actual API response structure

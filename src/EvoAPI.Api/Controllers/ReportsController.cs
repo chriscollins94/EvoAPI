@@ -16,14 +16,17 @@ public class ReportsController : BaseController
     #region Initialize
 
     private readonly IDataService _dataService;
+    private readonly IGoogleMapsService _googleMapsService;
     private readonly ILogger<ReportsController> _logger;
 
     public ReportsController(
         IDataService dataService, 
+        IGoogleMapsService googleMapsService,
         IAuditService auditService,
         ILogger<ReportsController> logger)
     {
         _dataService = dataService;
+        _googleMapsService = googleMapsService;
         _logger = logger;
         InitializeAuditService(auditService);
     }
@@ -140,20 +143,71 @@ public class ReportsController : BaseController
         }
     }
 
-    [HttpGet("tech-activity")]
-    [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport()
+    [HttpGet("tech-detail/{technicianId}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechDetailReportDto>>>> GetTechDetailReportByTechnician(int technicianId)
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetTechActivityDashboardAsync();
+            var dataTable = await _dataService.GetTechDetailByTechnicianAsync(technicianId);
+            var technicianData = ConvertDataTableToTechDetailReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechDetailReportByTechnician", $"Retrieved {technicianData.Count} performance records for technician {technicianId}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            if (technicianData == null || !technicianData.Any())
+            {
+                return NotFound(new ApiResponse<List<TechDetailReportDto>>
+                {
+                    Success = false,
+                    Message = "Performance data not found for this technician",
+                    Data = new List<TechDetailReportDto>(),
+                    Count = 0
+                });
+            }
+            
+            return Ok(new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = true,
+                Message = "Tech performance data retrieved successfully",
+                Data = technicianData,
+                Count = technicianData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechDetailReportByTechnician", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TechDetailReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech performance data"
+            });
+        }
+    }
+
+    [HttpGet("tech-activity")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<TechActivityReportDto>>>> GetTechActivityReport([FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate);
             var reportData = ConvertDataTableToTechActivityReport(dataTable);
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var dateRangeInfo = startDate.HasValue && endDate.HasValue ? 
+                $"from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}" : 
+                "for last 90 days (default)";
+            
+            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechActivityReportDto>>
             {
@@ -229,6 +283,9 @@ public class ReportsController : BaseController
             var conflicts = ConvertDataTableToWorkOrderSchedulingConflicts(await conflictsTask);
             var summary = ConvertDataTableToWorkOrderSchedulingConflictsSummary(await summaryTask);
             
+            // Enhance conflicts with Google Maps travel data
+            await EnhanceWithGoogleMapsTravelDataAsync(conflicts);
+            
             var reportData = new WorkOrderSchedulingConflictsReportDto
             {
                 Conflicts = conflicts,
@@ -260,9 +317,177 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("arriving-late")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ArrivingLateReportDto>>>> GetArrivingLateReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetArrivingLateReportAsync();
+            var reportData = ConvertDataTableToArrivingLateReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetArrivingLateReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ArrivingLateReportDto>>
+            {
+                Success = true,
+                Message = "Arriving late report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetArrivingLateReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ArrivingLateReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve arriving late report data"
+            });
+        }
+    }
+
+    [HttpGet("active-service-requests")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ActiveServiceRequestDto>>>> GetActiveServiceRequests()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetActiveServiceRequestsAsync();
+            var reportData = ConvertDataTableToActiveServiceRequests(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetActiveServiceRequests", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ActiveServiceRequestDto>>
+            {
+                Success = true,
+                Message = "Active service requests data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetActiveServiceRequests", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ActiveServiceRequestDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve active service requests data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
+
+    private async Task EnhanceWithGoogleMapsTravelDataAsync(List<WorkOrderSchedulingConflictsDto> conflicts)
+    {
+        try
+        {
+            // Log that we're starting the enhancement process
+            // await LogAuditAsync("EnhanceWithGoogleMapsTravelDataAsync - Start", $"Total conflicts received: {conflicts.Count}");
+            
+            // Filter conflicts that have valid addresses
+            var conflictsWithAddresses = conflicts
+                .Where(c => !string.IsNullOrWhiteSpace(c.CurrentAddress) && !string.IsNullOrWhiteSpace(c.NextAddress))
+                .ToList();
+
+            if (!conflictsWithAddresses.Any())
+            {
+                _logger.LogInformation("No conflicts with valid addresses found for Google Maps processing");
+                // await LogAuditAsync("EnhanceWithGoogleMapsTravelDataAsync - No Valid Addresses", $"Total conflicts: {conflicts.Count}, Valid addresses: 0");
+                return;
+            }
+
+            _logger.LogInformation("Processing {Count} conflicts with Google Maps API", conflictsWithAddresses.Count);
+            // await LogAuditAsync("EnhanceWithGoogleMapsTravelDataAsync - Processing", $"Conflicts with valid addresses: {conflictsWithAddresses.Count}");
+
+            // Process each conflict individually to avoid matrix multiplication
+            const int batchSize = 25; // Process in batches to avoid API rate limits
+            
+            for (int i = 0; i < conflictsWithAddresses.Count; i += batchSize)
+            {
+                var batch = conflictsWithAddresses.Skip(i).Take(batchSize).ToList();
+                
+                // Process each conflict individually (1 origin to 1 destination)
+                foreach (var conflict in batch)
+                {
+                    try
+                    {
+                        var travelResult = await _googleMapsService.GetDistanceAndDurationAsync(
+                            conflict.CurrentAddress, 
+                            conflict.NextAddress);
+                        
+                        if (travelResult != null && travelResult.IsSuccess)
+                        {
+                            conflict.GoogleMapsTravelData = new GoogleMapsTravelData
+                            {
+                                DistanceMeters = travelResult.DistanceMeters,
+                                DistanceText = travelResult.DistanceText,
+                                DurationSeconds = travelResult.DurationSeconds,
+                                DurationText = travelResult.DurationText,
+                                DurationInTrafficSeconds = travelResult.DurationInTrafficSeconds,
+                                DurationInTrafficText = travelResult.DurationInTrafficText,
+                                IsSuccess = true,
+                                Status = travelResult.Status
+                            };
+                            
+                            _logger.LogDebug("Enhanced conflict {TechnicianName} with travel data: {Duration} ({Distance})", 
+                                conflict.TechnicianName, travelResult.DurationInTrafficText, travelResult.DistanceText);
+                        }
+                        else
+                        {
+                            conflict.GoogleMapsTravelData = new GoogleMapsTravelData
+                            {
+                                IsSuccess = false,
+                                Status = travelResult?.Status ?? "ERROR"
+                            };
+                            
+                            _logger.LogWarning("Failed to get travel data for conflict {TechnicianName}: {Status}", 
+                                conflict.TechnicianName, travelResult?.Status ?? "ERROR");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing travel data for conflict {TechnicianName}", conflict.TechnicianName);
+                        conflict.GoogleMapsTravelData = new GoogleMapsTravelData
+                        {
+                            IsSuccess = false,
+                            Status = "ERROR"
+                        };
+                    }
+                }
+                
+                // Add a small delay between batches to be respectful to Google's API
+                if (i + batchSize < conflictsWithAddresses.Count)
+                {
+                    await Task.Delay(200); // Slightly longer delay for individual requests
+                }
+            }
+            
+            _logger.LogInformation("Completed Google Maps processing for {Count} conflicts", conflictsWithAddresses.Count);
+            // await LogAuditAsync("EnhanceWithGoogleMapsTravelDataAsync - Complete", $"Successfully processed {conflictsWithAddresses.Count} conflicts");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enhancing conflicts with Google Maps travel data");
+            await LogAuditErrorAsync("EnhanceWithGoogleMapsTravelDataAsync - Error", ex, $"Failed to enhance conflicts with Google Maps data");
+            // Don't throw - we want the report to work even if Google Maps fails
+        }
+    }
 
     private static List<HighVolumeReportDto> ConvertDataTableToHighVolumeReport(DataTable dataTable)
     {
@@ -474,6 +699,90 @@ public class ReportsController : BaseController
         return result;
     }
 
+    private static List<ActiveServiceRequestDto> ConvertDataTableToActiveServiceRequests(DataTable dataTable)
+    {
+        var result = new List<ActiveServiceRequestDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ActiveServiceRequestDto
+            {
+                SrId = ConvertToInt(row["sr_id"]),
+                RequestNumber = CleanString(row["sr_requestnumber"]),
+                InsertDateTime = ConvertToDateTime(row["sr_insertdatetime"]) ?? DateTime.MinValue,
+                Status = CleanString(row["s_status"]),
+                TechFirstName = CleanString(row["u_firstname"]),
+                TechLastName = CleanString(row["u_lastname"]),
+                IsActive = ConvertToInt(row["u_active"]) == 1
+            });
+        }
+        
+        return result;
+    }
+
+    private static List<ArrivingLateReportDto> ConvertDataTableToArrivingLateReport(DataTable dataTable)
+    {
+        var result = new List<ArrivingLateReportDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var startDateTimeStr = CleanString(row["wo_startdatetime"]);
+            DateTime? parsedStartDateTime = null;
+            var minutesUntilStart = 0;
+            
+            // Try to parse the start date time to calculate minutes until start
+            if (DateTime.TryParse(startDateTimeStr, out var parsedDateTime))
+            {
+                parsedStartDateTime = parsedDateTime;
+                
+                // Convert current time to Central Time to match the SQL query time zone conversion
+                // This ensures both times are in the same zone (Central) when calculating the difference
+                var centralTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
+                var nowInCentral = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, centralTimeZone);
+                
+                // Calculate minutes until start using consistent time zones
+                minutesUntilStart = (int)(parsedDateTime - nowInCentral).TotalMinutes;
+            }
+
+            var firstName = CleanString(row["u_firstname"]);
+            var lastName = CleanString(row["u_lastname"]);
+            var address1 = CleanString(row["a_address1"]);
+            var city = CleanString(row["a_city"]);
+            var state = CleanString(row["a_state"]);
+            var zip = CleanString(row["a_zip"]);
+
+            var dto = new ArrivingLateReportDto
+            {
+                CallCenterName = CleanString(row["cc_name"]),
+                Trade = CleanString(row["t_trade"]),
+                WorkOrderNumber = CleanString(row["wo_workordernumber"]),
+                SrId = ConvertToInt(row["sr_id"]),
+                UserId = ConvertToInt(row["u_id"]),
+                EmployeeNumber = CleanString(row["u_employeenumber"]),
+                FirstName = firstName,
+                LastName = lastName,
+                VehicleNumber = row["u_vehiclenumber"]?.ToString() ?? string.Empty, // Preserve exact format including spaces
+                StartDateTime = startDateTimeStr,
+                Address1 = address1,
+                City = city,
+                State = state,
+                Zip = zip,
+                ParsedStartDateTime = parsedStartDateTime,
+                MinutesUntilStart = minutesUntilStart,
+                RiskLevel = "UNKNOWN", // Will be calculated later with vehicle locations
+                RequiresImmediateDeparture = false, // Will be calculated later
+                DataSource = "database",
+                // Set calculated properties
+                TechnicianName = $"{firstName} {lastName}".Trim(),
+                FullAddress = $"{address1}, {city}, {state} {zip}".Trim()
+            };
+
+            result.Add(dto);
+        }
+        
+        return result;
+    }
+
     private static int ConvertToInt(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -525,3 +834,4 @@ public class ReportsController : BaseController
 
     #endregion
 }
+
