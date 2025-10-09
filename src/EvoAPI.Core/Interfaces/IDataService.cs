@@ -113,5 +113,5 @@ public interface IDataService
     Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null);
     
     // Time Tracking Detail methods
-    Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId);
+    Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId, decimal? latBrowser = null, decimal? lonBrowser = null, string? ttdType = null);
 }

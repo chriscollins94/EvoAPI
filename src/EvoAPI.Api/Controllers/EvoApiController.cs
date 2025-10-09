@@ -4463,7 +4463,13 @@ public class EvoApiController : BaseController
             }
 
             // Insert the time tracking detail record
-            var success = await _dataService.InsertTimeTrackingDetailAsync(request.u_id, request.ttt_id, request.wo_id);
+            var success = await _dataService.InsertTimeTrackingDetailAsync(
+                request.u_id, 
+                request.ttt_id, 
+                request.wo_id, 
+                request.ttd_lat_browser, 
+                request.ttd_lon_browser,
+                request.ttd_type);
             stopwatch.Stop();
 
             if (success)

@@ -13,12 +13,14 @@ public class DataService : IDataService
     private readonly ILogger<DataService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IAuditService _auditService;
+    private readonly IFleetmaticsService _fleetmaticsService;
 
-    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService)
+    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService, IFleetmaticsService fleetmaticsService)
     {
         _logger = logger;
         _configuration = configuration;
         _auditService = auditService;
+        _fleetmaticsService = fleetmaticsService;
     }
 
     public async Task<DataTable> GetWorkOrdersAsync(int numberOfDays)
@@ -6002,32 +6004,115 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId)
+    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId, decimal? latBrowser = null, decimal? lonBrowser = null, string? ttdType = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            const string sql = @"
-                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime)
-                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime)";
-
-            var parameters = new Dictionary<string, object>
-            {
-                {"@u_id", userId},
-                {"@ttt_id", tttId},
-                {"@wo_id", woId ?? (object)DBNull.Value},
-                {"@ttd_insertdatetime", DateTime.UtcNow}
-            };
-
             using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
             await connection.OpenAsync();
 
-            using var command = new SqlCommand(sql, connection);
-            foreach (var param in parameters)
+            // If wo_id is not provided, query for the most recent/current work order for this user
+            int? actualWoId = woId;
+            DateTime? woStartDateTime = null;
+            DateTime? woEndDateTime = null;
+
+            if (!woId.HasValue || woId.Value == 0)
             {
-                command.Parameters.AddWithValue(param.Key, param.Value);
+                const string findWoSql = @"
+                    SELECT TOP 1 wo.wo_id, wo.wo_startdatetime, wo.wo_enddatetime
+                    FROM servicerequest sr
+                    INNER JOIN workorder wo ON sr.sr_id = wo.sr_id
+                    INNER JOIN xrefworkorderuser xwou ON wo.wo_id = xwou.wo_id
+                    WHERE xwou.u_id = @u_id
+                      AND wo.wo_startdatetime >= DATEADD(HOUR, -2, GETDATE())
+                      AND wo.wo_startdatetime <= DATEADD(HOUR, 24, GETDATE())
+                    ORDER BY ABS(DATEDIFF(SECOND, wo.wo_startdatetime, GETDATE()))";
+
+                using var findWoCommand = new SqlCommand(findWoSql, connection);
+                findWoCommand.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+
+                using var reader = await findWoCommand.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    actualWoId = reader.GetInt32(0);
+                    woStartDateTime = !reader.IsDBNull(1) ? reader.GetDateTime(1) : (DateTime?)null;
+                    woEndDateTime = !reader.IsDBNull(2) ? reader.GetDateTime(2) : (DateTime?)null;
+                    
+                    _logger.LogInformation("Found work order {WoId} for user {UserId} with start time {StartTime}", 
+                        actualWoId, userId, woStartDateTime);
+                }
+                else
+                {
+                    _logger.LogWarning("No work order found for user {UserId} within time window", userId);
+                }
             }
+
+            // Retrieve Fleetmatics GPS coordinates
+            decimal? latFleetmatics = null;
+            decimal? lonFleetmatics = null;
+
+            try
+            {
+                // Query for user's vehicle number
+                const string vehicleSql = "SELECT u_vehiclenumber FROM [user] WHERE u_id = @u_id";
+                using var vehicleCommand = new SqlCommand(vehicleSql, connection);
+                vehicleCommand.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+
+                var vehicleNumber = await vehicleCommand.ExecuteScalarAsync() as string;
+
+                if (!string.IsNullOrWhiteSpace(vehicleNumber))
+                {
+                    _logger.LogInformation("Retrieving Fleetmatics GPS for user {UserId}, vehicle {VehicleNumber}", userId, vehicleNumber);
+
+                    // Call Fleetmatics API to get vehicle location
+                    var vehicleLocations = await _fleetmaticsService.GetVehicleLocationsAsync(new List<string> { vehicleNumber });
+
+                    if (vehicleLocations != null && vehicleLocations.Count > 0)
+                    {
+                        var location = vehicleLocations[0];
+                        latFleetmatics = (decimal?)location.Latitude;
+                        lonFleetmatics = (decimal?)location.Longitude;
+
+                        _logger.LogInformation("Retrieved Fleetmatics GPS for vehicle {VehicleNumber}: Lat {Lat}, Lon {Lon}", 
+                            vehicleNumber, latFleetmatics, lonFleetmatics);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No Fleetmatics location data returned for vehicle {VehicleNumber}", vehicleNumber);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("No vehicle number assigned for user {UserId}, skipping Fleetmatics lookup", userId);
+                }
+            }
+            catch (Exception fleetEx)
+            {
+                // Log error but don't fail the entire operation
+                _logger.LogError(fleetEx, "Error retrieving Fleetmatics GPS for user {UserId}, continuing with time tracking insert", userId);
+            }
+
+            // Insert time tracking detail with the resolved work order information and GPS data
+            const string sql = @"
+                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime, ttd_lat_browser, ttd_lon_browser, ttd_lat_fleetmatics, ttd_lon_fleetmatics, ttd_type, wo_startdatetime, wo_enddatetime)
+                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime, @ttd_lat_browser, @ttd_lon_browser, @ttd_lat_fleetmatics, @ttd_lon_fleetmatics, @ttd_type, @wo_startdatetime, @wo_enddatetime)";
+
+            using var command = new SqlCommand(sql, connection);
+            
+            // Add parameters with proper types
+            command.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+            command.Parameters.Add("@ttt_id", System.Data.SqlDbType.Int).Value = tttId;
+            command.Parameters.Add("@wo_id", System.Data.SqlDbType.Int).Value = actualWoId.HasValue ? (object)actualWoId.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_insertdatetime", System.Data.SqlDbType.DateTime).Value = DateTime.UtcNow;
+            command.Parameters.Add("@ttd_lat_browser", System.Data.SqlDbType.Decimal).Value = latBrowser.HasValue ? (object)latBrowser.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lon_browser", System.Data.SqlDbType.Decimal).Value = lonBrowser.HasValue ? (object)lonBrowser.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lat_fleetmatics", System.Data.SqlDbType.Decimal).Value = latFleetmatics.HasValue ? (object)latFleetmatics.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lon_fleetmatics", System.Data.SqlDbType.Decimal).Value = lonFleetmatics.HasValue ? (object)lonFleetmatics.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_type", System.Data.SqlDbType.NVarChar, 50).Value = !string.IsNullOrEmpty(ttdType) ? (object)ttdType : DBNull.Value;
+            command.Parameters.Add("@wo_startdatetime", System.Data.SqlDbType.DateTime).Value = woStartDateTime.HasValue ? (object)woStartDateTime.Value : DBNull.Value;
+            command.Parameters.Add("@wo_enddatetime", System.Data.SqlDbType.DateTime).Value = woEndDateTime.HasValue ? (object)woEndDateTime.Value : DBNull.Value;
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
             stopwatch.Stop();
@@ -6036,7 +6121,7 @@ FROM DailyTechSummary;
             {
                 Name = "DataService",
                 Description = "InsertTimeTrackingDetail",
-                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}",
+                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {actualWoId} (original: {woId}), Browser: {latBrowser}/{lonBrowser}, Fleetmatics: {latFleetmatics}/{lonFleetmatics}, Type: {ttdType}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });

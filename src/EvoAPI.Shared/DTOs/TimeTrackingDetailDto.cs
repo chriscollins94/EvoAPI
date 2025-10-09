@@ -21,4 +21,7 @@ public class CreateTimeTrackingDetailRequest
     public int u_id { get; set; }
     public int ttt_id { get; set; }
     public int? wo_id { get; set; }
+    public decimal? ttd_lat_browser { get; set; }
+    public decimal? ttd_lon_browser { get; set; }
+    public string? ttd_type { get; set; }
 }
