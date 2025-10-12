@@ -28,7 +28,6 @@ public class TimecardDiscrepanciesDto
     public decimal DistanceFromEnd { get; set; }
     public int TravelTimeToStart { get; set; }
     public int TravelTimeToEnd { get; set; }
-    public int TimeAvailable { get; set; }
     
     // Organization Details
     public string CompanyName { get; set; } = string.Empty;

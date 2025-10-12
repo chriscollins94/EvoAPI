@@ -847,7 +847,6 @@ public class ReportsController : BaseController
                 DistanceFromEnd = ConvertToDecimal(row["ttd_distanceinmilesfleetmatics"]),
                 TravelTimeToStart = ConvertToInt(row["ttd_traveltimeinminutesbrowser"]),
                 TravelTimeToEnd = ConvertToInt(row["ttd_traveltimeinminutesfleetmatics"]),
-                TimeAvailable = ConvertToInt(row["ttd_timeavailableinminutes"]),
                 CompanyName = CleanString(row["company_name"]),
                 CallCenterName = CleanString(row["call_center_name"]),
                 LocationName = CleanString(row["location_name"]),

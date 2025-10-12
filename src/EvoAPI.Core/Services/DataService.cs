@@ -4773,7 +4773,6 @@ FROM DailyTechSummary;
                     ttd.ttd_distanceinmilesfleetmatics,
                     ttd.ttd_traveltimeinminutesbrowser,
                     ttd.ttd_traveltimeinminutesfleetmatics,
-                    ttd.ttd_timeavailableinminutes,
                     c.c_name as company_name,
                     cc.cc_name as call_center_name,
                     l.l_location as location_name,
@@ -6321,8 +6320,8 @@ FROM DailyTechSummary;
 
             // Insert time tracking detail with the resolved work order information, GPS data, and distance/travel time data
             const string sql = @"
-                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime, ttd_lat_browser, ttd_lon_browser, ttd_lat_fleetmatics, ttd_lon_fleetmatics, ttd_type, wo_startdatetime, wo_enddatetime, ttd_distanceinmilesbrowser, ttd_distanceinmilesfleetmatics, ttd_traveltimeinminutesbrowser, ttd_traveltimeinminutesfleetmatics, ttd_timeavailableinminutes)
-                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime, @ttd_lat_browser, @ttd_lon_browser, @ttd_lat_fleetmatics, @ttd_lon_fleetmatics, @ttd_type, @wo_startdatetime, @wo_enddatetime, @ttd_distanceinmilesbrowser, @ttd_distanceinmilesfleetmatics, @ttd_traveltimeinminutesbrowser, @ttd_traveltimeinminutesfleetmatics, @ttd_timeavailableinminutes)";
+                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime, ttd_lat_browser, ttd_lon_browser, ttd_lat_fleetmatics, ttd_lon_fleetmatics, ttd_type, wo_startdatetime, wo_enddatetime, ttd_distanceinmilesbrowser, ttd_distanceinmilesfleetmatics, ttd_traveltimeinminutesbrowser, ttd_traveltimeinminutesfleetmatics)
+                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime, @ttd_lat_browser, @ttd_lon_browser, @ttd_lat_fleetmatics, @ttd_lon_fleetmatics, @ttd_type, @wo_startdatetime, @wo_enddatetime, @ttd_distanceinmilesbrowser, @ttd_distanceinmilesfleetmatics, @ttd_traveltimeinminutesbrowser, @ttd_traveltimeinminutesfleetmatics)";
 
             using var command = new SqlCommand(sql, connection);
             
@@ -6342,7 +6341,6 @@ FROM DailyTechSummary;
             command.Parameters.Add("@ttd_distanceinmilesfleetmatics", System.Data.SqlDbType.Decimal).Value = distanceFleetmaticsMiles.HasValue ? (object)distanceFleetmaticsMiles.Value : DBNull.Value;
             command.Parameters.Add("@ttd_traveltimeinminutesbrowser", System.Data.SqlDbType.Int).Value = travelTimeBrowserMinutes.HasValue ? (object)travelTimeBrowserMinutes.Value : DBNull.Value;
             command.Parameters.Add("@ttd_traveltimeinminutesfleetmatics", System.Data.SqlDbType.Int).Value = travelTimeFleetmaticsMinutes.HasValue ? (object)travelTimeFleetmaticsMinutes.Value : DBNull.Value;
-            command.Parameters.Add("@ttd_timeavailableinminutes", System.Data.SqlDbType.Int).Value = timeAvailableMinutes.HasValue ? (object)timeAvailableMinutes.Value : DBNull.Value;
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
             stopwatch.Stop();
@@ -6351,7 +6349,7 @@ FROM DailyTechSummary;
             {
                 Name = "DataService",
                 Description = "InsertTimeTrackingDetail",
-                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {actualWoId} (original: {woId}), Browser: {latBrowser}/{lonBrowser} ({distanceBrowserMiles}mi, {travelTimeBrowserMinutes}min), Fleetmatics: {latFleetmatics}/{lonFleetmatics} ({distanceFleetmaticsMiles}mi, {travelTimeFleetmaticsMinutes}min), Type: {ttdType}, Time Available: {timeAvailableMinutes}min",
+                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {actualWoId} (original: {woId}), Browser: {latBrowser}/{lonBrowser} ({distanceBrowserMiles}mi, {travelTimeBrowserMinutes}min), Fleetmatics: {latFleetmatics}/{lonFleetmatics} ({distanceFleetmaticsMiles}mi, {travelTimeFleetmaticsMinutes}min), Type: {ttdType}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
