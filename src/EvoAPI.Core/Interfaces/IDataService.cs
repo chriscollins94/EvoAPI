@@ -71,6 +71,9 @@ public interface IDataService
     Task<DataTable> GetWorkOrderSchedulingConflictsAsync();
     Task<DataTable> GetWorkOrderSchedulingConflictsSummaryAsync();
     
+    // Timecard Discrepancies methods
+    Task<DataTable> GetTimecardDiscrepanciesAsync();
+    
     // Arriving Late Report methods
     Task<DataTable> GetArrivingLateReportAsync();
     

@@ -389,6 +389,42 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("timecard-discrepancies")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<TimecardDiscrepanciesDto>>>> GetTimecardDiscrepancies()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTimecardDiscrepanciesAsync();
+            var reportData = ConvertDataTableToTimecardDiscrepancies(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTimecardDiscrepancies", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<TimecardDiscrepanciesDto>>
+            {
+                Success = true,
+                Message = "Timecard discrepancies data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTimecardDiscrepancies", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TimecardDiscrepanciesDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve timecard discrepancies data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -778,6 +814,45 @@ public class ReportsController : BaseController
             };
 
             result.Add(dto);
+        }
+        
+        return result;
+    }
+
+    private static List<TimecardDiscrepanciesDto> ConvertDataTableToTimecardDiscrepancies(DataTable dataTable)
+    {
+        var result = new List<TimecardDiscrepanciesDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new TimecardDiscrepanciesDto
+            {
+                TtdId = ConvertToInt(row["ttd_id"]),
+                UserId = ConvertToInt(row["u_id"]),
+                TechnicianName = CleanString(row["technician_name"]),
+                EmployeeNumber = CleanString(row["u_employeenumber"]),
+                TttId = ConvertToInt(row["ttt_id"]),
+                TrackingType = CleanString(row["tracking_type"]),
+                WorkOrderId = ConvertToInt(row["wo_id"]),
+                WorkOrderNumber = CleanString(row["work_order_number"]),
+                InsertDateTime = ConvertToDateTime(row["ttd_insertdatetime"]) ?? DateTime.MinValue,
+                BrowserLat = ConvertToDecimal(row["ttd_lat_browser"]),
+                BrowserLong = ConvertToDecimal(row["ttd_lon_browser"]),
+                FleetmaticsLat = ConvertToDecimal(row["ttd_lat_fleetmatics"]),
+                FleetmaticsLong = ConvertToDecimal(row["ttd_lon_fleetmatics"]),
+                TtdType = CleanString(row["ttd_type"]),
+                WoStartDateTime = ConvertToDateTime(row["wo_startdatetime"]),
+                WoEndDateTime = ConvertToDateTime(row["wo_enddatetime"]),
+                DistanceFromStart = ConvertToDecimal(row["ttd_distanceinmilesbrowser"]),
+                DistanceFromEnd = ConvertToDecimal(row["ttd_distanceinmilesfleetmatics"]),
+                TravelTimeToStart = ConvertToInt(row["ttd_traveltimeinminutesbrowser"]),
+                TravelTimeToEnd = ConvertToInt(row["ttd_traveltimeinminutesfleetmatics"]),
+                TimeAvailable = ConvertToInt(row["ttd_timeavailableinminutes"]),
+                CompanyName = CleanString(row["company_name"]),
+                CallCenterName = CleanString(row["call_center_name"]),
+                LocationName = CleanString(row["location_name"]),
+                WorkOrderAddress = CleanString(row["work_order_address"])
+            });
         }
         
         return result;

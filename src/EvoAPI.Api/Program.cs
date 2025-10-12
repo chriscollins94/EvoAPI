@@ -142,6 +142,9 @@ builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
 // Register Fleetmatics background service for daily sync
 builder.Services.AddHostedService<FleetmaticsSyncService>();
 
+// Register Time Tracking background service for periodic sync
+builder.Services.AddHostedService<TimeTrackingSyncService>();
+
 // Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

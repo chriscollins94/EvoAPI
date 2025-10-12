@@ -4745,6 +4745,83 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetTimecardDiscrepanciesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ttd.ttd_id,
+                    ttd.u_id,
+                    u.u_firstname + ' ' + u.u_lastname as technician_name,
+                    u.u_employeenumber,
+                    ttd.ttt_id,
+                    ttt.ttt_timetype as tracking_type,
+                    ttd.wo_id,
+                    sr.sr_requestnumber as work_order_number,
+                    ttd.ttd_insertdatetime,
+                    ttd.ttd_lat_browser,
+                    ttd.ttd_lon_browser,
+                    ttd.ttd_lat_fleetmatics,
+                    ttd.ttd_lon_fleetmatics,
+                    ttd.ttd_type,
+                    ttd.wo_startdatetime,
+                    ttd.wo_enddatetime,
+                    ttd.ttd_distanceinmilesbrowser,
+                    ttd.ttd_distanceinmilesfleetmatics,
+                    ttd.ttd_traveltimeinminutesbrowser,
+                    ttd.ttd_traveltimeinminutesfleetmatics,
+                    ttd.ttd_timeavailableinminutes,
+                    c.c_name as company_name,
+                    cc.cc_name as call_center_name,
+                    l.l_location as location_name,
+                    a.a_address1 + ', ' + a.a_city + ', ' + a.a_state + ' ' + a.a_zip as work_order_address
+                FROM timetrackingdetail ttd
+                INNER JOIN [user] u ON ttd.u_id = u.u_id
+                INNER JOIN timetrackingtype ttt ON ttd.ttt_id = ttt.ttt_id
+                LEFT JOIN workorder wo ON ttd.wo_id = wo.wo_id
+                LEFT JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                LEFT JOIN location l ON sr.l_id = l.l_id
+                LEFT JOIN address a ON l.a_id = a.a_id
+                LEFT JOIN xrefcompanycallcenter xccc ON sr.xccc_id = xccc.xccc_id
+                LEFT JOIN company c ON xccc.c_id = c.c_id
+                LEFT JOIN callcenter cc ON xccc.cc_id = cc.cc_id
+                WHERE ttd.ttd_insertdatetime >= DATEADD(DAY, -30, GETDATE())
+                ORDER BY ttd.ttd_insertdatetime DESC";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimecardDiscrepancies",
+                Detail = $"Retrieved {result.Rows.Count} timecard discrepancy records from the last 30 days",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimecardDiscrepancies",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving timecard discrepancies");
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetArrivingLateReportAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -6139,7 +6216,7 @@ FROM DailyTechSummary;
             {
                 var currentUtcTime = DateTime.UtcNow;
                 
-                if ((ttdType == "CheckIn" || ttdType == "ClockIn") && woStartDateTime.HasValue)
+                if ((ttdType == "CheckIn" || ttdType == "ClockIn" || ttdType == "CheckedInPeriodic" || ttdType == "ClockedInPeriodic") && woStartDateTime.HasValue)
                 {
                     // Calculate difference: WO Start - Current (positive = early, negative = late)
                     var timeDiff = woStartDateTime.Value - currentUtcTime;
