@@ -148,6 +148,12 @@ namespace EvoAPI.Infrastructure.Repositories
         {
             using var connection = new SqlConnection(_connectionString);
             
+            // Ensure si_hoursperunit is 0 instead of null
+            if (!request.si_hoursperunit.HasValue || request.si_hoursperunit.Value == 0)
+            {
+                request.si_hoursperunit = 0;
+            }
+            
             var sql = @"
                 INSERT INTO serviceitem (
                     o_id, siu_id, t_id, sim_id, sit_id,
@@ -173,6 +179,12 @@ namespace EvoAPI.Infrastructure.Repositories
         public async Task<bool> UpdateServiceItemAsync(UpdateServiceItemRequest request)
         {
             using var connection = new SqlConnection(_connectionString);
+            
+            // Ensure si_hoursperunit is 0 instead of null
+            if (!request.si_hoursperunit.HasValue || request.si_hoursperunit.Value == 0)
+            {
+                request.si_hoursperunit = 0;
+            }
             
             var sql = @"
                 UPDATE serviceitem
