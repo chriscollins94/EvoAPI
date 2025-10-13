@@ -834,6 +834,7 @@ public class ReportsController : BaseController
                 TttId = ConvertToInt(row["ttt_id"]),
                 TrackingType = CleanString(row["tracking_type"]),
                 WorkOrderId = ConvertToInt(row["wo_id"]),
+                SrId = ConvertToInt(row["sr_id"]),
                 WorkOrderNumber = CleanString(row["work_order_number"]),
                 InsertDateTime = ConvertToDateTime(row["ttd_insertdatetime"]) ?? DateTime.MinValue,
                 BrowserLat = ConvertToDecimal(row["ttd_lat_browser"]),

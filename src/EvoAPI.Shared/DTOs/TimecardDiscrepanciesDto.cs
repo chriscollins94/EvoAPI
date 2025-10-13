@@ -9,6 +9,7 @@ public class TimecardDiscrepanciesDto
     public int TttId { get; set; }
     public string TrackingType { get; set; } = string.Empty;
     public int WorkOrderId { get; set; }
+    public int SrId { get; set; }
     public string WorkOrderNumber { get; set; } = string.Empty;
     public DateTime InsertDateTime { get; set; }
     

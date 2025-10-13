@@ -4760,6 +4760,7 @@ FROM DailyTechSummary;
                     ttd.ttt_id,
                     ttt.ttt_timetype as tracking_type,
                     ttd.wo_id,
+                    sr.sr_id,
                     sr.sr_requestnumber as work_order_number,
                     ttd.ttd_insertdatetime,
                     ttd.ttd_lat_browser,
