@@ -391,18 +391,49 @@ public class ReportsController : BaseController
 
     [HttpGet("timecard-discrepancies")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<TimecardDiscrepanciesDto>>>> GetTimecardDiscrepancies()
+    public async Task<ActionResult<ApiResponse<List<TimecardDiscrepanciesDto>>>> GetTimecardDiscrepancies(
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetTimecardDiscrepanciesAsync();
+            // Default to last 30 days if no dates provided (backward compatibility)
+            if (!startDate.HasValue || !endDate.HasValue)
+            {
+                endDate = DateTime.Today.AddDays(1).AddSeconds(-1); // Today at 23:59:59
+                startDate = DateTime.Today.AddDays(-29); // 30 days ago at 00:00:00
+            }
+            
+            // Validate date range (max 30 days)
+            var daysDifference = (endDate.Value - startDate.Value).TotalDays;
+            if (daysDifference > 30)
+            {
+                return BadRequest(new ApiResponse<List<TimecardDiscrepanciesDto>>
+                {
+                    Success = false,
+                    Message = "Date range cannot exceed 30 days"
+                });
+            }
+            
+            if (startDate > endDate)
+            {
+                return BadRequest(new ApiResponse<List<TimecardDiscrepanciesDto>>
+                {
+                    Success = false,
+                    Message = "Start date cannot be after end date"
+                });
+            }
+            
+            var dataTable = await _dataService.GetTimecardDiscrepanciesAsync(startDate.Value, endDate.Value);
             var reportData = ConvertDataTableToTimecardDiscrepancies(dataTable);
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetTimecardDiscrepancies", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            await LogAuditAsync("GetTimecardDiscrepancies", 
+                $"Retrieved {reportData.Count} records from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}", 
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TimecardDiscrepanciesDto>>
             {

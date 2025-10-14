@@ -4745,7 +4745,7 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTimecardDiscrepanciesAsync()
+    public async Task<DataTable> GetTimecardDiscrepanciesAsync(DateTime startDate, DateTime endDate)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -4788,17 +4788,24 @@ FROM DailyTechSummary;
                 LEFT JOIN xrefcompanycallcenter xccc ON sr.xccc_id = xccc.xccc_id
                 LEFT JOIN company c ON xccc.c_id = c.c_id
                 LEFT JOIN callcenter cc ON xccc.cc_id = cc.cc_id
-                WHERE ttd.ttd_insertdatetime >= DATEADD(DAY, -30, GETDATE())
+                WHERE ttd.ttd_insertdatetime >= @StartDate
+                  AND ttd.ttd_insertdatetime <= @EndDate
                 ORDER BY ttd.ttd_insertdatetime DESC";
 
-            var result = await ExecuteQueryAsync(sql);
+            var parameters = new Dictionary<string, object>
+            {
+                { "@StartDate", startDate },
+                { "@EndDate", endDate }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
             
             stopwatch.Stop();
             await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
                 Description = "GetTimecardDiscrepancies",
-                Detail = $"Retrieved {result.Rows.Count} timecard discrepancy records from the last 30 days",
+                Detail = $"Retrieved {result.Rows.Count} timecard discrepancy records from {startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
