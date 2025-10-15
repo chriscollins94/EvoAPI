@@ -15,6 +15,7 @@ public class EmployeeDto
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool Active { get; set; }
+    public bool DirectoryOnly { get; set; }
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
     public string? Note { get; set; }
@@ -89,6 +90,7 @@ public class CreateEmployeeRequest
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool Active { get; set; } = true;
+    public bool DirectoryOnly { get; set; } = false;
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
     public string? Note { get; set; }
@@ -120,6 +122,7 @@ public class UpdateEmployeeRequest
     public string Username { get; set; } = string.Empty;
     public string? Password { get; set; } // Optional for updates
     public bool Active { get; set; }
+    public bool DirectoryOnly { get; set; }
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
     public string? Note { get; set; }

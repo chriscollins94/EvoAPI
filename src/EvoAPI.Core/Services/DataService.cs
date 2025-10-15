@@ -2188,13 +2188,13 @@ public class DataService : IDataService
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
-                    u_active, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
+                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
-                    @Active, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2214,6 +2214,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Extension", request.Extension ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
@@ -2312,6 +2313,7 @@ public class DataService : IDataService
                     u_phonedesk = @PhoneDesk,
                     u_extension = @Extension,
                     u_active = @Active,
+                    u_directoryonly = @DirectoryOnly,
                     u_daysavailablepto = @DaysAvailablePTO,
                     u_daysavailablevacation = @DaysAvailableVacation,
                     u_note = @Note,
@@ -2342,6 +2344,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? "");
             command.Parameters.AddWithValue("@Extension", request.Extension ?? "");
             command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
             command.Parameters.AddWithValue("@Note", request.Note ?? "");
@@ -2588,6 +2591,7 @@ public class DataService : IDataService
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
+                    u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
                     u.u_note as Note,
@@ -2709,6 +2713,7 @@ public class DataService : IDataService
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
+                    u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
                     u.u_note as Note,

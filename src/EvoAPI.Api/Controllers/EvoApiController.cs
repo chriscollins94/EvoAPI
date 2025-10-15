@@ -3922,6 +3922,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = row["Password"]?.ToString() ?? string.Empty,
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
                     Note = row["Note"]?.ToString(),
@@ -4013,6 +4014,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = row["Password"]?.ToString() ?? string.Empty,
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
                     Note = row["Note"]?.ToString(),
@@ -4121,6 +4123,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = string.Empty, // Excluded for security
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
                     Note = row["Note"]?.ToString(),
@@ -4215,6 +4218,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = string.Empty, // Excluded for security
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
                     Note = row["Note"]?.ToString(),
@@ -4287,6 +4291,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = string.Empty, // Excluded for security
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = null, // Excluded for tech directory
                     DaysAvailableVacation = null, // Excluded for tech directory
                     Note = string.Empty, // Excluded for tech directory
@@ -4393,6 +4398,7 @@ public class EvoApiController : BaseController
                     Username = row["Username"]?.ToString() ?? string.Empty,
                     Password = string.Empty, // Excluded for security
                     Active = Convert.ToBoolean(row["Active"]),
+                    DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = null, // Excluded for tech directory
                     DaysAvailableVacation = null, // Excluded for tech directory
                     Note = string.Empty, // Excluded for tech directory
