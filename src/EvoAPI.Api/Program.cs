@@ -115,6 +115,7 @@ builder.Services.AddControllers();
 // Register application services
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IDataService, DataService>();
+builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
 
 // Register HttpClient for Google Maps service
 builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
@@ -141,6 +142,10 @@ builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
 
 // Register Fleetmatics background service for daily sync
 builder.Services.AddHostedService<FleetmaticsSyncService>();
+
+// Register Time Tracking background service for periodic sync
+// TEMPORARILY DISABLED - Uncomment to re-enable in the future
+// builder.Services.AddHostedService<TimeTrackingSyncService>();
 
 // Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

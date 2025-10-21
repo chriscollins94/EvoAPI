@@ -389,6 +389,73 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("timecard-discrepancies")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<TimecardDiscrepanciesDto>>>> GetTimecardDiscrepancies(
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            // Default to last 30 days if no dates provided (backward compatibility)
+            if (!startDate.HasValue || !endDate.HasValue)
+            {
+                endDate = DateTime.Today.AddDays(1).AddSeconds(-1); // Today at 23:59:59
+                startDate = DateTime.Today.AddDays(-29); // 30 days ago at 00:00:00
+            }
+            
+            // Validate date range (max 30 days)
+            var daysDifference = (endDate.Value - startDate.Value).TotalDays;
+            if (daysDifference > 30)
+            {
+                return BadRequest(new ApiResponse<List<TimecardDiscrepanciesDto>>
+                {
+                    Success = false,
+                    Message = "Date range cannot exceed 30 days"
+                });
+            }
+            
+            if (startDate > endDate)
+            {
+                return BadRequest(new ApiResponse<List<TimecardDiscrepanciesDto>>
+                {
+                    Success = false,
+                    Message = "Start date cannot be after end date"
+                });
+            }
+            
+            var dataTable = await _dataService.GetTimecardDiscrepanciesAsync(startDate.Value, endDate.Value);
+            var reportData = ConvertDataTableToTimecardDiscrepancies(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTimecardDiscrepancies", 
+                $"Retrieved {reportData.Count} records from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}", 
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<TimecardDiscrepanciesDto>>
+            {
+                Success = true,
+                Message = "Timecard discrepancies data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTimecardDiscrepancies", ex);
+            
+            return StatusCode(500, new ApiResponse<List<TimecardDiscrepanciesDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve timecard discrepancies data"
+            });
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -778,6 +845,45 @@ public class ReportsController : BaseController
             };
 
             result.Add(dto);
+        }
+        
+        return result;
+    }
+
+    private static List<TimecardDiscrepanciesDto> ConvertDataTableToTimecardDiscrepancies(DataTable dataTable)
+    {
+        var result = new List<TimecardDiscrepanciesDto>();
+        
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new TimecardDiscrepanciesDto
+            {
+                TtdId = ConvertToInt(row["ttd_id"]),
+                UserId = ConvertToInt(row["u_id"]),
+                TechnicianName = CleanString(row["technician_name"]),
+                EmployeeNumber = CleanString(row["u_employeenumber"]),
+                TttId = ConvertToInt(row["ttt_id"]),
+                TrackingType = CleanString(row["tracking_type"]),
+                WorkOrderId = ConvertToInt(row["wo_id"]),
+                SrId = ConvertToInt(row["sr_id"]),
+                WorkOrderNumber = CleanString(row["work_order_number"]),
+                InsertDateTime = ConvertToDateTime(row["ttd_insertdatetime"]) ?? DateTime.MinValue,
+                BrowserLat = ConvertToDecimal(row["ttd_lat_browser"]),
+                BrowserLong = ConvertToDecimal(row["ttd_lon_browser"]),
+                FleetmaticsLat = ConvertToDecimal(row["ttd_lat_fleetmatics"]),
+                FleetmaticsLong = ConvertToDecimal(row["ttd_lon_fleetmatics"]),
+                TtdType = CleanString(row["ttd_type"]),
+                WoStartDateTime = ConvertToDateTime(row["wo_startdatetime"]),
+                WoEndDateTime = ConvertToDateTime(row["wo_enddatetime"]),
+                DistanceFromStart = ConvertToDecimal(row["ttd_distanceinmilesbrowser"]),
+                DistanceFromEnd = ConvertToDecimal(row["ttd_distanceinmilesfleetmatics"]),
+                TravelTimeToStart = ConvertToInt(row["ttd_traveltimeinminutesbrowser"]),
+                TravelTimeToEnd = ConvertToInt(row["ttd_traveltimeinminutesfleetmatics"]),
+                CompanyName = CleanString(row["company_name"]),
+                CallCenterName = CleanString(row["call_center_name"]),
+                LocationName = CleanString(row["location_name"]),
+                WorkOrderAddress = CleanString(row["work_order_address"])
+            });
         }
         
         return result;

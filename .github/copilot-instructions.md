@@ -183,42 +183,108 @@ if (File.Exists(secretsPath))
 4. **Add audit logging** using BaseController methods
 5. **Test authentication** with existing JWT tokens
 
-### Database Schema Verification
-**Always** verify database schema and relationships before implementing new endpoints:
+### Database Schema Verification & SQL Query Development
+**CRITICAL**: Never write SQL queries from scratch without verifying the actual database schema first.
 
-**Critical Practice**: Before creating APIs that access user data or any multi-table operations:
-1. **Examine actual database structure** - Don't assume table contents or relationships
-2. **Check for foreign keys** - Look for `_id` fields that may reference other tables  
-3. **Verify field names** - Column names in database may differ from expected DTO properties
-4. **Test JOIN requirements** - Many data operations require JOINs (e.g., User + Address tables)
-5. **Validate data relationships** - Understand which tables store what data components
+**The Golden Rule**: When adding new database queries, **always** search for existing queries that access the same table(s) to understand:
+1. Actual column names (not assumptions)
+2. JOIN patterns already in use
+3. Naming conventions and prefixes
+4. Related tables and foreign key relationships
 
-**Common Schema Patterns to Check:**
+**Required Process Before Writing Any SQL Query:**
+
+1. **Search for Existing Queries First**
+   ```bash
+   # Search for INSERT/UPDATE statements to see actual column names
+   grep -r "INSERT INTO tablename" DataService.cs
+   grep -r "UPDATE tablename" DataService.cs
+   
+   # Search for existing SELECT queries on the same table
+   grep -r "FROM tablename" DataService.cs
+   ```
+
+2. **Examine Actual Column Names from Existing Code**
+   - Example: `INSERT INTO timetrackingdetail (ttd_lat_browser, ttd_lon_browser, ...)`
+   - This shows actual columns are `ttd_lat_browser` NOT `ttd_lat`
+   - This shows actual columns are `ttd_distanceinmilesbrowser` NOT `ttd_distanceinmiles`
+
+3. **Understand Table Relationships from Existing JOINs**
+   - Don't assume direct relationships exist
+   - Example: `servicerequest` is accessed through `workorder` table, not directly from `timetrackingdetail`
+   - Example: `callcenter` and `company` are accessed through `xrefcompanycallcenter` cross-reference table
+
+4. **Verify Column Suffixes and Naming Patterns**
+   - Many tables use suffixes to distinguish data sources: `_browser` vs `_fleetmatics`
+   - Tables often store data redundantly for performance: `wo_startdatetime` stored in `timetrackingdetail` for quick access
+   - Primary keys follow pattern: `tablename_id` (e.g., `ttd_id`, `u_id`, `sr_id`)
+
+**Common Schema Patterns in This Database:**
+
 ```sql
--- User table may only contain foreign keys to other detail tables
-SELECT * FROM [user] LIMIT 1;  -- Check what fields actually exist
+-- timetrackingdetail table stores GPS data with source suffixes
+ttd_lat_browser, ttd_lon_browser              -- Browser-provided coordinates
+ttd_lat_fleetmatics, ttd_lon_fleetmatics      -- Fleetmatics-provided coordinates
+ttd_distanceinmilesbrowser                     -- Distance calculated from browser GPS
+ttd_distanceinmilesfleetmatics                 -- Distance calculated from Fleetmatics GPS
+ttd_traveltimeinminutesbrowser                 -- Travel time from browser GPS
+ttd_traveltimeinminutesfleetmatics            -- Travel time from Fleetmatics GPS
 
--- Address data often stored separately with foreign key relationship  
-SELECT u.*, a.* FROM [user] u 
-LEFT JOIN address a ON u.a_id = a.a_id 
-WHERE u.u_id = @userId;
+-- servicerequest relationships require multiple JOINs
+timetrackingdetail → workorder → servicerequest → location → address
+servicerequest → xrefcompanycallcenter → callcenter
+servicerequest → xrefcompanycallcenter → company
 
--- Always verify field existence before SQL operations
-DESCRIBE [tablename]; -- or equivalent schema inspection
+-- User table may only contain foreign keys to detail tables
+SELECT * FROM [user] LIMIT 1;  -- Verify which fields exist
+[user] → address (via u.a_id = a.a_id)
 ```
 
 **Before Implementation Checklist:**
-- ✅ Inspect actual database tables and their columns
-- ✅ Identify foreign key relationships (e.g., `u.a_id → address.a_id`)
-- ✅ Verify which tables contain the data you need  
-- ✅ Test SQL queries with real data to confirm field availability
-- ✅ Check for naming conventions (e.g., `u_fieldname` vs `fieldname`)
+- ✅ **Search for existing queries** on the same table(s) in DataService.cs
+- ✅ **Copy JOIN patterns** from existing queries - don't reinvent the wheel
+- ✅ **Use exact column names** from existing INSERT/UPDATE statements
+- ✅ **Verify foreign key relationships** by examining existing query JOINs
+- ✅ **Check for naming conventions** (table prefixes, suffixes like `_browser`)
+- ✅ **Alias columns** when needed to match DTO property expectations
 
-**Red Flags - Stop and Verify Schema:**
-- SQL errors mentioning "Invalid column name"
-- Missing data in API responses that should be available
-- 500 errors from backend when accessing related data
-- DTO properties that don't match database column names
+**Red Flags - Stop Immediately:**
+- ❌ Writing a query without first searching for existing queries on that table
+- ❌ SQL errors mentioning "Invalid column name"
+- ❌ Assuming column names without verification (e.g., assuming `ttd_lat` when it's actually `ttd_lat_browser`)
+- ❌ Direct JOINs that skip cross-reference tables (e.g., joining `servicerequest` directly to `callcenter`)
+- ❌ Missing data in responses that should be available
+- ❌ DTO properties that don't match actual database column names
+
+**Example - Correct Approach:**
+```csharp
+// ✅ CORRECT: Search existing code first
+// Found: INSERT INTO timetrackingdetail (ttd_lat_browser, ttd_lon_browser, ...)
+// Found: LEFT JOIN workorder wo ON ttd.wo_id = wo.wo_id
+// Now write query using discovered patterns:
+
+const string sql = @"
+    SELECT 
+        ttd.ttd_lat_browser,              -- Actual column name from INSERT
+        ttd.ttd_lon_browser,              -- Not ttd_lat/ttd_lon
+        ttd.ttd_distanceinmilesbrowser    -- Not ttd_distanceinmiles
+    FROM timetrackingdetail ttd
+    INNER JOIN [user] u ON ttd.u_id = u.u_id
+    LEFT JOIN workorder wo ON ttd.wo_id = wo.wo_id  -- JOIN pattern from existing code
+    LEFT JOIN servicerequest sr ON wo.sr_id = sr.sr_id";
+```
+
+**Example - Wrong Approach:**
+```csharp
+// ❌ WRONG: Assumed column names without verification
+const string sql = @"
+    SELECT 
+        ttd.ttd_lat,                    -- WRONG: Assumes no suffix
+        ttd.ttd_lon,                    -- WRONG: Assumes no suffix
+        ttd.ttd_distanceinmiles         -- WRONG: Missing 'browser' suffix
+    FROM timetrackingdetail ttd
+    LEFT JOIN servicerequest sr ON ttd.sr_id = sr.sr_id";  -- WRONG: No direct relationship
+```
 
 ### Audit Logging Pattern
 ```csharp

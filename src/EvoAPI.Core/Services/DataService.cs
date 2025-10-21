@@ -13,12 +13,16 @@ public class DataService : IDataService
     private readonly ILogger<DataService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IAuditService _auditService;
+    private readonly IFleetmaticsService _fleetmaticsService;
+    private readonly IGoogleMapsService _googleMapsService;
 
-    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService)
+    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService, IFleetmaticsService fleetmaticsService, IGoogleMapsService googleMapsService)
     {
         _logger = logger;
         _configuration = configuration;
         _auditService = auditService;
+        _fleetmaticsService = fleetmaticsService;
+        _googleMapsService = googleMapsService;
     }
 
     public async Task<DataTable> GetWorkOrdersAsync(int numberOfDays)
@@ -2184,13 +2188,13 @@ public class DataService : IDataService
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
-                    u_active, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
+                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
-                    @Active, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2210,6 +2214,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Extension", request.Extension ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
@@ -2308,6 +2313,7 @@ public class DataService : IDataService
                     u_phonedesk = @PhoneDesk,
                     u_extension = @Extension,
                     u_active = @Active,
+                    u_directoryonly = @DirectoryOnly,
                     u_daysavailablepto = @DaysAvailablePTO,
                     u_daysavailablevacation = @DaysAvailableVacation,
                     u_note = @Note,
@@ -2338,6 +2344,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@PhoneDesk", request.PhoneDesk ?? "");
             command.Parameters.AddWithValue("@Extension", request.Extension ?? "");
             command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
             command.Parameters.AddWithValue("@Note", request.Note ?? "");
@@ -2584,6 +2591,7 @@ public class DataService : IDataService
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
+                    u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
                     u.u_note as Note,
@@ -2705,6 +2713,7 @@ public class DataService : IDataService
                     u.u_username as Username,
                     u.u_password as Password,
                     u.u_active as Active,
+                    u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
                     u.u_note as Note,
@@ -4741,6 +4750,90 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetTimecardDiscrepanciesAsync(DateTime startDate, DateTime endDate)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ttd.ttd_id,
+                    ttd.u_id,
+                    u.u_firstname + ' ' + u.u_lastname as technician_name,
+                    u.u_employeenumber,
+                    ttd.ttt_id,
+                    ttt.ttt_timetype as tracking_type,
+                    ttd.wo_id,
+                    sr.sr_id,
+                    sr.sr_requestnumber as work_order_number,
+                    ttd.ttd_insertdatetime,
+                    ttd.ttd_lat_browser,
+                    ttd.ttd_lon_browser,
+                    ttd.ttd_lat_fleetmatics,
+                    ttd.ttd_lon_fleetmatics,
+                    ttd.ttd_type,
+                    ttd.wo_startdatetime,
+                    ttd.wo_enddatetime,
+                    ttd.ttd_distanceinmilesbrowser,
+                    ttd.ttd_distanceinmilesfleetmatics,
+                    ttd.ttd_traveltimeinminutesbrowser,
+                    ttd.ttd_traveltimeinminutesfleetmatics,
+                    c.c_name as company_name,
+                    cc.cc_name as call_center_name,
+                    l.l_location as location_name,
+                    a.a_address1 + ', ' + a.a_city + ', ' + a.a_state + ' ' + a.a_zip as work_order_address
+                FROM timetrackingdetail ttd
+                INNER JOIN [user] u ON ttd.u_id = u.u_id
+                INNER JOIN timetrackingtype ttt ON ttd.ttt_id = ttt.ttt_id
+                LEFT JOIN workorder wo ON ttd.wo_id = wo.wo_id
+                LEFT JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                LEFT JOIN location l ON sr.l_id = l.l_id
+                LEFT JOIN address a ON l.a_id = a.a_id
+                LEFT JOIN xrefcompanycallcenter xccc ON sr.xccc_id = xccc.xccc_id
+                LEFT JOIN company c ON xccc.c_id = c.c_id
+                LEFT JOIN callcenter cc ON xccc.cc_id = cc.cc_id
+                WHERE ttd.ttd_insertdatetime >= @StartDate
+                  AND ttd.ttd_insertdatetime <= @EndDate
+                ORDER BY ttd.ttd_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@StartDate", startDate },
+                { "@EndDate", endDate }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimecardDiscrepancies",
+                Detail = $"Retrieved {result.Rows.Count} timecard discrepancy records from {startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimecardDiscrepancies",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving timecard discrepancies");
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetArrivingLateReportAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -6002,32 +6095,265 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId)
+    public async Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId, decimal? latBrowser = null, decimal? lonBrowser = null, string? ttdType = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            const string sql = @"
-                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime)
-                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime)";
-
-            var parameters = new Dictionary<string, object>
-            {
-                {"@u_id", userId},
-                {"@ttt_id", tttId},
-                {"@wo_id", woId ?? (object)DBNull.Value},
-                {"@ttd_insertdatetime", DateTime.UtcNow}
-            };
-
             using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
             await connection.OpenAsync();
 
-            using var command = new SqlCommand(sql, connection);
-            foreach (var param in parameters)
+            // If wo_id is not provided, query for the most recent/current work order for this user
+            int? actualWoId = woId;
+            DateTime? woStartDateTime = null;
+            DateTime? woEndDateTime = null;
+
+            // Get work order location for distance/travel time calculations
+            string? woAddress = null;
+
+            if (!woId.HasValue || woId.Value == 0)
             {
-                command.Parameters.AddWithValue(param.Key, param.Value);
+                const string findWoSql = @"
+                    SELECT TOP 1 wo.wo_id, wo.wo_startdatetime, wo.wo_enddatetime, 
+                           LTRIM(RTRIM(COALESCE(a.a_address1, ''))) + ', ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_city, ''))) + ', ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_state, ''))) + ' ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_zip, ''))) as wo_address
+                    FROM servicerequest sr
+                    INNER JOIN workorder wo ON sr.sr_id = wo.sr_id
+                    INNER JOIN xrefworkorderuser xwou ON wo.wo_id = xwou.wo_id
+                    LEFT JOIN location l ON sr.l_id = l.l_id
+                    LEFT JOIN address a ON l.a_id = a.a_id
+                    WHERE xwou.u_id = @u_id
+                      AND wo.wo_startdatetime >= DATEADD(HOUR, -12, GETDATE())
+                      AND wo.wo_startdatetime <= DATEADD(HOUR, 24, GETDATE())
+                    ORDER BY ABS(DATEDIFF(SECOND, wo.wo_startdatetime, GETDATE()))";
+
+                using var findWoCommand = new SqlCommand(findWoSql, connection);
+                findWoCommand.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+
+                using var reader = await findWoCommand.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    actualWoId = reader.GetInt32(0);
+                    woStartDateTime = !reader.IsDBNull(1) ? reader.GetDateTime(1) : (DateTime?)null;
+                    woEndDateTime = !reader.IsDBNull(2) ? reader.GetDateTime(2) : (DateTime?)null;
+                    woAddress = !reader.IsDBNull(3) ? reader.GetString(3) : null;
+                    
+                    _logger.LogInformation("Found work order {WoId} for user {UserId} with start time {StartTime}, location: {WoAddress}", 
+                        actualWoId, userId, woStartDateTime, woAddress);
+                }
+                else
+                {
+                    _logger.LogWarning("No work order found for user {UserId} within time window", userId);
+                }
             }
+            else
+            {
+                // Work order was provided, get its location details
+                const string getWoLocationSql = @"
+                    SELECT LTRIM(RTRIM(COALESCE(a.a_address1, ''))) + ', ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_city, ''))) + ', ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_state, ''))) + ' ' + 
+                           LTRIM(RTRIM(COALESCE(a.a_zip, ''))) as wo_address,
+                           wo.wo_startdatetime, wo.wo_enddatetime
+                    FROM workorder wo
+                    INNER JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                    LEFT JOIN location l ON sr.l_id = l.l_id
+                    LEFT JOIN address a ON l.a_id = a.a_id
+                    WHERE wo.wo_id = @wo_id";
+
+                using var getWoCommand = new SqlCommand(getWoLocationSql, connection);
+                getWoCommand.Parameters.Add("@wo_id", System.Data.SqlDbType.Int).Value = woId.Value;
+
+                using var reader = await getWoCommand.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    woAddress = !reader.IsDBNull(0) ? reader.GetString(0) : null;
+                    woStartDateTime = !reader.IsDBNull(1) ? reader.GetDateTime(1) : (DateTime?)null;
+                    woEndDateTime = !reader.IsDBNull(2) ? reader.GetDateTime(2) : (DateTime?)null;
+                    actualWoId = woId;
+                }
+            }
+
+            // Retrieve Fleetmatics GPS coordinates
+            decimal? latFleetmatics = null;
+            decimal? lonFleetmatics = null;
+            try
+            {
+                // Query for user's vehicle number
+                const string vehicleSql = "SELECT u_vehiclenumber FROM [user] WHERE u_id = @u_id";
+                using var vehicleCommand = new SqlCommand(vehicleSql, connection);
+                vehicleCommand.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+
+                var vehicleNumber = await vehicleCommand.ExecuteScalarAsync() as string;
+
+                if (!string.IsNullOrWhiteSpace(vehicleNumber))
+                {
+                    _logger.LogInformation("Retrieving Fleetmatics GPS for user {UserId}, vehicle {VehicleNumber}", userId, vehicleNumber);
+
+                    // Call Fleetmatics API to get vehicle location
+                    var vehicleLocations = await _fleetmaticsService.GetVehicleLocationsAsync(new List<string> { vehicleNumber });
+
+                    if (vehicleLocations != null && vehicleLocations.Count > 0)
+                    {
+                        var location = vehicleLocations[0];
+                        latFleetmatics = (decimal?)location.Latitude;
+                        lonFleetmatics = (decimal?)location.Longitude;
+
+                        _logger.LogInformation("Retrieved Fleetmatics GPS for vehicle {VehicleNumber}: Lat {Lat}, Lon {Lon}", 
+                            vehicleNumber, latFleetmatics, lonFleetmatics);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No Fleetmatics location data returned for vehicle {VehicleNumber}", vehicleNumber);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("No vehicle number assigned for user {UserId}, skipping Fleetmatics lookup", userId);
+                }
+            }
+            catch (Exception fleetEx)
+            {
+                // Log error but don't fail the entire operation
+                _logger.LogError(fleetEx, "Error retrieving Fleetmatics GPS for user {UserId}, continuing with time tracking insert", userId);
+            }
+
+            // Calculate time available based on ttd_type
+            int? timeAvailableMinutes = null;
+            
+            if (!string.IsNullOrEmpty(ttdType))
+            {
+                var currentUtcTime = DateTime.UtcNow;
+                
+                if ((ttdType == "CheckIn" || ttdType == "ClockIn" || ttdType == "CheckedInPeriodic" || ttdType == "ClockedInPeriodic") && woStartDateTime.HasValue)
+                {
+                    // Calculate difference: WO Start - Current (positive = early, negative = late)
+                    var timeDiff = woStartDateTime.Value - currentUtcTime;
+                    timeAvailableMinutes = (int)Math.Round(timeDiff.TotalMinutes);
+                    
+                    _logger.LogInformation("Time available calculation for {Type}: {Minutes} minutes (WO Start: {WoStart}, Current: {Current})", 
+                        ttdType, timeAvailableMinutes, woStartDateTime.Value, currentUtcTime);
+                }
+                else if ((ttdType == "CheckOut" || ttdType == "ClockOut") && woEndDateTime.HasValue)
+                {
+                    // Calculate difference: Current - WO End (positive = late, negative = early)
+                    var timeDiff = currentUtcTime - woEndDateTime.Value;
+                    timeAvailableMinutes = (int)Math.Round(timeDiff.TotalMinutes);
+                    
+                    _logger.LogInformation("Time available calculation for {Type}: {Minutes} minutes (Current: {Current}, WO End: {WoEnd})", 
+                        ttdType, timeAvailableMinutes, currentUtcTime, woEndDateTime.Value);
+                }
+            }
+
+            // Calculate distances and travel times using Google Maps
+            decimal? distanceBrowserMiles = null;
+            decimal? distanceFleetmaticsMiles = null;
+            int? travelTimeBrowserMinutes = null;
+            int? travelTimeFleetmaticsMinutes = null;
+
+            try
+            {
+                // Only calculate if we have work order address and at least one set of coordinates
+                if (!string.IsNullOrWhiteSpace(woAddress) && (latBrowser.HasValue || latFleetmatics.HasValue))
+                {
+                    _logger.LogInformation("Calculating distances to work order address: {WoAddress}", woAddress);
+
+                    // Calculate browser-based distance and travel time
+                    if (latBrowser.HasValue && lonBrowser.HasValue)
+                    {
+                        try
+                        {
+                            string browserLatLon = $"{latBrowser.Value},{lonBrowser.Value}";
+                            var browserResult = await _googleMapsService.GetDistanceAndDurationAsync(browserLatLon, woAddress);
+
+                            if (browserResult != null && browserResult.Status == "OK")
+                            {
+                                // Convert meters to miles (1 meter = 0.000621371 miles)
+                                distanceBrowserMiles = (decimal)(browserResult.DistanceMeters * 0.000621371);
+                                // Convert seconds to minutes (rounded)
+                                travelTimeBrowserMinutes = (int)Math.Round(browserResult.DurationSeconds / 60.0);
+
+                                _logger.LogInformation("Browser distance calculation: {Distance} miles, {Duration} minutes (from {Origin} to {Destination})", 
+                                    distanceBrowserMiles, travelTimeBrowserMinutes, browserLatLon, woAddress);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Google Maps API returned status {Status} for browser coordinates", browserResult?.Status);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error calculating browser distance and travel time");
+                        }
+                    }
+
+                    // Calculate Fleetmatics-based distance and travel time
+                    if (latFleetmatics.HasValue && lonFleetmatics.HasValue)
+                    {
+                        try
+                        {
+                            string fleetmaticsLatLon = $"{latFleetmatics.Value},{lonFleetmatics.Value}";
+                            var fleetmaticsResult = await _googleMapsService.GetDistanceAndDurationAsync(fleetmaticsLatLon, woAddress);
+
+                            if (fleetmaticsResult != null && fleetmaticsResult.Status == "OK")
+                            {
+                                // Convert meters to miles (1 meter = 0.000621371 miles)
+                                distanceFleetmaticsMiles = (decimal)(fleetmaticsResult.DistanceMeters * 0.000621371);
+                                // Convert seconds to minutes (rounded)
+                                travelTimeFleetmaticsMinutes = (int)Math.Round(fleetmaticsResult.DurationSeconds / 60.0);
+
+                                _logger.LogInformation("Fleetmatics distance calculation: {Distance} miles, {Duration} minutes (from {Origin} to {Destination})", 
+                                    distanceFleetmaticsMiles, travelTimeFleetmaticsMinutes, fleetmaticsLatLon, woAddress);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Google Maps API returned status {Status} for Fleetmatics coordinates", fleetmaticsResult?.Status);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error calculating Fleetmatics distance and travel time");
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Skipping distance calculations - work order address or GPS coordinates not available. WO Address: {WoAddress}, Browser GPS: {BrowserGps}, Fleetmatics GPS: {FleetmaticsGps}", 
+                        woAddress, latBrowser.HasValue && lonBrowser.HasValue, latFleetmatics.HasValue && lonFleetmatics.HasValue);
+                }
+            }
+            catch (Exception distanceEx)
+            {
+                // Log error but don't fail the entire operation
+                _logger.LogError(distanceEx, "Error calculating distances and travel times, continuing with time tracking insert");
+            }
+
+            // Insert time tracking detail with the resolved work order information, GPS data, and distance/travel time data
+            const string sql = @"
+                INSERT INTO timetrackingdetail (u_id, ttt_id, wo_id, ttd_insertdatetime, ttd_lat_browser, ttd_lon_browser, ttd_lat_fleetmatics, ttd_lon_fleetmatics, ttd_type, wo_startdatetime, wo_enddatetime, ttd_distanceinmilesbrowser, ttd_distanceinmilesfleetmatics, ttd_traveltimeinminutesbrowser, ttd_traveltimeinminutesfleetmatics)
+                VALUES (@u_id, @ttt_id, @wo_id, @ttd_insertdatetime, @ttd_lat_browser, @ttd_lon_browser, @ttd_lat_fleetmatics, @ttd_lon_fleetmatics, @ttd_type, @wo_startdatetime, @wo_enddatetime, @ttd_distanceinmilesbrowser, @ttd_distanceinmilesfleetmatics, @ttd_traveltimeinminutesbrowser, @ttd_traveltimeinminutesfleetmatics)";
+
+            using var command = new SqlCommand(sql, connection);
+            
+            // Add parameters with proper types
+            command.Parameters.Add("@u_id", System.Data.SqlDbType.Int).Value = userId;
+            command.Parameters.Add("@ttt_id", System.Data.SqlDbType.Int).Value = tttId;
+            command.Parameters.Add("@wo_id", System.Data.SqlDbType.Int).Value = actualWoId.HasValue ? (object)actualWoId.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_insertdatetime", System.Data.SqlDbType.DateTime).Value = DateTime.UtcNow;
+            command.Parameters.Add("@ttd_lat_browser", System.Data.SqlDbType.Decimal).Value = latBrowser.HasValue ? (object)latBrowser.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lon_browser", System.Data.SqlDbType.Decimal).Value = lonBrowser.HasValue ? (object)lonBrowser.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lat_fleetmatics", System.Data.SqlDbType.Decimal).Value = latFleetmatics.HasValue ? (object)latFleetmatics.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_lon_fleetmatics", System.Data.SqlDbType.Decimal).Value = lonFleetmatics.HasValue ? (object)lonFleetmatics.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_type", System.Data.SqlDbType.NVarChar, 50).Value = !string.IsNullOrEmpty(ttdType) ? (object)ttdType : DBNull.Value;
+            command.Parameters.Add("@wo_startdatetime", System.Data.SqlDbType.DateTime).Value = woStartDateTime.HasValue ? (object)woStartDateTime.Value : DBNull.Value;
+            command.Parameters.Add("@wo_enddatetime", System.Data.SqlDbType.DateTime).Value = woEndDateTime.HasValue ? (object)woEndDateTime.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_distanceinmilesbrowser", System.Data.SqlDbType.Decimal).Value = distanceBrowserMiles.HasValue ? (object)distanceBrowserMiles.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_distanceinmilesfleetmatics", System.Data.SqlDbType.Decimal).Value = distanceFleetmaticsMiles.HasValue ? (object)distanceFleetmaticsMiles.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_traveltimeinminutesbrowser", System.Data.SqlDbType.Int).Value = travelTimeBrowserMinutes.HasValue ? (object)travelTimeBrowserMinutes.Value : DBNull.Value;
+            command.Parameters.Add("@ttd_traveltimeinminutesfleetmatics", System.Data.SqlDbType.Int).Value = travelTimeFleetmaticsMinutes.HasValue ? (object)travelTimeFleetmaticsMinutes.Value : DBNull.Value;
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
             stopwatch.Stop();
@@ -6036,7 +6362,7 @@ FROM DailyTechSummary;
             {
                 Name = "DataService",
                 Description = "InsertTimeTrackingDetail",
-                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {woId}",
+                Detail = $"Inserted time tracking detail for User {userId}, TTT_ID {tttId}, WO_ID {actualWoId} (original: {woId}), Browser: {latBrowser}/{lonBrowser} ({distanceBrowserMiles}mi, {travelTimeBrowserMinutes}min), Fleetmatics: {latFleetmatics}/{lonFleetmatics} ({distanceFleetmaticsMiles}mi, {travelTimeFleetmaticsMinutes}min), Type: {ttdType}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
