@@ -6556,7 +6556,7 @@ FROM DailyTechSummary;
             {
                 // Get Materials Markup
                 const string markupSql = @"
-                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_insertdatetime, mm_modifieddatetime
+                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime, mm_modifieddatetime
                     FROM MaterialsMarkup
                     WHERE xccc_id = @xcccId
                     ORDER BY mm_from";
@@ -6577,8 +6577,9 @@ FROM DailyTechSummary;
                                 FromPrice = reader.GetInt32(1),
                                 ToPrice = reader.GetInt32(2),
                                 MarkupPercentage = reader.GetInt32(3),
-                                InsertDateTime = reader.GetDateTime(4),
-                                ModifiedDateTime = reader.IsDBNull(5) ? null : reader.GetDateTime(5)
+                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                                InsertDateTime = reader.GetDateTime(5),
+                                ModifiedDateTime = reader.IsDBNull(6) ? null : reader.GetDateTime(6)
                             });
                         }
                     }
@@ -6759,8 +6760,8 @@ FROM DailyTechSummary;
         try
         {
             const string sql = @"
-                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_insertdatetime)
-                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, GETDATE());
+                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime)
+                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             using (var connection = new SqlConnection(connectionString))
@@ -6770,6 +6771,7 @@ FROM DailyTechSummary;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
                 command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
 
                 await connection.OpenAsync();
                 var newId = (int?)await command.ExecuteScalarAsync();
@@ -6779,7 +6781,7 @@ FROM DailyTechSummary;
                 {
                     Name = "DataService",
                     Description = "CreateMaterialsMarkup",
-                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%",
+                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
@@ -6837,6 +6839,7 @@ FROM DailyTechSummary;
                     mm_from = @fromPrice,
                     mm_to = @toPrice,
                     mm_markup = @markupPercentage,
+                    mm_markuphighquantity = @markupHighQuantity,
                     mm_modifieddatetime = GETDATE()
                 WHERE mm_id = @mmId";
 
@@ -6847,6 +6850,7 @@ FROM DailyTechSummary;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
                 command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
@@ -6856,7 +6860,7 @@ FROM DailyTechSummary;
                 {
                     Name = "DataService",
                     Description = "UpdateMaterialsMarkup",
-                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%",
+                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
