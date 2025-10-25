@@ -6977,8 +6977,8 @@ FROM DailyTechSummary;
 
                 // Step 3: Copy materials markup from template
                 const string insertSql = @"
-                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup)
-                    SELECT @xcccId, mm_from, mm_to, mm_markup
+                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity)
+                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity
                     FROM MaterialsMarkup
                     WHERE xccc_id = @templateId";
 
