@@ -6387,4 +6387,636 @@ FROM DailyTechSummary;
             throw;
         }
     }
+
+    #region Company Administration
+
+    public async Task<List<CompanyListDto>> GetCallCenterCompaniesAsync(int callCenterId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var companies = new List<CompanyListDto>();
+            const string sql = @"
+                SELECT 
+                    xccc.xccc_id,
+                    xccc.c_id as company_id,
+                    xccc.cc_id as callcenter_id,
+                    c.c_name as company_name,
+                    xccc.xccc_active
+                FROM xrefCompanyCallCenter xccc
+                INNER JOIN Company c ON xccc.c_id = c.c_id
+                WHERE xccc.cc_id = @callCenterId
+                ORDER BY c.c_name";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.AddWithValue("@callCenterId", callCenterId);
+                await connection.OpenAsync();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        companies.Add(new CompanyListDto
+                        {
+                            XcccId = reader.GetInt32(0),
+                            CompanyId = reader.GetInt32(1),
+                            CallCenterId = reader.GetInt32(2),
+                            CompanyName = reader.GetString(3),
+                            Active = reader.GetBoolean(4)
+                        });
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterCompanies",
+                Detail = $"Retrieved {companies.Count} companies for call center {callCenterId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return companies;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting companies for call center {CallCenterId}", callCenterId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterCompanies",
+                Detail = $"Error retrieving companies for call center {callCenterId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<CompanyDetailDto?> GetCompanyDetailAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            CompanyDetailDto? companyDetail = null;
+
+            const string companySql = @"
+                SELECT 
+                    xccc.xccc_id,
+                    xccc.c_id,
+                    xccc.cc_id,
+                    c.c_name,
+                    cc.cc_name,
+                    xccc.xccc_tripcharge,
+                    xccc.br_id,
+                    xccc.terms_id,
+                    xccc.xccc_taxexempt,
+                    xccc.xccc_minimumlaborchargeinminutes,
+                    xccc.xccc_markuppercentage,
+                    xccc.xccc_markuppercentagesupplier,
+                    xccc.xccc_active,
+                    xccc.xccc_firmquote,
+                    xccc.xccc_invoicedateshow,
+                    xccc.xccc_ivrrequestnumber,
+                    xccc.xccc_clientrep,
+                    xccc.xccc_licenserep,
+                    xccc.xccc_invoiceextratext,
+                    xccc.xccc_note,
+                    xccc.xccc_insertdatetime,
+                    xccc.xccc_modifieddatetime,
+                    br.br_description,
+                    br.br_roundtominute,
+                    t.terms_description,
+                    t.terms_numberofdays
+                FROM xrefCompanyCallCenter xccc
+                INNER JOIN Company c ON xccc.c_id = c.c_id
+                INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
+                LEFT JOIN BillableRule br ON xccc.br_id = br.br_id
+                LEFT JOIN Terms t ON xccc.terms_id = t.terms_id
+                WHERE xccc.xccc_id = @xcccId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(companySql, connection))
+            {
+                command.Parameters.AddWithValue("@xcccId", xcccId);
+                await connection.OpenAsync();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        companyDetail = new CompanyDetailDto
+                        {
+                            XcccId = reader.GetInt32(0),
+                            CompanyId = reader.GetInt32(1),
+                            CallCenterId = reader.GetInt32(2),
+                            CompanyName = reader.GetString(3),
+                            CallCenterName = reader.GetString(4),
+                            TripCharge = reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+                            BillableRuleId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                            TermsId = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                            TaxExempt = reader.GetBoolean(8),
+                            MinimumLaborChargeMinutes = reader.GetInt32(9),
+                            MarkupPercentage = reader.GetInt32(10),
+                            MarkupPercentageSupplier = reader.GetInt32(11),
+                            Active = reader.GetBoolean(12),
+                            FirmQuote = reader.GetBoolean(13),
+                            InvoiceDateShow = reader.GetBoolean(14),
+                            IvrRequestNumber = reader.GetBoolean(15),
+                            ClientRepresentative = reader.IsDBNull(16) ? null : reader.GetString(16),
+                            LicenseRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
+                            InvoiceExtraText = reader.IsDBNull(18) ? null : reader.GetString(18),
+                            Note = reader.IsDBNull(19) ? null : reader.GetString(19),
+                            InsertDateTime = reader.GetDateTime(20),
+                            ModifiedDateTime = reader.IsDBNull(21) ? null : reader.GetDateTime(21),
+                            BillableRuleDescription = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            TermsDescription = reader.IsDBNull(24) ? null : reader.GetString(24),
+                            TermsNumberOfDays = reader.IsDBNull(25) ? 0 : reader.GetInt32(25)
+                        };
+                    }
+                }
+            }
+
+            if (companyDetail != null)
+            {
+                // Get Materials Markup
+                const string markupSql = @"
+                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime, mm_modifieddatetime
+                    FROM MaterialsMarkup
+                    WHERE xccc_id = @xcccId
+                    ORDER BY mm_from";
+
+                using (var connection = new SqlConnection(connectionString))
+                using (var command = new SqlCommand(markupSql, connection))
+                {
+                    command.Parameters.AddWithValue("@xcccId", xcccId);
+                    await connection.OpenAsync();
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            companyDetail.MaterialsMarkup.Add(new MaterialsMarkupDto
+                            {
+                                MmId = reader.GetInt32(0),
+                                XcccId = xcccId,
+                                FromPrice = reader.GetInt32(1),
+                                ToPrice = reader.GetInt32(2),
+                                MarkupPercentage = reader.GetInt32(3),
+                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                                InsertDateTime = reader.GetDateTime(5),
+                                ModifiedDateTime = reader.IsDBNull(6) ? null : reader.GetDateTime(6)
+                            });
+                        }
+                    }
+                }
+
+                // Get Billable Rules
+                const string billableRuleSql = @"
+                    SELECT br_id, br_description, br_roundtominute, br_order
+                    FROM BillableRule
+                    ORDER BY br_order";
+
+                using (var connection = new SqlConnection(connectionString))
+                using (var command = new SqlCommand(billableRuleSql, connection))
+                {
+                    await connection.OpenAsync();
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            companyDetail.BillableRules.Add(new BillableRuleDto
+                            {
+                                BrId = reader.GetInt32(0),
+                                Description = reader.GetString(1),
+                                RoundToMinute = reader.GetInt32(2),
+                                Order = reader.GetInt32(3)
+                            });
+                        }
+                    }
+                }
+
+                // Get Terms
+                const string termsSql = @"
+                    SELECT terms_id, terms_description, terms_numberofdays, terms_order
+                    FROM Terms
+                    ORDER BY terms_order";
+
+                using (var connection = new SqlConnection(connectionString))
+                using (var command = new SqlCommand(termsSql, connection))
+                {
+                    await connection.OpenAsync();
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            companyDetail.Terms.Add(new TermsDto
+                            {
+                                TermsId = reader.GetInt32(0),
+                                Description = reader.GetString(1),
+                                NumberOfDays = reader.GetInt32(2),
+                                Order = reader.GetInt32(3)
+                            });
+                        }
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyDetail",
+                Detail = $"Retrieved company detail for xccc_id {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return companyDetail;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting company detail for xccc_id {XcccId}", xcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyDetail",
+                Detail = $"Error retrieving company detail for xccc_id {xcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateCompanyGeneralInfoAsync(UpdateCompanyGeneralInfoRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                UPDATE xrefCompanyCallCenter
+                SET 
+                    xccc_tripcharge = @tripcharge,
+                    br_id = @billableRuleId,
+                    terms_id = @termsId,
+                    xccc_taxexempt = @taxexempt,
+                    xccc_minimumlaborchargeinminutes = @minimumlaborcharge,
+                    xccc_markuppercentage = @markuppercentage,
+                    xccc_markuppercentagesupplier = @markuppercentagesupplier,
+                    xccc_active = @active,
+                    xccc_firmquote = @firmquote,
+                    xccc_invoicedateshow = @invoicedateshow,
+                    xccc_ivrrequestnumber = @ivrrequestnumber,
+                    xccc_clientrep = @clientrep,
+                    xccc_licenserep = @licenserep,
+                    xccc_invoiceextratext = @invoiceextratext,
+                    xccc_note = @note,
+                    xccc_modifieddatetime = GETDATE()
+                WHERE xccc_id = @xcccId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
+                command.Parameters.Add("@tripcharge", SqlDbType.Decimal).Value = request.TripCharge.HasValue ? (object)request.TripCharge.Value : DBNull.Value;
+                command.Parameters.Add("@billableRuleId", SqlDbType.Int).Value = request.BillableRuleId.HasValue ? (object)request.BillableRuleId.Value : DBNull.Value;
+                command.Parameters.Add("@termsId", SqlDbType.Int).Value = request.TermsId.HasValue ? (object)request.TermsId.Value : DBNull.Value;
+                command.Parameters.Add("@taxexempt", SqlDbType.Bit).Value = request.TaxExempt;
+                command.Parameters.Add("@minimumlaborcharge", SqlDbType.Int).Value = request.MinimumLaborChargeMinutes;
+                command.Parameters.Add("@markuppercentage", SqlDbType.Int).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Int).Value = request.MarkupPercentageSupplier;
+                command.Parameters.Add("@active", SqlDbType.Bit).Value = request.Active;
+                command.Parameters.Add("@firmquote", SqlDbType.Bit).Value = request.FirmQuote;
+                command.Parameters.Add("@invoicedateshow", SqlDbType.Bit).Value = request.InvoiceDateShow;
+                command.Parameters.Add("@ivrrequestnumber", SqlDbType.Bit).Value = request.IvrRequestNumber;
+                command.Parameters.Add("@clientrep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.ClientRepresentative) ? (object)request.ClientRepresentative : DBNull.Value;
+                command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
+                command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
+                command.Parameters.Add("@note", SqlDbType.VarChar, 8000).Value = !string.IsNullOrEmpty(request.Note) ? (object)request.Note : DBNull.Value;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateCompanyGeneralInfo",
+                    Detail = $"Updated company general info for xccc_id {request.XcccId}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company general info for xccc_id {XcccId}", request.XcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyGeneralInfo",
+                Detail = $"Error updating company general info for xccc_id {request.XcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateMaterialsMarkupAsync(CreateMaterialsMarkupRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime)
+                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() as int)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
+                command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
+                command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+
+                await connection.OpenAsync();
+                var newId = (int?)await command.ExecuteScalarAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateMaterialsMarkup",
+                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return newId;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating materials markup for xccc_id {XcccId}", request.XcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateMaterialsMarkup",
+                Detail = $"Error creating materials markup for xccc_id {request.XcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateMaterialsMarkupAsync(UpdateMaterialsMarkupRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // Get the xccc_id for this markup record
+            const string getXcccSql = "SELECT xccc_id FROM MaterialsMarkup WHERE mm_id = @mmId";
+            int xcccId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getXcccSql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = request.MmId;
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"Materials markup record {request.MmId} not found");
+                }
+                xcccId = (int)result;
+            }
+
+            const string sql = @"
+                UPDATE MaterialsMarkup
+                SET 
+                    mm_from = @fromPrice,
+                    mm_to = @toPrice,
+                    mm_markup = @markupPercentage,
+                    mm_markuphighquantity = @markupHighQuantity,
+                    mm_modifieddatetime = GETDATE()
+                WHERE mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = request.MmId;
+                command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
+                command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateMaterialsMarkup",
+                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating materials markup mm_id {MmId}", request.MmId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateMaterialsMarkup",
+                Detail = $"Error updating materials markup mm_id {request.MmId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteMaterialsMarkupAsync(int mmId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = "DELETE FROM MaterialsMarkup WHERE mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = mmId;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "DeleteMaterialsMarkup",
+                    Detail = $"Deleted materials markup mm_id {mmId}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error deleting materials markup mm_id {MmId}", mmId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteMaterialsMarkup",
+                Detail = $"Error deleting materials markup mm_id {mmId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> ResetMaterialsMarkupToDefaultAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Step 1: Delete existing materials markup for this company/call center
+                const string deleteSql = "DELETE FROM MaterialsMarkup WHERE xccc_id = @xcccId";
+                using (var deleteCommand = new SqlCommand(deleteSql, connection))
+                {
+                    deleteCommand.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                    await deleteCommand.ExecuteNonQueryAsync();
+                }
+
+                // Step 2: Get template ID from config settings
+                const string configSql = "SELECT cs_value FROM ConfigSetting WHERE cs_type = 'Config' AND cs_identifier = 'MaterialsMarkupTemplateID'";
+                string templateIdStr = null;
+                using (var configCommand = new SqlCommand(configSql, connection))
+                {
+                    var result = await configCommand.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        throw new InvalidOperationException("MaterialsMarkupTemplateID config setting not found");
+                    }
+                    templateIdStr = result.ToString();
+                }
+
+                if (!int.TryParse(templateIdStr, out var templateId))
+                {
+                    throw new InvalidOperationException($"Invalid MaterialsMarkupTemplateID value: {templateIdStr}");
+                }
+
+                // Step 3: Copy materials markup from template
+                const string insertSql = @"
+                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity)
+                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity
+                    FROM MaterialsMarkup
+                    WHERE xccc_id = @templateId";
+
+                using (var insertCommand = new SqlCommand(insertSql, connection))
+                {
+                    insertCommand.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                    insertCommand.Parameters.Add("@templateId", SqlDbType.Int).Value = templateId;
+                    await insertCommand.ExecuteNonQueryAsync();
+                }
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "ResetMaterialsMarkupToDefault",
+                    Detail = $"Reset materials markup to default template (xccc_id: {xcccId}, template_id: {templateId})",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error resetting materials markup to default for xccc_id {XcccId}", xcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "ResetMaterialsMarkupToDefault",
+                Detail = $"Error resetting materials markup to default for xccc_id {xcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    #endregion
 }

@@ -117,4 +117,13 @@ public interface IDataService
     
     // Time Tracking Detail methods
     Task<bool> InsertTimeTrackingDetailAsync(int userId, int tttId, int? woId, decimal? latBrowser = null, decimal? lonBrowser = null, string? ttdType = null);
+    
+    // Company Administration methods
+    Task<List<CompanyListDto>> GetCallCenterCompaniesAsync(int callCenterId);
+    Task<CompanyDetailDto?> GetCompanyDetailAsync(int xcccId);
+    Task<bool> UpdateCompanyGeneralInfoAsync(UpdateCompanyGeneralInfoRequest request);
+    Task<int?> CreateMaterialsMarkupAsync(CreateMaterialsMarkupRequest request);
+    Task<bool> UpdateMaterialsMarkupAsync(UpdateMaterialsMarkupRequest request);
+    Task<bool> DeleteMaterialsMarkupAsync(int mmId);
+    Task<bool> ResetMaterialsMarkupToDefaultAsync(int xcccId);
 }

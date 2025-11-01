@@ -4516,5 +4516,418 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Company Administration
+
+    [HttpGet("companies/callcenter/{callCenterId}")]
+    public async Task<ActionResult<ApiResponse<List<CompanyListDto>>>> GetCallCenterCompanies(int callCenterId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var companies = await _dataService.GetCallCenterCompaniesAsync(callCenterId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCallCenterCompanies", $"Retrieved {companies.Count} companies for call center {callCenterId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CompanyListDto>>
+            {
+                Success = true,
+                Message = "Companies retrieved successfully",
+                Data = companies,
+                Count = companies.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving companies for call center {CallCenterId}", callCenterId);
+            await LogErrorAsync("GetCallCenterCompanies", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to retrieve companies"
+            });
+        }
+    }
+
+    [HttpGet("companies/detail/{xcccId}")]
+    public async Task<ActionResult<ApiResponse<CompanyDetailDto>>> GetCompanyDetail(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var companyDetail = await _dataService.GetCompanyDetailAsync(xcccId);
+            
+            if (companyDetail == null)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = $"Company with ID {xcccId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyDetail", $"Retrieved company detail for xccc_id {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CompanyDetailDto>
+            {
+                Success = true,
+                Message = "Company detail retrieved successfully",
+                Data = companyDetail,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving company detail for xccc_id {XcccId}", xcccId);
+            await LogErrorAsync("GetCompanyDetail", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to retrieve company detail"
+            });
+        }
+    }
+
+    [HttpPut("companies/detail")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyGeneralInfo([FromBody] UpdateCompanyGeneralInfoRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Validate request
+            if (request?.XcccId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid company ID"
+                });
+            }
+
+            var result = await _dataService.UpdateCompanyGeneralInfoAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("UpdateCompanyGeneralInfo", $"Updated company general info for xccc_id {request.XcccId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Company general info updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to update company general info"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company general info");
+            await LogErrorAsync("UpdateCompanyGeneralInfo", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to update company general info"
+            });
+        }
+    }
+
+    [HttpPost("materials-markup")]
+    public async Task<ActionResult<ApiResponse<int>>> CreateMaterialsMarkup([FromBody] CreateMaterialsMarkupRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Validate request
+            if (request?.XcccId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid company ID"
+                });
+            }
+
+            if (request.FromPrice < 0 || request.ToPrice < 0 || request.ToPrice <= request.FromPrice)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid price range: ToPrice must be greater than FromPrice"
+                });
+            }
+
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Markup percentage must be between 0 and 100"
+                });
+            }
+
+            var newId = await _dataService.CreateMaterialsMarkupAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (newId.HasValue)
+            {
+                await LogOperationAsync("CreateMaterialsMarkup", $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<int>
+                {
+                    Success = true,
+                    Message = "Materials markup created successfully",
+                    Data = newId.Value,
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to create materials markup"
+                });
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            stopwatch.Stop();
+            _logger.LogWarning(ex, "Validation error creating materials markup");
+            
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating materials markup for xccc_id {XcccId}", request?.XcccId);
+            await LogErrorAsync("CreateMaterialsMarkup", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to create materials markup"
+            });
+        }
+    }
+
+    [HttpPut("materials-markup")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateMaterialsMarkup([FromBody] UpdateMaterialsMarkupRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Validate request
+            if (request?.MmId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid materials markup ID"
+                });
+            }
+
+            if (request.FromPrice < 0 || request.ToPrice < 0 || request.ToPrice <= request.FromPrice)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid price range: ToPrice must be greater than FromPrice"
+                });
+            }
+
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Markup percentage must be between 0 and 100"
+                });
+            }
+
+            var result = await _dataService.UpdateMaterialsMarkupAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("UpdateMaterialsMarkup", $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Materials markup updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to update materials markup"
+                });
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            stopwatch.Stop();
+            _logger.LogWarning(ex, "Validation error updating materials markup");
+            
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating materials markup mm_id {MmId}", request?.MmId);
+            await LogErrorAsync("UpdateMaterialsMarkup", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to update materials markup"
+            });
+        }
+    }
+
+    [HttpDelete("materials-markup/{mmId}")]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteMaterialsMarkup(int mmId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (mmId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid materials markup ID"
+                });
+            }
+
+            var result = await _dataService.DeleteMaterialsMarkupAsync(mmId);
+            
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("DeleteMaterialsMarkup", $"Deleted materials markup mm_id {mmId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Materials markup deleted successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to delete materials markup"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error deleting materials markup mm_id {MmId}", mmId);
+            await LogErrorAsync("DeleteMaterialsMarkup", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to delete materials markup"
+            });
+        }
+    }
+
+    [HttpPost("materials-markup/reset/{xcccId}")]
+    public async Task<ActionResult<ApiResponse<object>>> ResetMaterialsMarkupToDefault(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (xcccId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid company call center ID"
+                });
+            }
+
+            var result = await _dataService.ResetMaterialsMarkupToDefaultAsync(xcccId);
+            
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("ResetMaterialsMarkupToDefault", $"Reset materials markup to default for xccc_id {xcccId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Materials markup reset to default successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to reset materials markup"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error resetting materials markup to default for xccc_id {XcccId}", xcccId);
+            await LogErrorAsync("ResetMaterialsMarkupToDefault", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to reset materials markup to default"
+            });
+        }
+    }
+
+    #endregion
+
     #endregion
 }
