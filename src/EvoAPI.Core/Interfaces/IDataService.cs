@@ -126,4 +126,9 @@ public interface IDataService
     Task<bool> UpdateMaterialsMarkupAsync(UpdateMaterialsMarkupRequest request);
     Task<bool> DeleteMaterialsMarkupAsync(int mmId);
     Task<bool> ResetMaterialsMarkupToDefaultAsync(int xcccId);
+    
+    // User Attachment Type methods
+    Task<DataTable> GetAllUserAttachmentTypesAsync();
+    Task<int?> CreateUserAttachmentTypeAsync(CreateUserAttachmentTypeRequest request);
+    Task<bool> UpdateUserAttachmentTypeAsync(UpdateUserAttachmentTypeRequest request);
 }

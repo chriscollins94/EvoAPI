@@ -3120,6 +3120,26 @@ public class EvoApiController : BaseController
         return callCenters;
     }
 
+    private static List<UserAttachmentTypeDto> ConvertDataTableToUserAttachmentTypes(DataTable dataTable)
+    {
+        var attachmentTypes = new List<UserAttachmentTypeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attachmentType = new UserAttachmentTypeDto
+            {
+                uat_id = Convert.ToInt32(row["uat_id"]),
+                uat_insertdatetime = Convert.ToDateTime(row["uat_insertdatetime"]),
+                uat_modifieddatetime = row["uat_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["uat_modifieddatetime"]) : null,
+                uat_type = row["uat_type"]?.ToString() ?? string.Empty
+            };
+
+            attachmentTypes.Add(attachmentType);
+        }
+
+        return attachmentTypes;
+    }
+
     private static List<AttackPointNoteDto> ConvertDataTableToAttackPointNotes(DataTable dataTable)
     {
         var attackPointNotes = new List<AttackPointNoteDto>();
@@ -4923,6 +4943,215 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "Failed to reset materials markup to default"
+            });
+        }
+    }
+
+    // User Attachment Type endpoints
+    [HttpGet("userattachmenttypes")]
+    public async Task<ActionResult<ApiResponse<List<UserAttachmentTypeDto>>>> GetUserAttachmentTypes()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user attachment types");
+            
+            // Get data from service
+            var dataTable = await _dataService.GetAllUserAttachmentTypesAsync();
+            var attachmentTypes = ConvertDataTableToUserAttachmentTypes(dataTable);
+
+            stopwatch.Stop();
+            
+            // Log successful operation
+            await LogOperationAsync("GetUserAttachmentTypes", $"Retrieved {attachmentTypes.Count} user attachment types", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserAttachmentTypeDto>>
+            {
+                Success = true,
+                Message = "User attachment types retrieved successfully",
+                Data = attachmentTypes,
+                Count = attachmentTypes.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserAttachmentTypes", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user attachment types");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user attachment types",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userattachmenttypes")]
+    public async Task<ActionResult<ApiResponse<UserAttachmentTypeDto>>> CreateUserAttachmentType([FromBody] CreateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user attachment type: {UatType}", request.uat_type);
+            
+            // Validate the request
+            if (string.IsNullOrWhiteSpace(request.uat_type) || request.uat_type.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Attachment type must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.uat_type.Length > 100)
+            {
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Attachment type must be no more than 100 characters",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserAttachmentTypeAsync(request);
+            
+            if (newId.HasValue)
+            {
+                // Create the DTO to return
+                var newAttachmentType = new UserAttachmentTypeDto
+                {
+                    uat_id = newId.Value,
+                    uat_type = request.uat_type,
+                    uat_insertdatetime = DateTime.Now,
+                    uat_modifieddatetime = DateTime.Now
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserAttachmentType", $"Created user attachment type - {request.uat_type} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = true,
+                    Message = "User attachment type created successfully",
+                    Data = newAttachmentType,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserAttachmentType", $"Failed to create user attachment type - {request.uat_type}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user attachment type",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserAttachmentType", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user attachment type {UatType}", request.uat_type);
+            
+            return StatusCode(500, new ApiResponse<UserAttachmentTypeDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user attachment type",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userattachmenttypes/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserAttachmentType(int id, [FromBody] UpdateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user attachment type {Id}", id);
+            
+            // Validate input
+            if (id != request.uat_id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.uat_type) || request.uat_type.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Attachment type must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.uat_type.Length > 100)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Attachment type must be no more than 100 characters",
+                    Count = 0
+                });
+            }
+
+            // Update user attachment type
+            var success = await _dataService.UpdateUserAttachmentTypeAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                // Log successful operation
+                await LogOperationAsync("UpdateUserAttachmentType", $"Updated user attachment type {id} - {request.uat_type}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User attachment type updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User attachment type not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserAttachmentType", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user attachment type {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user attachment type",
+                Count = 0
             });
         }
     }
