@@ -5507,6 +5507,28 @@ FROM DailyTechSummary;
         return 0;
     }
 
+    private static DateTime ConvertToDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return DateTime.MinValue;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return DateTime.MinValue;
+    }
+
+    private static DateTime? ConvertToNullableDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
     public async Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync()
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7202,6 +7224,245 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error updating user attachment type {UatId}", request.uat_id);
+            throw;
+        }
+    }
+
+    // Employee Attachments methods
+    public async Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xua.xua_id,
+                    xua.xua_insertdatetime,
+                    xua.xua_modifieddatetime,
+                    xua.u_id,
+                    xua.att_id,
+                    xua.uat_id,
+                    xua.xua_description,
+                    xua.xua_issuingauthority,
+                    xua.xua_dateexpires,
+                    a.att_filename,
+                    a.att_insertdatetime,
+                    uat.uat_type
+                FROM dbo.xrefuserattachment xua
+                INNER JOIN dbo.attachment a ON xua.att_id = a.att_id
+                INNER JOIN dbo.userattachmenttype uat ON xua.uat_id = uat.uat_id
+                WHERE xua.u_id = @UserId
+                ORDER BY xua.xua_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<EmployeeAttachmentDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new EmployeeAttachmentDto
+                {
+                    xua_id = ConvertToInt(row["xua_id"]),
+                    xua_insertdatetime = ConvertToDateTime(row["xua_insertdatetime"]),
+                    xua_modifieddatetime = ConvertToNullableDateTime(row["xua_modifieddatetime"]),
+                    u_id = ConvertToInt(row["u_id"]),
+                    att_id = ConvertToInt(row["att_id"]),
+                    uat_id = ConvertToInt(row["uat_id"]),
+                    xua_description = row["xua_description"]?.ToString() ?? string.Empty,
+                    xua_issuingauthority = row["xua_issuingauthority"]?.ToString() ?? string.Empty,
+                    xua_dateexpires = row["xua_dateexpires"]?.ToString() ?? string.Empty,
+                    att_filename = row["att_filename"]?.ToString() ?? string.Empty,
+                    att_insertdatetime = ConvertToDateTime(row["att_insertdatetime"]),
+                    uat_type = row["uat_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeAttachments",
+                Detail = $"Retrieved {result.Count} attachments for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeAttachments",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employee attachments for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.xrefuserattachment 
+                (u_id, att_id, uat_id, xua_description, xua_issuingauthority, xua_dateexpires, xua_insertdatetime, xua_modifieddatetime)
+                VALUES 
+                (@UserId, @AttId, @UatId, @Description, @IssuingAuthority, @DateExpires, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@AttId", attachmentId },
+                { "@UatId", request.uat_id },
+                { "@Description", request.description ?? string.Empty },
+                { "@IssuingAuthority", request.xua_issuingauthority ?? string.Empty },
+                { "@DateExpires", request.xua_dateexpires ?? "Not Applicable" }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
+            }
+
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+            int? xuaId = null;
+            if (result != null && int.TryParse(result.ToString(), out var id))
+            {
+                xuaId = id;
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployeeAttachment",
+                Detail = $"Created employee attachment {xuaId} for user {userId} with attachment {attachmentId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return xuaId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployeeAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating employee attachment for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var sql = @"
+                UPDATE dbo.xrefuserattachment 
+                SET 
+                    xua_description = @Description,
+                    uat_id = @UatId,
+                    xua_issuingauthority = @IssuingAuthority,
+                    xua_dateexpires = @DateExpires,
+                    xua_modifieddatetime = GETDATE()";
+
+            // If new attachment provided, update att_id (orphan the old one)
+            if (newAttachmentId.HasValue)
+            {
+                sql += ", att_id = @NewAttId";
+            }
+
+            sql += @" 
+                WHERE xua_id = @XuaId AND u_id = @UserId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuaId", xuaId },
+                { "@UserId", userId },
+                { "@Description", request.description ?? string.Empty },
+                { "@UatId", request.uat_id },
+                { "@IssuingAuthority", request.xua_issuingauthority ?? string.Empty },
+                { "@DateExpires", request.xua_dateexpires ?? "Not Applicable" }
+            };
+
+            if (newAttachmentId.HasValue)
+            {
+                parameters.Add("@NewAttId", newAttachmentId.Value);
+            }
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeAttachment",
+                Detail = $"Updated employee attachment {xuaId} for user {userId}. Rows affected: {rowsAffected}. File replacement: {(newAttachmentId.HasValue ? "Yes" : "No")}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating employee attachment {XuaId} for user {UserId}", xuaId, userId);
             throw;
         }
     }

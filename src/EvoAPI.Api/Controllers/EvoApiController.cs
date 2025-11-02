@@ -5,6 +5,8 @@ using EvoAPI.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Data;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace EvoAPI.Api.Controllers;
 
@@ -17,14 +19,20 @@ public class EvoApiController : BaseController
 
     private readonly IDataService _dataService;
         private readonly ILogger<EvoApiController> _logger;
+        private readonly HttpClient _httpClient;
+        private readonly IConfiguration _configuration;
     
         public EvoApiController(
             IDataService dataService, 
             IAuditService auditService,
-            ILogger<EvoApiController> logger)
+            ILogger<EvoApiController> logger,
+            HttpClient httpClient,
+            IConfiguration configuration)
         {
             _dataService = dataService;
             _logger = logger;
+            _httpClient = httpClient;
+            _configuration = configuration;
             InitializeAuditService(auditService);
         }
     #endregion
@@ -5153,6 +5161,399 @@ public class EvoApiController : BaseController
                 Message = "An error occurred while updating the user attachment type",
                 Count = 0
             });
+        }
+    }
+
+    #endregion
+
+    #region Employee Attachments
+
+    [HttpGet("employees/{id:int}/attachments")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<EmployeeAttachmentDto>>>> GetEmployeeAttachments(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting attachments for employee {EmployeeId}", id);
+            
+            // Get attachments
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetEmployeeAttachments", $"Retrieved {attachments.Count} attachments for employee {id}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<EmployeeAttachmentDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {attachments.Count} attachments",
+                Data = attachments,
+                Count = attachments.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetEmployeeAttachments", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving attachments for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<List<EmployeeAttachmentDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving attachments",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("employees/{id:int}/attachments")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> CreateEmployeeAttachment(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating attachment for employee {EmployeeId}", id);
+
+            // Validate request
+            if (!Request.HasFormContentType)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Request must include multipart form data",
+                    Count = 0
+                });
+            }
+
+            var form = await Request.ReadFormAsync();
+            var file = form.Files.FirstOrDefault();
+
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "No file provided",
+                    Count = 0
+                });
+            }
+
+            // Validate file size (5MB)
+            if (file.Length > 5 * 1024 * 1024)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "File size exceeds 5MB limit",
+                    Count = 0
+                });
+            }
+
+            // Validate file type
+            var allowedMimes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf" };
+            if (!allowedMimes.Contains(file.ContentType))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "File type not allowed. Only images (JPG, PNG, GIF, WEBP) and PDF are allowed.",
+                    Count = 0
+                });
+            }
+
+            // Parse form fields
+            string? description = form["description"];
+            if (!int.TryParse(form["uat_id"], out var uatId))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Invalid or missing attachment type ID",
+                    Count = 0
+                });
+            }
+
+            string? issuingAuthority = form["xua_issuingauthority"];
+            string? dateExpires = form["xua_dateexpires"];
+
+            // TODO: In production, upload file to backend storage (Azure blob, EvoWS, etc)
+            // For now, we'll use the existing EvoWS uploadAttachment flow
+            // This would require integration with the file upload service
+
+            // Create attachment (placeholder - integration point with file upload)
+            int? attachmentId = await UploadFileToAttachmentServiceAsync(file, description);
+
+            if (!attachmentId.HasValue)
+            {
+                return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Failed to upload file",
+                    Count = 0
+                });
+            }
+
+            // Create xrefUserAttachment record
+            var createRequest = new CreateEmployeeAttachmentRequest
+            {
+                description = description ?? string.Empty,
+                uat_id = uatId,
+                xua_issuingauthority = issuingAuthority ?? string.Empty,
+                xua_dateexpires = dateExpires ?? "Not Applicable"
+            };
+
+            var xuaId = await _dataService.CreateEmployeeAttachmentAsync(id, createRequest, attachmentId.Value);
+
+            if (!xuaId.HasValue)
+            {
+                return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Failed to create employee attachment record",
+                    Count = 0
+                });
+            }
+
+            // Retrieve the created attachment
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            var createdAttachment = attachments.FirstOrDefault(a => a.xua_id == xuaId.Value);
+
+            stopwatch.Stop();
+            await LogOperationAsync("CreateEmployeeAttachment", $"Created attachment {xuaId} for employee {id}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = true,
+                Message = "Attachment created successfully",
+                Data = createdAttachment,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateEmployeeAttachment", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating attachment for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the attachment",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("employees/{id:int}/attachments/{xuaId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> UpdateEmployeeAttachment(int id, int xuaId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating attachment {XuaId} for employee {EmployeeId}", xuaId, id);
+
+            if (!Request.HasFormContentType)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Request must include multipart form data",
+                    Count = 0
+                });
+            }
+
+            var form = await Request.ReadFormAsync();
+            var file = form.Files.FirstOrDefault();
+
+            // Parse form fields
+            string? description = form["description"];
+            if (!int.TryParse(form["uat_id"], out var uatId))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Invalid or missing attachment type ID",
+                    Count = 0
+                });
+            }
+
+            string? issuingAuthority = form["xua_issuingauthority"];
+            string? dateExpires = form["xua_dateexpires"];
+
+            int? newAttachmentId = null;
+
+            // If file provided, upload it and replace
+            if (file != null && file.Length > 0)
+            {
+                // Validate file size (5MB)
+                if (file.Length > 5 * 1024 * 1024)
+                {
+                    return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "File size exceeds 5MB limit",
+                        Count = 0
+                    });
+                }
+
+                // Validate file type
+                var allowedMimes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf" };
+                if (!allowedMimes.Contains(file.ContentType))
+                {
+                    return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "File type not allowed. Only images (JPG, PNG, GIF, WEBP) and PDF are allowed.",
+                        Count = 0
+                    });
+                }
+
+                // Upload new file
+                newAttachmentId = await UploadFileToAttachmentServiceAsync(file, description);
+
+                if (!newAttachmentId.HasValue)
+                {
+                    return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "Failed to upload file",
+                        Count = 0
+                    });
+                }
+            }
+
+            // Update the xrefUserAttachment record
+            var updateRequest = new UpdateEmployeeAttachmentRequest
+            {
+                description = description ?? string.Empty,
+                uat_id = uatId,
+                xua_issuingauthority = issuingAuthority ?? string.Empty,
+                xua_dateexpires = dateExpires ?? "Not Applicable"
+            };
+
+            var success = await _dataService.UpdateEmployeeAttachmentAsync(id, xuaId, updateRequest, newAttachmentId);
+
+            if (!success)
+            {
+                return NotFound(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Attachment not found or update failed",
+                    Count = 0
+                });
+            }
+
+            // Retrieve the updated attachment
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            var updatedAttachment = attachments.FirstOrDefault(a => a.xua_id == xuaId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateEmployeeAttachment", $"Updated attachment {xuaId} for employee {id}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = true,
+                Message = "Attachment updated successfully",
+                Data = updatedAttachment,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateEmployeeAttachment", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating attachment {XuaId} for employee {EmployeeId}", xuaId, id);
+            
+            return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the attachment",
+                Count = 0
+            });
+        }
+    }
+
+    // TODO: Implement file upload integration with EvoWS or Azure blob storage
+    private async Task<int?> UploadFileToAttachmentServiceAsync(IFormFile file, string? description)
+    {
+        if (file == null || file.Length == 0)
+        {
+            _logger.LogWarning("UploadFileToAttachmentServiceAsync: File is null or empty");
+            return null;
+        }
+
+        try
+        {
+            // Create multipart form data to send to EvoWS ProcessAttachments endpoint
+            using (var form = new MultipartFormDataContent())
+            {
+                // Add file to form
+                var fileContent = new StreamContent(file.OpenReadStream());
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+                form.Add(fileContent, "file1", file.FileName);
+
+                // Add metadata
+                form.Add(new StringContent(UserId.ToString()), "u_id_submittedby");
+                form.Add(new StringContent(UserFullName), "submittedby");
+                form.Add(new StringContent(description ?? file.FileName), "Description");
+                form.Add(new StringContent("0"), "sr_id"); // 0 = employee attachment (not related to service request)
+
+                // Determine EvoWS base URL from configuration or use default
+                var evoWSBaseUrl = _configuration["EvoWS:BaseUrl"] ?? "https://localhost:44307";
+                var uploadUrl = $"{evoWSBaseUrl}/ws/api/file/ProcessAttachments";
+
+                _logger.LogInformation("Uploading file to EvoWS: {UploadUrl}", uploadUrl);
+
+                // Call EvoWS ProcessAttachments endpoint
+                var response = await _httpClient.PostAsync(uploadUrl, form);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("EvoWS ProcessAttachments returned status {StatusCode}: {Content}", 
+                        response.StatusCode, await response.Content.ReadAsStringAsync());
+                    return null;
+                }
+
+                // Parse response from EvoWS
+                // Expected response: { att_id: number, FileName: string, ... }
+                var responseContent = await response.Content.ReadAsStringAsync();
+                
+                try
+                {
+                    using (JsonDocument doc = JsonDocument.Parse(responseContent))
+                    {
+                        var root = doc.RootElement;
+                        
+                        // Extract att_id from response
+                        if (root.TryGetProperty("att_id", out JsonElement attIdElement))
+                        {
+                            if (int.TryParse(attIdElement.GetRawText(), out int attId))
+                            {
+                                _logger.LogInformation("File uploaded successfully with att_id: {AttId}", attId);
+                                return attId;
+                            }
+                        }
+                    }
+
+                    _logger.LogWarning("Response from EvoWS did not contain valid att_id: {Response}", responseContent);
+                    return null;
+                }
+                catch (System.Text.Json.JsonException jsonEx)
+                {
+                    _logger.LogError(jsonEx, "Failed to parse EvoWS response as JSON: {Response}", responseContent);
+                    return null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading file to EvoWS attachment service");
+            return null;
         }
     }
 

@@ -117,6 +117,9 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
 
+// Register generic HttpClient for controllers (used by EvoApiController for file uploads)
+builder.Services.AddHttpClient();
+
 // Register HttpClient for Google Maps service
 builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
 builder.Services.AddScoped<IGoogleMapsService, GoogleMapsService>();

@@ -131,4 +131,9 @@ public interface IDataService
     Task<DataTable> GetAllUserAttachmentTypesAsync();
     Task<int?> CreateUserAttachmentTypeAsync(CreateUserAttachmentTypeRequest request);
     Task<bool> UpdateUserAttachmentTypeAsync(UpdateUserAttachmentTypeRequest request);
+
+    // Employee Attachments methods
+    Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId);
+    Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);
+    Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null);
 }
