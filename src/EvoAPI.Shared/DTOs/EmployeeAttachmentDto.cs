@@ -37,3 +37,18 @@ public class UpdateEmployeeAttachmentRequest
     public string xua_dateexpires { get; set; } = string.Empty;
     // Optional file for replacement - if provided, orphans old attachment
 }
+
+public class CertificationsLicensingReportDto
+{
+    public int xua_id { get; set; }
+    public int u_id { get; set; }
+    public string EmployeeName { get; set; } = string.Empty;
+    public string EmployeeNumber { get; set; } = string.Empty;
+    public string AttachmentType { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string IssuingAuthority { get; set; } = string.Empty;
+    public string DateExpires { get; set; } = string.Empty;
+    public DateTime DateLoaded { get; set; }
+    public string AttachmentFilename { get; set; } = string.Empty;
+    public int AttachmentId { get; set; }
+}

@@ -7467,5 +7467,80 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<List<CertificationsLicensingReportDto>> GetCertificationsLicensingReportAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xua.xua_id,
+                    xua.u_id,
+                    CONCAT(u.u_firstname, ' ', u.u_lastname) AS EmployeeName,
+                    u.u_employeenumber AS EmployeeNumber,
+                    uat.uat_type AS AttachmentType,
+                    xua.xua_description AS Description,
+                    xua.xua_issuingauthority AS IssuingAuthority,
+                    xua.xua_dateexpires AS DateExpires,
+                    xua.xua_insertdatetime AS DateLoaded,
+                    a.att_filename AS AttachmentFilename,
+                    a.att_id AS AttachmentId
+                FROM dbo.xrefuserattachment xua
+                INNER JOIN dbo.[user] u ON xua.u_id = u.u_id
+                INNER JOIN dbo.attachment a ON xua.att_id = a.att_id
+                INNER JOIN dbo.userattachmenttype uat ON xua.uat_id = uat.uat_id
+                ORDER BY u.u_firstname, u.u_lastname, xua.xua_insertdatetime DESC";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CertificationsLicensingReportDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CertificationsLicensingReportDto
+                {
+                    xua_id = ConvertToInt(row["xua_id"]),
+                    u_id = ConvertToInt(row["u_id"]),
+                    EmployeeName = row["EmployeeName"]?.ToString() ?? string.Empty,
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString() ?? string.Empty,
+                    AttachmentType = row["AttachmentType"]?.ToString() ?? string.Empty,
+                    Description = row["Description"]?.ToString() ?? string.Empty,
+                    IssuingAuthority = row["IssuingAuthority"]?.ToString() ?? string.Empty,
+                    DateExpires = row["DateExpires"]?.ToString() ?? string.Empty,
+                    DateLoaded = ConvertToDateTime(row["DateLoaded"]),
+                    AttachmentFilename = row["AttachmentFilename"]?.ToString() ?? string.Empty,
+                    AttachmentId = ConvertToInt(row["AttachmentId"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCertificationsLicensingReport",
+                Detail = $"Retrieved {result.Count} certification and licensing records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCertificationsLicensingReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            throw;
+        }
+    }
+
     #endregion
 }

@@ -136,4 +136,5 @@ public interface IDataService
     Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId);
     Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);
     Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null);
+    Task<List<CertificationsLicensingReportDto>> GetCertificationsLicensingReportAsync();
 }

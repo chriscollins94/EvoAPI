@@ -5207,6 +5207,45 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("reports/certifications-licensing")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CertificationsLicensingReportDto>>>> GetCertificationsLicensingReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting certifications and licensing report");
+            
+            // Get all attachments with employee and type information
+            var reportData = await _dataService.GetCertificationsLicensingReportAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCertificationsLicensingReport", $"Retrieved {reportData.Count} attachment records", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {reportData.Count} certification and licensing records",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCertificationsLicensingReport", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            
+            return StatusCode(500, new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the report",
+                Count = 0
+            });
+        }
+    }
+
     [HttpPost("employees/{id:int}/attachments")]
     [EvoAuthorize]
     public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> CreateEmployeeAttachment(int id)
