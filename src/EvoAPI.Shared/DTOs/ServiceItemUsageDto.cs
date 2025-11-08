@@ -12,5 +12,7 @@ namespace EvoAPI.Shared.DTOs
         public decimal TotalQuantity { get; set; }
         public decimal AverageCost { get; set; }
         public decimal TotalCost { get; set; }
+        public string? Status { get; set; }
+        public string? StatusColor { get; set; }
     }
 }

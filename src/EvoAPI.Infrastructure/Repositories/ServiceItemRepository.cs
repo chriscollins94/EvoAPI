@@ -312,13 +312,16 @@ namespace EvoAPI.Infrastructure.Repositories
                     l.l_location AS LocationName,
                     SUM(xwosi.xwosi_quantity) AS TotalQuantity,
                     AVG(xwosi.xwosi_basecost) AS AverageCost,
-                    SUM(xwosi.xwosi_quantity * xwosi.xwosi_basecost) AS TotalCost
+                    SUM(xwosi.xwosi_quantity * xwosi.xwosi_basecost) AS TotalCost,
+                    s.s_status AS Status,
+                    s.s_color AS StatusColor
                 FROM dbo.xrefWorkOrderServiceItem xwosi
                 INNER JOIN dbo.WorkOrder wo ON xwosi.wo_id = wo.wo_id
                 INNER JOIN dbo.ServiceRequest sr ON wo.sr_id = sr.sr_id
                 LEFT JOIN dbo.xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
                 LEFT JOIN dbo.company c ON xccc.c_id = c.c_id
                 LEFT JOIN dbo.location l ON sr.l_id = l.l_id
+                LEFT JOIN dbo.status s ON sr.s_id = s.s_id
                 WHERE xwosi.si_id = @ServiceItemId";
 
             if (startDate.HasValue)
@@ -339,7 +342,9 @@ namespace EvoAPI.Infrastructure.Repositories
                     sr.sr_insertdatetime,
                     sr.sr_datedue,
                     c.c_name,
-                    l.l_location
+                    l.l_location,
+                    s.s_status,
+                    s.s_color
                 ORDER BY sr.sr_insertdatetime DESC";
 
             var parameters = new
