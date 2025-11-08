@@ -91,6 +91,31 @@ logger.LogInformation("Final Google Maps API Key status: {Status}",
         ? "CONFIGURED" 
         : "NOT CONFIGURED");
 
+// Replace EvoWS Base URL placeholder with actual URL from environment variables
+var evoWSBaseUrl = builder.Configuration["EvoWS:BaseUrl"];
+logger.LogInformation("Original EvoWS Base URL: {EvoWSBaseUrl}", evoWSBaseUrl ?? "NOT FOUND");
+
+if (!string.IsNullOrEmpty(evoWSBaseUrl) && evoWSBaseUrl.Contains("${EVOWS_BASE_URL}"))
+{
+    var envEvoWSUrl = Environment.GetEnvironmentVariable("EVOWS_BASE_URL");
+    if (!string.IsNullOrEmpty(envEvoWSUrl))
+    {
+        builder.Configuration["EvoWS:BaseUrl"] = envEvoWSUrl;
+        logger.LogInformation("EvoWS Base URL replacement successful from environment variable: {EvoWSBaseUrl}", envEvoWSUrl);
+    }
+    else
+    {
+        logger.LogError("EVOWS_BASE_URL environment variable not found");
+    }
+}
+
+// Final validation of EvoWS Base URL
+var finalEvoWSUrl = builder.Configuration["EvoWS:BaseUrl"];
+logger.LogInformation("Final EvoWS Base URL status: {Status}", 
+    !string.IsNullOrEmpty(finalEvoWSUrl) && !finalEvoWSUrl.Contains("$") 
+        ? $"CONFIGURED - {finalEvoWSUrl}" 
+        : "NOT CONFIGURED");
+
 logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 

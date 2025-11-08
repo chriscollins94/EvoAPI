@@ -5326,10 +5326,20 @@ public class EvoApiController : BaseController
 
             if (!attachmentId.HasValue)
             {
+                stopwatch.Stop();
+                // Log detailed error info to audit table for investigation
+                await LogAuditAsync("CreateEmployeeAttachment", new { 
+                    employeeId = id, 
+                    fileName = file.FileName, 
+                    fileSize = file.Length, 
+                    error = "Failed to upload file to EvoWS attachment service",
+                    detail = "Check application logs for UploadFileToAttachmentServiceAsync entries for detailed EvoWS response"
+                }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                    
                 return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
                 {
                     Success = false,
-                    Message = "Failed to upload file",
+                    Message = "Failed to upload file to attachment service. Please check the server logs for details.",
                     Count = 0
                 });
             }
@@ -5347,6 +5357,9 @@ public class EvoApiController : BaseController
 
             if (!xuaId.HasValue)
             {
+                stopwatch.Stop();
+                await LogAuditAsync("CreateEmployeeAttachment", new { employeeId = id, attachmentId = attachmentId, error = "Failed to create employee attachment record in database" }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
                 return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
                 {
                     Success = false,
@@ -5375,12 +5388,13 @@ public class EvoApiController : BaseController
             stopwatch.Stop();
             await LogErrorAsync("CreateEmployeeAttachment", ex, stopwatch.Elapsed);
             
-            _logger.LogError(ex, "Error creating attachment for employee {EmployeeId}", id);
+            _logger.LogError(ex, "CreateEmployeeAttachment: Error creating attachment for employee {EmployeeId} - Message: {Message}, Type: {ExceptionType}", 
+                id, ex.Message, ex.GetType().Name);
             
             return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
             {
                 Success = false,
-                Message = "An error occurred while creating the attachment",
+                Message = $"An error occurred while creating the attachment: {ex.Message}",
                 Count = 0
             });
         }
@@ -5522,12 +5536,23 @@ public class EvoApiController : BaseController
     {
         if (file == null || file.Length == 0)
         {
-            _logger.LogWarning("UploadFileToAttachmentServiceAsync: File is null or empty");
+            var emptyFileError = "File is null or empty";
+            _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message}", emptyFileError);
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "validation",
+                fileName = file?.FileName,
+                fileSize = file?.Length ?? 0,
+                error = emptyFileError
+            });
             return null;
         }
 
         try
         {
+            var uploadStartTime = DateTime.UtcNow;
+            _logger.LogInformation("UploadFileToAttachmentServiceAsync: Starting upload - FileName: {FileName}, ContentType: {ContentType}, Size: {FileSize} bytes", 
+                file.FileName, file.ContentType, file.Length);
+
             // Create multipart form data to send to EvoWS ProcessAttachments endpoint
             using (var form = new MultipartFormDataContent())
             {
@@ -5546,24 +5571,89 @@ public class EvoApiController : BaseController
                 var evoWSBaseUrl = _configuration["EvoWS:BaseUrl"] ?? "https://localhost:44307";
                 var uploadUrl = $"{evoWSBaseUrl}/ws/api/file/ProcessAttachments";
 
-                _logger.LogInformation("Uploading file to EvoWS: {UploadUrl}", uploadUrl);
+                // Log configuration details for debugging
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Environment configuration - EvoWS:BaseUrl config value: '{EvoWSBaseUrl}' (empty={IsEmpty}, null={IsNull})", 
+                    evoWSBaseUrl ?? "(null)", string.IsNullOrEmpty(evoWSBaseUrl), evoWSBaseUrl == null);
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Resolved upload URL - {UploadUrl}", uploadUrl);
+
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Sending POST request to EvoWS - URL: {UploadUrl}, UserId: {UserId}, UserName: {UserName}", 
+                    uploadUrl, UserId, UserFullName);
 
                 // Call EvoWS ProcessAttachments endpoint
-                var response = await _httpClient.PostAsync(uploadUrl, form);
+                HttpResponseMessage response = null;
+                string responseContent = string.Empty;
+                
+                try
+                {
+                    response = await _httpClient.PostAsync(uploadUrl, form);
+                    responseContent = await response.Content.ReadAsStringAsync();
+
+                    _logger.LogInformation("UploadFileToAttachmentServiceAsync: EvoWS response - StatusCode: {StatusCode}, ReasonPhrase: {ReasonPhrase}, ContentLength: {ContentLength}", 
+                        response.StatusCode, response.ReasonPhrase, responseContent?.Length ?? 0);
+                    
+                    // ALWAYS log the full response content for debugging
+                    _logger.LogInformation("UploadFileToAttachmentServiceAsync: Full EvoWS response content: {ResponseContent}", responseContent ?? "(empty)");
+                }
+                catch (HttpRequestException httpEx)
+                {
+                    var httpErrorMsg = $"HTTP request failed: {httpEx.Message} | InnerException: {httpEx.InnerException?.Message}";
+                    _logger.LogError(httpEx, "UploadFileToAttachmentServiceAsync: {Message}", httpErrorMsg);
+                    
+                    // Log to audit table
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "http_request",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        error = httpErrorMsg,
+                        exceptionType = httpEx.GetType().Name
+                    });
+                    throw;
+                }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("EvoWS ProcessAttachments returned status {StatusCode}: {Content}", 
-                        response.StatusCode, await response.Content.ReadAsStringAsync());
+                    var failureMsg = $"EvoWS ProcessAttachments failed with status {response.StatusCode} ({response.ReasonPhrase}). Response: {responseContent}";
+                    _logger.LogError("UploadFileToAttachmentServiceAsync: {Message}", failureMsg);
+                    
+                    // Log to audit table with full error details
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "evows_error_response",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        httpStatusCode = response.StatusCode.ToString(),
+                        reasonPhrase = response.ReasonPhrase,
+                        evoWSResponse = responseContent
+                    });
                     return null;
                 }
 
                 // Parse response from EvoWS
                 // Expected response: { att_id: number, FileName: string, ... }
-                var responseContent = await response.Content.ReadAsStringAsync();
-                
                 try
                 {
+                    if (string.IsNullOrEmpty(responseContent))
+                    {
+                        var emptyResponseMsg = "EvoWS returned empty response content";
+                        _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message}", emptyResponseMsg);
+                        
+                        await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                            stage = "empty_response",
+                            fileName = file.FileName,
+                            fileSize = file.Length,
+                            uploadUrl = uploadUrl,
+                            userId = UserId,
+                            userName = UserFullName,
+                            error = emptyResponseMsg
+                        });
+                        return null;
+                    }
+
                     using (JsonDocument doc = JsonDocument.Parse(responseContent))
                     {
                         var root = doc.RootElement;
@@ -5573,25 +5663,100 @@ public class EvoApiController : BaseController
                         {
                             if (int.TryParse(attIdElement.GetRawText(), out int attId))
                             {
-                                _logger.LogInformation("File uploaded successfully with att_id: {AttId}", attId);
+                                var durationMs = (DateTime.UtcNow - uploadStartTime).TotalMilliseconds;
+                                _logger.LogInformation("UploadFileToAttachmentServiceAsync: File uploaded successfully - att_id: {AttId}, Duration: {DurationMs}ms", attId, durationMs);
+                                
+                                // Log success to audit table
+                                await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                                    stage = "success",
+                                    fileName = file.FileName,
+                                    fileSize = file.Length,
+                                    uploadUrl = uploadUrl,
+                                    userId = UserId,
+                                    userName = UserFullName,
+                                    attId = attId,
+                                    durationMs = durationMs
+                                });
+                                
                                 return attId;
                             }
                         }
-                    }
 
-                    _logger.LogWarning("Response from EvoWS did not contain valid att_id: {Response}", responseContent);
-                    return null;
+                        var parseErrorMsg = "att_id not found or not parseable in response";
+                        _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message} - Response: {Response}", parseErrorMsg, responseContent);
+                        
+                        await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                            stage = "parse_error",
+                            fileName = file.FileName,
+                            fileSize = file.Length,
+                            uploadUrl = uploadUrl,
+                            userId = UserId,
+                            userName = UserFullName,
+                            error = parseErrorMsg,
+                            evoWSResponse = responseContent
+                        });
+                        return null;
+                    }
                 }
                 catch (System.Text.Json.JsonException jsonEx)
                 {
-                    _logger.LogError(jsonEx, "Failed to parse EvoWS response as JSON: {Response}", responseContent);
+                    var jsonErrorMsg = $"Failed to parse EvoWS response as JSON: {jsonEx.Message}";
+                    _logger.LogError(jsonEx, "UploadFileToAttachmentServiceAsync: {Message} - Response: {Response}", jsonErrorMsg, responseContent);
+                    
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "json_parse_error",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        error = jsonErrorMsg,
+                        exceptionType = jsonEx.GetType().Name,
+                        evoWSResponse = responseContent
+                    });
                     return null;
                 }
             }
         }
+        catch (HttpRequestException httpEx)
+        {
+            var httpErrorMsg = $"HTTP request error: {httpEx.Message} | InnerException: {httpEx.InnerException?.Message}";
+            _logger.LogError(httpEx, "UploadFileToAttachmentServiceAsync: {Message}", httpErrorMsg);
+            
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "http_exception",
+                fileName = file.FileName,
+                fileSize = file.Length,
+                userId = UserId,
+                userName = UserFullName,
+                error = httpErrorMsg,
+                exceptionType = httpEx.GetType().Name
+            });
+            return null;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error uploading file to EvoWS attachment service");
+            var unexpectedErrorMsg = $"Unexpected error: {ex.Message} | Type: {ex.GetType().Name}";
+            _logger.LogError(ex, "UploadFileToAttachmentServiceAsync: {Message}", unexpectedErrorMsg);
+            
+            // Log configuration for debugging
+            var evoWSBaseUrl = _configuration["EvoWS:BaseUrl"] ?? "https://localhost:44307";
+            _logger.LogError("UploadFileToAttachmentServiceAsync: Configuration state at exception - EvoWS:BaseUrl='{EvoWSBaseUrl}' (null={IsNull}, empty={IsEmpty}), Full URL would be: {FullUrl}", 
+                evoWSBaseUrl ?? "(null)", evoWSBaseUrl == null, string.IsNullOrEmpty(evoWSBaseUrl), 
+                string.IsNullOrEmpty(evoWSBaseUrl) ? "(would be invalid)" : $"{evoWSBaseUrl}/ws/api/file/ProcessAttachments");
+            
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "unexpected_exception",
+                fileName = file.FileName,
+                fileSize = file.Length,
+                userId = UserId,
+                userName = UserFullName,
+                error = unexpectedErrorMsg,
+                exceptionType = ex.GetType().Name,
+                stackTrace = ex.StackTrace,
+                configuredBaseUrl = evoWSBaseUrl,
+                baseUrlIsEmpty = string.IsNullOrEmpty(evoWSBaseUrl)
+            });
             return null;
         }
     }
