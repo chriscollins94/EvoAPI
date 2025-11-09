@@ -944,6 +944,7 @@ public class EvoApiController : BaseController
 
         /// <summary>
         /// Get employees for tech directory - minimal data (city/state only, work email/phone only)
+        /// Full address only shown for the current authenticated user
         /// </summary>
         [HttpGet("employees/tech-directory")]
         public async Task<ActionResult<ApiResponse<object>>> GetEmployeesForTechDirectory([FromQuery] bool includeTrades = true)
@@ -960,13 +961,13 @@ public class EvoApiController : BaseController
                 {
                     // Get all employee data including roles AND trade generals in secure mode
                     var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
-                    employees = ConvertDataTableToEmployeesForTechDirectory(employeesWithRolesAndTradesDataTable);
+                    employees = ConvertDataTableToEmployeesForTechDirectory(employeesWithRolesAndTradesDataTable, UserId);
                 }
                 else
                 {
                     // Get all employee data including roles in secure mode
                     var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
-                    employees = ConvertDataTableToEmployeesForTechDirectoryNoTrades(employeesWithRolesDataTable);
+                    employees = ConvertDataTableToEmployeesForTechDirectoryNoTrades(employeesWithRolesDataTable, UserId);
                 }
 
                 stopwatch.Stop();
@@ -4294,7 +4295,7 @@ public class EvoApiController : BaseController
     /// Minimal data version for tech directory - only city/state, work email/phone, no personal info
     /// Technicians get all phone numbers, non-techs get work phone, desk phone, and extension only
     /// </summary>
-    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable)
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable, int? currentUserId = null)
     {
         var employeeDict = new Dictionary<int, EmployeeDto>();
 
@@ -4328,12 +4329,13 @@ public class EvoApiController : BaseController
                     ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
                     ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
                     ZoneName = row["ZoneName"]?.ToString(),
-                    AddressId = null, // Excluded for tech directory
-                    Address1 = string.Empty, // Excluded for tech directory
-                    Address2 = string.Empty, // Excluded for tech directory
+                    // Only include full address for the current logged-in user
+                    AddressId = (currentUserId == employeeId) ? (row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null) : null,
+                    Address1 = (currentUserId == employeeId) ? (row["Address1"]?.ToString() ?? string.Empty) : string.Empty,
+                    Address2 = (currentUserId == employeeId) ? (row["Address2"]?.ToString() ?? string.Empty) : string.Empty,
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
-                    Zip = string.Empty, // Excluded for tech directory
+                    Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4401,7 +4403,7 @@ public class EvoApiController : BaseController
     /// <summary>
     /// Minimal data version for tech directory without trades - only city/state, work email/phone, no personal info
     /// </summary>
-    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectoryNoTrades(DataTable dataTable)
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectoryNoTrades(DataTable dataTable, int? currentUserId = null)
     {
         var employeeDict = new Dictionary<int, EmployeeDto>();
 
@@ -4435,12 +4437,13 @@ public class EvoApiController : BaseController
                     ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
                     ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
                     ZoneName = row["ZoneName"]?.ToString(),
-                    AddressId = null, // Excluded for tech directory
-                    Address1 = string.Empty, // Excluded for tech directory
-                    Address2 = string.Empty, // Excluded for tech directory
+                    // Only include full address for the current logged-in user
+                    AddressId = (currentUserId == employeeId) ? (row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null) : null,
+                    Address1 = (currentUserId == employeeId) ? (row["Address1"]?.ToString() ?? string.Empty) : string.Empty,
+                    Address2 = (currentUserId == employeeId) ? (row["Address2"]?.ToString() ?? string.Empty) : string.Empty,
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
-                    Zip = string.Empty, // Excluded for tech directory
+                    Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
                     Roles = new List<UserRoleDto>()
                 };
 
