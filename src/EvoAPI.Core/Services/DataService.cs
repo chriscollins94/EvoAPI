@@ -6199,6 +6199,41 @@ FROM DailyTechSummary;
                 }
             }
 
+            // Check if work order belongs to a high-volume company
+            if (actualWoId.HasValue && actualWoId.Value > 0)
+            {
+                const string checkHighVolumeSql = @"
+                    SELECT COUNT(1)
+                    FROM workorder wo
+                    INNER JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                    INNER JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN company c ON xccc.c_id = c.c_id
+                    WHERE wo.wo_id = @wo_id
+                      AND c.c_id IN (SELECT cs_value FROM configsetting WHERE cs_identifier = 'HighVolumeCompanyID')";
+
+                using var checkHighVolumeCommand = new SqlCommand(checkHighVolumeSql, connection);
+                checkHighVolumeCommand.Parameters.Add("@wo_id", System.Data.SqlDbType.Int).Value = actualWoId.Value;
+
+                var isHighVolume = (int)(await checkHighVolumeCommand.ExecuteScalarAsync() ?? 0) > 0;
+
+                if (isHighVolume)
+                {
+                    _logger.LogWarning("Attempted to insert time tracking detail for high-volume company work order {WoId} for user {UserId}", 
+                        actualWoId, userId);
+                    
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "InsertTimeTrackingDetail - High Volume Company Rejected",
+                        Detail = $"User {userId} attempted to create time tracking detail for high-volume company work order {actualWoId}",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return false;
+                }
+            }
+
             // Retrieve Fleetmatics GPS coordinates
             decimal? latFleetmatics = null;
             decimal? lonFleetmatics = null;
