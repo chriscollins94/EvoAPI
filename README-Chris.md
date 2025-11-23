@@ -1,13 +1,14 @@
 taskkill /F /IM dotnet.exe
 
-$env:ASPNETCORE_ENVIRONMENT="Test"; dotnet run --project src/EvoAPI.Api
+## RUN DEV
+cd "c:\users\chris\source\repos\evoapi"; $env:ASPNETCORE_ENVIRONMENT="Test"; dotnet run --project src/EvoAPI.Api
 
 # Publishing
 ## Test Environment
-dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi-test
+cd "c:\users\chris\source\repos\evoapi"; dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi-test
 
 ## Production Environment  
-dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi
+cd "c:\users\chris\source\repos\evoapi"; dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi
 
 # Deployment notes:
 ## Test deployment:

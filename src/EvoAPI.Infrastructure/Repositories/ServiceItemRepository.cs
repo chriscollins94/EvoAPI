@@ -21,12 +21,12 @@ namespace EvoAPI.Infrastructure.Repositories
                 ?? throw new ArgumentNullException(nameof(configuration), "Connection string not found");
         }
 
-        public async Task<List<ServiceItemDto>> GetServiceItemsAsync(string? filterText, string? filterStatus, int? filterTradeParent, int? filterServiceItemType, int limit = 10000)
+        public async Task<List<ServiceItemDto>> GetServiceItemsAsync(string? filterText, string? filterStatus, int? filterTradeParent, int? filterServiceItemType, int limit = 10000, int? filterUserId = null)
         {
             using var connection = new SqlConnection(_connectionString);
             
             var sql = @"
-                SELECT 
+                SELECT DISTINCT
                     si.si_id,
                     si.o_id,
                     si.siu_id,
@@ -52,6 +52,20 @@ namespace EvoAPI.Infrastructure.Repositories
                     sim.sim_manufacturer,
                     t.t_trade,
                     sit.sit_serviceitemtype,
+                    (SELECT TOP 1 u.u_firstname + ' ' + u.u_lastname 
+                     FROM dbo.xrefWorkOrderServiceItem xwosi2
+                     INNER JOIN dbo.WorkOrder wo2 ON xwosi2.wo_id = wo2.wo_id
+                     LEFT JOIN dbo.xrefWorkOrderUser xwou2 ON wo2.wo_id = xwou2.wo_id
+                     LEFT JOIN dbo.[user] u ON xwou2.u_id = u.u_id
+                     WHERE xwosi2.si_id = si.si_id AND u.u_firstname IS NOT NULL
+                     ORDER BY wo2.wo_id DESC) AS Tech,
+                    (SELECT TOP 1 u.u_id
+                     FROM dbo.xrefWorkOrderServiceItem xwosi2
+                     INNER JOIN dbo.WorkOrder wo2 ON xwosi2.wo_id = wo2.wo_id
+                     LEFT JOIN dbo.xrefWorkOrderUser xwou2 ON wo2.wo_id = xwou2.wo_id
+                     LEFT JOIN dbo.[user] u ON xwou2.u_id = u.u_id
+                     WHERE xwosi2.si_id = si.si_id AND u.u_firstname IS NOT NULL
+                     ORDER BY wo2.wo_id DESC) AS TechUserId,
                     (SELECT COUNT(DISTINCT sr.sr_id) 
                      FROM dbo.xrefWorkOrderServiceItem xwosi 
                      INNER JOIN dbo.WorkOrder wo ON xwosi.wo_id = wo.wo_id
@@ -97,6 +111,19 @@ namespace EvoAPI.Infrastructure.Repositories
             {
                 sql += " AND si.sit_id = @FilterServiceItemType";
                 parameters.Add("FilterServiceItemType", filterServiceItemType.Value);
+            }
+
+            // Filter by technician (user)
+            if (filterUserId.HasValue && filterUserId.Value > 0)
+            {
+                sql += @" AND EXISTS (
+                    SELECT 1 
+                    FROM dbo.xrefWorkOrderServiceItem xwosi_filter
+                    INNER JOIN dbo.WorkOrder wo_filter ON xwosi_filter.wo_id = wo_filter.wo_id
+                    LEFT JOIN dbo.xrefWorkOrderUser xwou_filter ON wo_filter.wo_id = xwou_filter.wo_id
+                    WHERE xwosi_filter.si_id = si.si_id AND xwou_filter.u_id = @FilterUserId
+                )";
+                parameters.Add("FilterUserId", filterUserId.Value);
             }
 
             sql += " ORDER BY si.si_name";
@@ -310,6 +337,7 @@ namespace EvoAPI.Infrastructure.Repositories
                     sr.sr_datedue AS DateDue,
                     c.c_name AS CompanyName,
                     l.l_location AS LocationName,
+                    u.u_firstname + ' ' + u.u_lastname AS Tech,
                     SUM(xwosi.xwosi_quantity) AS TotalQuantity,
                     AVG(xwosi.xwosi_basecost) AS AverageCost,
                     SUM(xwosi.xwosi_quantity * xwosi.xwosi_basecost) AS TotalCost,
@@ -322,6 +350,8 @@ namespace EvoAPI.Infrastructure.Repositories
                 LEFT JOIN dbo.company c ON xccc.c_id = c.c_id
                 LEFT JOIN dbo.location l ON sr.l_id = l.l_id
                 LEFT JOIN dbo.status s ON sr.s_id = s.s_id
+                LEFT JOIN dbo.xrefWorkOrderUser xwou ON wo.wo_id = xwou.wo_id
+                LEFT JOIN dbo.[user] u ON xwou.u_id = u.u_id
                 WHERE xwosi.si_id = @ServiceItemId";
 
             if (startDate.HasValue)
@@ -343,6 +373,8 @@ namespace EvoAPI.Infrastructure.Repositories
                     sr.sr_datedue,
                     c.c_name,
                     l.l_location,
+                    u.u_firstname,
+                    u.u_lastname,
                     s.s_status,
                     s.s_color
                 ORDER BY sr.sr_insertdatetime DESC";
