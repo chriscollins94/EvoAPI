@@ -3149,6 +3149,38 @@ public class EvoApiController : BaseController
         return attachmentTypes;
     }
 
+    private static List<UserClothingSizeDto> ConvertDataTableToUserClothingSizes(DataTable dataTable)
+    {
+        var clothingSizes = new List<UserClothingSizeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            clothingSizes.Add(new UserClothingSizeDto
+            {
+                Id = Convert.ToInt32(row["uc_id"]),
+                ClothingSize = row["uc_clothingsize"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return clothingSizes;
+    }
+
+    private static List<UserRelationshipDto> ConvertDataTableToUserRelationships(DataTable dataTable)
+    {
+        var relationships = new List<UserRelationshipDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            relationships.Add(new UserRelationshipDto
+            {
+                Id = Convert.ToInt32(row["ur_id"]),
+                Relationship = row["ur_relationship"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return relationships;
+    }
+
     private static List<AttackPointNoteDto> ConvertDataTableToAttackPointNotes(DataTable dataTable)
     {
         var attackPointNotes = new List<AttackPointNoteDto>();
@@ -5162,6 +5194,460 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while updating the user attachment type",
+                Count = 0
+            });
+        }
+    }
+
+    // User Clothing Size endpoints
+    [HttpGet("userclothing")]
+    public async Task<ActionResult<ApiResponse<List<UserClothingSizeDto>>>> GetUserClothingSizes()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user clothing sizes");
+            
+            var dataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var clothingSizes = ConvertDataTableToUserClothingSizes(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserClothingSizes", $"Retrieved {clothingSizes.Count} user clothing sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserClothingSizeDto>>
+            {
+                Success = true,
+                Message = "User clothing sizes retrieved successfully",
+                Data = clothingSizes,
+                Count = clothingSizes.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserClothingSizes", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user clothing sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user clothing sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userclothing")]
+    public async Task<ActionResult<ApiResponse<UserClothingSizeDto>>> CreateUserClothingSize([FromBody] CreateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user clothing size: {ClothingSize}", request.ClothingSize);
+            
+            if (string.IsNullOrWhiteSpace(request.ClothingSize) || request.ClothingSize.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Clothing size must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.ClothingSize.Length > 50)
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Clothing size must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var existingSizes = ConvertDataTableToUserClothingSizes(existingDataTable);
+            if (existingSizes.Any(s => s.ClothingSize.Equals(request.ClothingSize.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "This clothing size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserClothingSizeAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newClothingSize = new UserClothingSizeDto
+                {
+                    Id = newId.Value,
+                    ClothingSize = request.ClothingSize.Trim()
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserClothingSize", $"Created user clothing size - {request.ClothingSize} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = true,
+                    Message = "User clothing size created successfully",
+                    Data = newClothingSize,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserClothingSize", $"Failed to create user clothing size - {request.ClothingSize}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user clothing size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserClothingSize", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user clothing size {ClothingSize}", request.ClothingSize);
+            
+            return StatusCode(500, new ApiResponse<UserClothingSizeDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userclothing/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserClothingSize(int id, [FromBody] UpdateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user clothing size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ClothingSize) || request.ClothingSize.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Clothing size must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.ClothingSize.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Clothing size must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var existingSizes = ConvertDataTableToUserClothingSizes(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.ClothingSize.Equals(request.ClothingSize.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This clothing size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserClothingSizeAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserClothingSize", $"Updated user clothing size {id} to {request.ClothingSize}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User clothing size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserClothingSize", $"Failed to update user clothing size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User clothing size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserClothingSize", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user clothing size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    // User Relationship endpoints
+    [HttpGet("userrelationship")]
+    public async Task<ActionResult<ApiResponse<List<UserRelationshipDto>>>> GetUserRelationships()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user relationships");
+            
+            var dataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var relationships = ConvertDataTableToUserRelationships(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserRelationships", $"Retrieved {relationships.Count} user relationships", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserRelationshipDto>>
+            {
+                Success = true,
+                Message = "User relationships retrieved successfully",
+                Data = relationships,
+                Count = relationships.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserRelationships", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user relationships");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user relationships",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userrelationship")]
+    public async Task<ActionResult<ApiResponse<UserRelationshipDto>>> CreateUserRelationship([FromBody] CreateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user relationship: {Relationship}", request.Relationship);
+            
+            if (string.IsNullOrWhiteSpace(request.Relationship) || request.Relationship.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Relationship must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.Relationship.Length > 50)
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Relationship must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var existingRelationships = ConvertDataTableToUserRelationships(existingDataTable);
+            if (existingRelationships.Any(r => r.Relationship.Equals(request.Relationship.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "This relationship already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserRelationshipAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newRelationship = new UserRelationshipDto
+                {
+                    Id = newId.Value,
+                    Relationship = request.Relationship.Trim()
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserRelationship", $"Created user relationship - {request.Relationship} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = true,
+                    Message = "User relationship created successfully",
+                    Data = newRelationship,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserRelationship", $"Failed to create user relationship - {request.Relationship}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user relationship",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserRelationship", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user relationship {Relationship}", request.Relationship);
+            
+            return StatusCode(500, new ApiResponse<UserRelationshipDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user relationship",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userrelationship/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserRelationship(int id, [FromBody] UpdateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user relationship {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Relationship) || request.Relationship.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Relationship must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.Relationship.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Relationship must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var existingRelationships = ConvertDataTableToUserRelationships(existingDataTable);
+            if (existingRelationships.Any(r => r.Id != id && r.Relationship.Equals(request.Relationship.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This relationship already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserRelationshipAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserRelationship", $"Updated user relationship {id} to {request.Relationship}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User relationship updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserRelationship", $"Failed to update user relationship {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User relationship not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserRelationship", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user relationship {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user relationship",
                 Count = 0
             });
         }

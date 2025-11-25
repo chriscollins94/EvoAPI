@@ -132,6 +132,16 @@ public interface IDataService
     Task<int?> CreateUserAttachmentTypeAsync(CreateUserAttachmentTypeRequest request);
     Task<bool> UpdateUserAttachmentTypeAsync(UpdateUserAttachmentTypeRequest request);
 
+    // User Clothing Size methods
+    Task<DataTable> GetAllUserClothingSizesAsync();
+    Task<int?> CreateUserClothingSizeAsync(CreateUserClothingSizeRequest request);
+    Task<bool> UpdateUserClothingSizeAsync(UpdateUserClothingSizeRequest request);
+
+    // User Relationship methods
+    Task<DataTable> GetAllUserRelationshipsAsync();
+    Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request);
+    Task<bool> UpdateUserRelationshipAsync(UpdateUserRelationshipRequest request);
+
     // Employee Attachments methods
     Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId);
     Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);

@@ -7263,6 +7263,382 @@ FROM DailyTechSummary;
         }
     }
 
+    // User Clothing Size methods
+    public async Task<DataTable> GetAllUserClothingSizesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    uc_id,
+                    uc_insertdatetime,
+                    uc_modifieddatetime,
+                    uc_clothingsize
+                FROM dbo.UserClothing
+                ORDER BY uc_clothingsize";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserClothingSizes",
+                Detail = $"Retrieved {result.Rows.Count} user clothing sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserClothingSizes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user clothing sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserClothingSizeAsync(CreateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserClothing 
+                (uc_clothingsize, uc_insertdatetime, uc_modifieddatetime)
+                VALUES 
+                (@ClothingSize, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@ClothingSize", request.ClothingSize }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserClothingSize",
+                    Detail = $"Created new user clothing size '{request.ClothingSize}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserClothingSize",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user clothing size {ClothingSize}", request.ClothingSize);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserClothingSizeAsync(UpdateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserClothing
+                SET 
+                    uc_clothingsize = @ClothingSize,
+                    uc_modifieddatetime = GETDATE()
+                WHERE uc_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@ClothingSize", request.ClothingSize }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserClothingSize",
+                Detail = $"Updated user clothing size {request.Id} - {request.ClothingSize}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserClothingSize",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user clothing size {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Relationship methods
+    public async Task<DataTable> GetAllUserRelationshipsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ur_id,
+                    ur_insertdatetime,
+                    ur_modifieddatetime,
+                    ur_relationship
+                FROM dbo.UserRelationship
+                ORDER BY ur_relationship";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserRelationships",
+                Detail = $"Retrieved {result.Rows.Count} user relationships",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserRelationships",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user relationships");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserRelationship 
+                (ur_relationship, ur_insertdatetime, ur_modifieddatetime)
+                VALUES 
+                (@Relationship, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Relationship", request.Relationship }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserRelationship",
+                    Detail = $"Created new user relationship '{request.Relationship}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserRelationship",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user relationship {Relationship}", request.Relationship);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserRelationshipAsync(UpdateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserRelationship
+                SET 
+                    ur_relationship = @Relationship,
+                    ur_modifieddatetime = GETDATE()
+                WHERE ur_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Relationship", request.Relationship }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserRelationship",
+                Detail = $"Updated user relationship {request.Id} - {request.Relationship}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserRelationship",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user relationship {Id}", request.Id);
+            throw;
+        }
+    }
+
     // Employee Attachments methods
     public async Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId)
     {
