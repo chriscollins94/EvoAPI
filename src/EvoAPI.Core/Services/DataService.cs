@@ -2318,7 +2318,10 @@ public class DataService : IDataService
                     u_daysavailablevacation = @DaysAvailableVacation,
                     u_note = @Note,
                     u_picture = @Picture,
-                    z_id = @ZoneId";
+                    z_id = @ZoneId,
+                    uc_id_shirt = @ShirtSizeId,
+                    uc_id_pants = @PantsSizeId,
+                    uc_id_jacket = @JacketSizeId";
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2350,6 +2353,9 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@Note", request.Note ?? "");
             command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ShirtSizeId", request.ShirtSizeId.HasValue && request.ShirtSizeId.Value > 0 ? request.ShirtSizeId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PantsSizeId", request.PantsSizeId.HasValue && request.PantsSizeId.Value > 0 ? request.PantsSizeId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? request.JacketSizeId.Value : (object)DBNull.Value);
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2728,6 +2734,13 @@ public class DataService : IDataService
                     a.a_city as City,
                     a.a_state as State,
                     a.a_zip as Zip,
+                    -- Clothing Size IDs and Text
+                    u.uc_id_shirt as ShirtSizeId,
+                    u.uc_id_pants as PantsSizeId,
+                    u.uc_id_jacket as JacketSizeId,
+                    uc_shirt.uc_clothingsize as ShirtSize,
+                    uc_pants.uc_clothingsize as PantsSize,
+                    uc_jacket.uc_clothingsize as JacketSize,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -2740,6 +2753,9 @@ public class DataService : IDataService
                 FROM dbo.[User] u
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.userclothing uc_shirt ON u.uc_id_shirt = uc_shirt.uc_id
+                LEFT JOIN dbo.userclothing uc_pants ON u.uc_id_pants = uc_pants.uc_id
+                LEFT JOIN dbo.userclothing uc_jacket ON u.uc_id_jacket = uc_jacket.uc_id
                 LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
                 LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
                 LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
@@ -7635,6 +7651,283 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error updating user relationship {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Emergency Contact methods
+    public async Task<List<UserEmergencyContactDto>> GetUserEmergencyContactsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xuec.xuec_id,
+                    xuec.xuec_insertdatetime,
+                    xuec.xuec_modifieddatetime,
+                    xuec.u_id,
+                    xuec.ur_id,
+                    xuec.xuec_name,
+                    xuec.xuec_phone,
+                    ur.ur_relationship
+                FROM dbo.xrefUserEmergencyContact xuec
+                LEFT JOIN dbo.UserRelationship ur ON xuec.ur_id = ur.ur_id
+                WHERE xuec.u_id = @UserId
+                ORDER BY xuec.xuec_id";
+
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<UserEmergencyContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new UserEmergencyContactDto
+                {
+                    XuecId = Convert.ToInt32(row["xuec_id"]),
+                    UserId = Convert.ToInt32(row["u_id"]),
+                    RelationshipId = row["ur_id"] != DBNull.Value ? Convert.ToInt32(row["ur_id"]) : null,
+                    RelationshipName = row["ur_relationship"] != DBNull.Value ? row["ur_relationship"].ToString() : null,
+                    Name = row["xuec_name"] != DBNull.Value ? row["xuec_name"].ToString() : null,
+                    Phone = row["xuec_phone"] != DBNull.Value ? row["xuec_phone"].ToString() : null,
+                    InsertDateTime = Convert.ToDateTime(row["xuec_insertdatetime"]),
+                    ModifiedDateTime = row["xuec_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["xuec_modifieddatetime"]) : null
+                });
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserEmergencyContacts",
+                Detail = $"Retrieved {result.Count} emergency contacts for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserEmergencyContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error getting emergency contacts for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserEmergencyContactAsync(int userId, CreateUserEmergencyContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.xrefUserEmergencyContact (xuec_insertdatetime, u_id, ur_id, xuec_name, xuec_phone)
+                VALUES (GETDATE(), @UserId, @RelationshipId, @Name, @Phone);
+                SELECT SCOPE_IDENTITY();";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@RelationshipId", request.RelationshipId.HasValue ? (object)request.RelationshipId.Value : DBNull.Value },
+                { "@Name", string.IsNullOrWhiteSpace(request.Name) ? DBNull.Value : (object)request.Name.Trim() },
+                { "@Phone", string.IsNullOrWhiteSpace(request.Phone) ? DBNull.Value : (object)request.Phone.Trim() }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+            var newId = result != null && result != DBNull.Value ? Convert.ToInt32(result) : (int?)null;
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserEmergencyContact",
+                Detail = $"Created emergency contact for user {userId} with ID {newId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating emergency contact for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserEmergencyContactAsync(int userId, UpdateUserEmergencyContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.xrefUserEmergencyContact
+                SET 
+                    ur_id = @RelationshipId,
+                    xuec_name = @Name,
+                    xuec_phone = @Phone,
+                    xuec_modifieddatetime = GETDATE()
+                WHERE xuec_id = @XuecId AND u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuecId", request.XuecId },
+                { "@UserId", userId },
+                { "@RelationshipId", request.RelationshipId.HasValue ? (object)request.RelationshipId.Value : DBNull.Value },
+                { "@Name", string.IsNullOrWhiteSpace(request.Name) ? DBNull.Value : (object)request.Name.Trim() },
+                { "@Phone", string.IsNullOrWhiteSpace(request.Phone) ? DBNull.Value : (object)request.Phone.Trim() }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserEmergencyContact",
+                Detail = $"Updated emergency contact {request.XuecId} for user {userId}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating emergency contact {XuecId} for user {UserId}", request.XuecId, userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteUserEmergencyContactAsync(int userId, int xuecId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.xrefUserEmergencyContact
+                WHERE xuec_id = @XuecId AND u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuecId", xuecId },
+                { "@UserId", userId }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteUserEmergencyContact",
+                Detail = $"Deleted emergency contact {xuecId} for user {userId}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting emergency contact {XuecId} for user {UserId}", xuecId, userId);
             throw;
         }
     }

@@ -142,6 +142,12 @@ public interface IDataService
     Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request);
     Task<bool> UpdateUserRelationshipAsync(UpdateUserRelationshipRequest request);
 
+    // User Emergency Contact methods
+    Task<List<UserEmergencyContactDto>> GetUserEmergencyContactsAsync(int userId);
+    Task<int?> CreateUserEmergencyContactAsync(int userId, CreateUserEmergencyContactRequest request);
+    Task<bool> UpdateUserEmergencyContactAsync(int userId, UpdateUserEmergencyContactRequest request);
+    Task<bool> DeleteUserEmergencyContactAsync(int userId, int xuecId);
+
     // Employee Attachments methods
     Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId);
     Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);

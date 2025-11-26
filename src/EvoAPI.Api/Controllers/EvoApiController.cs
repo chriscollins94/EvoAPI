@@ -3998,6 +3998,13 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    // Clothing Size Information
+                    ShirtSizeId = row["ShirtSizeId"] != DBNull.Value ? Convert.ToInt32(row["ShirtSizeId"]) : null,
+                    PantsSizeId = row["PantsSizeId"] != DBNull.Value ? Convert.ToInt32(row["PantsSizeId"]) : null,
+                    JacketSizeId = row["JacketSizeId"] != DBNull.Value ? Convert.ToInt32(row["JacketSizeId"]) : null,
+                    ShirtSize = row["ShirtSize"]?.ToString(),
+                    PantsSize = row["PantsSize"]?.ToString(),
+                    JacketSize = row["JacketSize"]?.ToString(),
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -5648,6 +5655,209 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while updating the user relationship",
+                Count = 0
+            });
+        }
+    }
+
+    // User Emergency Contact endpoints
+    [HttpGet("employees/{id:int}/emergency-contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<UserEmergencyContactDto>>>> GetUserEmergencyContacts(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting emergency contacts for employee {EmployeeId}", id);
+            
+            var contacts = await _dataService.GetUserEmergencyContactsAsync(id);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserEmergencyContacts", $"Retrieved {contacts.Count} emergency contacts for employee {id}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<UserEmergencyContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} emergency contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserEmergencyContacts", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving emergency contacts for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<List<UserEmergencyContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving emergency contacts",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("employees/{id:int}/emergency-contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<UserEmergencyContactDto>>> CreateUserEmergencyContact(int id, [FromBody] CreateUserEmergencyContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating emergency contact for employee {EmployeeId}", id);
+            
+            var newId = await _dataService.CreateUserEmergencyContactAsync(id, request);
+            
+            if (newId.HasValue)
+            {
+                var newContact = new UserEmergencyContactDto
+                {
+                    XuecId = newId.Value,
+                    UserId = id,
+                    RelationshipId = request.RelationshipId,
+                    Name = request.Name,
+                    Phone = request.Phone,
+                    InsertDateTime = DateTime.Now
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserEmergencyContact", $"Created emergency contact {newId.Value} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserEmergencyContactDto>
+                {
+                    Success = true,
+                    Message = "Emergency contact created successfully",
+                    Data = newContact,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return BadRequest(new ApiResponse<UserEmergencyContactDto>
+                {
+                    Success = false,
+                    Message = "Failed to create emergency contact",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating emergency contact for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<UserEmergencyContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating emergency contact",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("employees/{id:int}/emergency-contacts/{xuecId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserEmergencyContact(int id, int xuecId, [FromBody] UpdateUserEmergencyContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            // Ensure the request xuecId matches the route
+            request.XuecId = xuecId;
+            
+            var success = await _dataService.UpdateUserEmergencyContactAsync(id, request);
+            
+            if (success)
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("UpdateUserEmergencyContact", $"Updated emergency contact {xuecId} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Emergency contact updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Emergency contact not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating emergency contact",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpDelete("employees/{id:int}/emergency-contacts/{xuecId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteUserEmergencyContact(int id, int xuecId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            var success = await _dataService.DeleteUserEmergencyContactAsync(id, xuecId);
+            
+            if (success)
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("DeleteUserEmergencyContact", $"Deleted emergency contact {xuecId} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Emergency contact deleted successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Emergency contact not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error deleting emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting emergency contact",
                 Count = 0
             });
         }
