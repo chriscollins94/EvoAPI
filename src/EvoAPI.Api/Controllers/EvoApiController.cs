@@ -5,6 +5,7 @@ using EvoAPI.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Data;
+using System.Data.SqlClient;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -21,10 +22,12 @@ public class EvoApiController : BaseController
         private readonly ILogger<EvoApiController> _logger;
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
+        private readonly IAuditCriticalService _auditCriticalService;
     
         public EvoApiController(
             IDataService dataService, 
             IAuditService auditService,
+            IAuditCriticalService auditCriticalService,
             ILogger<EvoApiController> logger,
             HttpClient httpClient,
             IConfiguration configuration)
@@ -33,7 +36,19 @@ public class EvoApiController : BaseController
             _logger = logger;
             _httpClient = httpClient;
             _configuration = configuration;
+            _auditCriticalService = auditCriticalService;
             InitializeAuditService(auditService);
+        }
+        
+        /// <summary>
+        /// Set user context on the audit critical service for proper logging
+        /// </summary>
+        private void SetAuditCriticalUserContext()
+        {
+            _auditCriticalService.Username = Username;
+            _auditCriticalService.UserFullName = UserFullName;
+            _auditCriticalService.IPAddress = ClientIPAddress;
+            _auditCriticalService.UserAgent = UserAgent;
         }
     #endregion
 
@@ -2250,6 +2265,11 @@ public class EvoApiController : BaseController
                     });
                 }
 
+                // Get current call center data for audit logging
+                var currentCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+                var currentCallCenters = ConvertDataTableToCallCenters(currentCallCentersDataTable);
+                var currentCallCenter = currentCallCenters?.FirstOrDefault(cc => cc.Id == id);
+
                 // Update call center
                 var success = await _dataService.UpdateCallCenterAsync(request);
                 
@@ -2257,6 +2277,33 @@ public class EvoApiController : BaseController
                 
                 if (success)
                 {
+                    // Log critical audit with change details
+                    var oldValues = new Dictionary<string, object?>
+                    {
+                        { "Name", currentCallCenter?.Name },
+                        { "Active", currentCallCenter?.Active },
+                        { "Note", currentCallCenter?.Note },
+                        { "OId", currentCallCenter?.OId },
+                        { "Attack", currentCallCenter?.Attack }
+                    };
+                    
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        { "Name", request.Name },
+                        { "Active", request.Active },
+                        { "Note", request.Note },
+                        { "OId", request.OId },
+                        { "Attack", request.Attack }
+                    };
+                    
+                    SetAuditCriticalUserContext();
+                    await _auditCriticalService.LogChangeAsync(
+                        $"Call Center Updated - {request.Name} (ID: {id})",
+                        oldValues,
+                        newValues,
+                        stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                    );
+                    
                     // Log successful operation
                     await LogOperationAsync("UpdateCallCenter", $"Updated call center {id} - {request.Name}", stopwatch.Elapsed);
         
@@ -2332,6 +2379,25 @@ public class EvoApiController : BaseController
                     };
                     
                     stopwatch.Stop();
+                    
+                    // Log critical audit for new call center creation
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        { "Name", request.Name },
+                        { "Active", request.Active },
+                        { "Note", request.Note },
+                        { "OId", request.O_id },
+                        { "Attack", request.Attack }
+                    };
+                    
+                    SetAuditCriticalUserContext();
+                    await _auditCriticalService.LogChangeAsync(
+                        $"Call Center Created - {request.Name} (ID: {newId.Value})",
+                        null,
+                        newValues,
+                        stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                    );
+                    
                     await LogOperationAsync("CreateCallCenter", $"Created call center - {request.Name} with ID {newId.Value}", stopwatch.Elapsed);
                     
                     return Ok(new ApiResponse<CallCenterDto>
@@ -4682,12 +4748,62 @@ public class EvoApiController : BaseController
                 });
             }
 
+            // Get the current values before update for critical audit logging
+            var currentCompany = await _dataService.GetCompanyDetailAsync(request.XcccId);
+            
             var result = await _dataService.UpdateCompanyGeneralInfoAsync(request);
             
             stopwatch.Stop();
             
             if (result)
             {
+                // Log critical audit with change details
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "TripCharge", currentCompany?.TripCharge },
+                    { "BillableRuleId", currentCompany?.BillableRuleId },
+                    { "TermsId", currentCompany?.TermsId },
+                    { "TaxExempt", currentCompany?.TaxExempt },
+                    { "MinimumLaborChargeMinutes", currentCompany?.MinimumLaborChargeMinutes },
+                    { "MarkupPercentage", currentCompany?.MarkupPercentage },
+                    { "MarkupPercentageSupplier", currentCompany?.MarkupPercentageSupplier },
+                    { "Active", currentCompany?.Active },
+                    { "FirmQuote", currentCompany?.FirmQuote },
+                    { "InvoiceDateShow", currentCompany?.InvoiceDateShow },
+                    { "IvrRequestNumber", currentCompany?.IvrRequestNumber },
+                    { "ClientRepresentative", currentCompany?.ClientRepresentative },
+                    { "LicenseRepresentative", currentCompany?.LicenseRepresentative },
+                    { "InvoiceExtraText", currentCompany?.InvoiceExtraText },
+                    { "Note", currentCompany?.Note }
+                };
+                
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "TripCharge", request.TripCharge },
+                    { "BillableRuleId", request.BillableRuleId },
+                    { "TermsId", request.TermsId },
+                    { "TaxExempt", request.TaxExempt },
+                    { "MinimumLaborChargeMinutes", request.MinimumLaborChargeMinutes },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupPercentageSupplier", request.MarkupPercentageSupplier },
+                    { "Active", request.Active },
+                    { "FirmQuote", request.FirmQuote },
+                    { "InvoiceDateShow", request.InvoiceDateShow },
+                    { "IvrRequestNumber", request.IvrRequestNumber },
+                    { "ClientRepresentative", request.ClientRepresentative },
+                    { "LicenseRepresentative", request.LicenseRepresentative },
+                    { "InvoiceExtraText", request.InvoiceExtraText },
+                    { "Note", request.Note }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Company Updated - {currentCompany?.CompanyName} (ID: {request.XcccId})",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("UpdateCompanyGeneralInfo", $"Updated company general info for xccc_id {request.XcccId}", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -4761,6 +4877,23 @@ public class EvoApiController : BaseController
             
             if (newId.HasValue)
             {
+                // Log critical audit with new markup values
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", request.FromPrice },
+                    { "ToPrice", request.ToPrice },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupHighQuantity", request.MarkupHighQuantity }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Materials Markup Created - Company ID: {request.XcccId}",
+                    null,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("CreateMaterialsMarkup", $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<int>
@@ -4840,12 +4973,48 @@ public class EvoApiController : BaseController
                 });
             }
 
+            // Fetch old values before update for audit comparison
+            var (oldMarkupData, companyName) = await _dataService.GetMaterialsMarkupWithCompanyByIdAsync(request.MmId);
+            if (oldMarkupData == null)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = $"Materials markup record {request.MmId} not found"
+                });
+            }
+            
             var result = await _dataService.UpdateMaterialsMarkupAsync(request);
             
             stopwatch.Stop();
             
             if (result)
             {
+                // Log critical audit with change details - show all fields
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", oldMarkupData.FromPrice },
+                    { "ToPrice", oldMarkupData.ToPrice },
+                    { "MarkupPercentage", oldMarkupData.MarkupPercentage },
+                    { "MarkupHighQuantity", oldMarkupData.MarkupHighQuantity }
+                };
+                
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", request.FromPrice },
+                    { "ToPrice", request.ToPrice },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupHighQuantity", request.MarkupHighQuantity }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Materials Markup Updated - ID: {request.MmId}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("UpdateMaterialsMarkup", $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -4911,6 +5080,14 @@ public class EvoApiController : BaseController
             
             if (result)
             {
+                // Log critical audit for deletion
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogAsync(
+                    $"Materials Markup Deleted - ID: {mmId}",
+                    null,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("DeleteMaterialsMarkup", $"Deleted materials markup mm_id {mmId}", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -5940,6 +6117,168 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while retrieving the report",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/change-history")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetChangeHistory(
+        [FromQuery] string? fromDate = null,
+        [FromQuery] string? toDate = null,
+        [FromQuery] string? username = null,
+        [FromQuery] string? description = null,
+        [FromQuery] string? objectType = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting change history report. FromDate: {FromDate}, ToDate: {ToDate}, Page: {Page}", fromDate, toDate, page);
+            
+            // Parse dates from strings
+            DateTime startDate = DateTime.Now.AddDays(-30); // Default 30 days ago
+            DateTime endDate = DateTime.Now;
+            
+            if (!string.IsNullOrEmpty(fromDate) && DateTime.TryParse(fromDate, out var parsedFromDate))
+            {
+                startDate = parsedFromDate;
+            }
+            
+            if (!string.IsNullOrEmpty(toDate) && DateTime.TryParse(toDate, out var parsedToDate))
+            {
+                // Include the entire day by setting to end of day
+                endDate = parsedToDate.AddDays(1).AddSeconds(-1);
+            }
+            else
+            {
+                // Include the entire today
+                endDate = endDate.AddDays(1).AddSeconds(-1);
+            }
+            
+            // Validate pagination
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500; // Cap at 500 per page
+            
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            var records = new List<dynamic>();
+            int totalRecords = 0;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Get total count first
+                const string countSql = @"
+                    SELECT COUNT(*) as TotalCount
+                    FROM AuditCritical
+                    WHERE ac_insertdatetime >= @StartDate
+                    AND ac_insertdatetime <= @EndDate
+                    AND (@Username IS NULL OR @Username = '' OR ac_username LIKE '%' + @Username + '%')
+                    AND (@Description IS NULL OR @Description = '' OR ac_description LIKE '%' + @Description + '%')
+                    AND (@ObjectType IS NULL OR @ObjectType = '' OR ac_description LIKE '%' + @ObjectType + '%')";
+
+                using (var countCmd = new SqlCommand(countSql, connection))
+                {
+                    countCmd.Parameters.AddWithValue("@StartDate", startDate);
+                    countCmd.Parameters.AddWithValue("@EndDate", endDate);
+                    countCmd.Parameters.AddWithValue("@Username", (object?)username ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@Description", (object?)description ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@ObjectType", (object?)objectType ?? DBNull.Value);
+                    
+                    var result = await countCmd.ExecuteScalarAsync();
+                    totalRecords = result != null ? Convert.ToInt32(result) : 0;
+                }
+
+                // Get paginated records
+                const string dataSql = @"
+                    SELECT 
+                        ac_id,
+                        ac_insertdatetime,
+                        ac_username,
+                        ac_name,
+                        ac_description,
+                        ac_detail
+                    FROM AuditCritical
+                    WHERE ac_insertdatetime >= @StartDate
+                    AND ac_insertdatetime <= @EndDate
+                    AND (@Username IS NULL OR @Username = '' OR ac_username LIKE '%' + @Username + '%')
+                    AND (@Description IS NULL OR @Description = '' OR ac_description LIKE '%' + @Description + '%')
+                    AND (@ObjectType IS NULL OR @ObjectType = '' OR ac_description LIKE '%' + @ObjectType + '%')
+                    ORDER BY ac_insertdatetime DESC
+                    OFFSET @Offset ROWS
+                    FETCH NEXT @PageSize ROWS ONLY";
+
+                using (var dataCmd = new SqlCommand(dataSql, connection))
+                {
+                    dataCmd.Parameters.AddWithValue("@StartDate", startDate);
+                    dataCmd.Parameters.AddWithValue("@EndDate", endDate);
+                    dataCmd.Parameters.AddWithValue("@Username", (object?)username ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Description", (object?)description ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@ObjectType", (object?)objectType ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    dataCmd.Parameters.AddWithValue("@PageSize", pageSize);
+
+                    using (var reader = await dataCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                ac_id = reader["ac_id"],
+                                ac_insertdatetime = reader["ac_insertdatetime"],
+                                ac_username = reader["ac_username"]?.ToString() ?? string.Empty,
+                                ac_name = reader["ac_name"]?.ToString() ?? string.Empty,
+                                ac_description = reader["ac_description"]?.ToString() ?? string.Empty,
+                                ac_detail = reader["ac_detail"]?.ToString()
+                            });
+                        }
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} change history records",
+                Data = new
+                {
+                    records = records,
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    }
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving change history report");
+
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the change history",
                 Count = 0
             });
         }

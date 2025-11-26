@@ -123,6 +123,8 @@ public interface IDataService
     Task<CompanyDetailDto?> GetCompanyDetailAsync(int xcccId);
     Task<bool> UpdateCompanyGeneralInfoAsync(UpdateCompanyGeneralInfoRequest request);
     Task<int?> CreateMaterialsMarkupAsync(CreateMaterialsMarkupRequest request);
+    Task<UpdateMaterialsMarkupRequest> GetMaterialsMarkupByIdAsync(int mmId);
+    Task<(UpdateMaterialsMarkupRequest? MarkupData, string? CompanyName)> GetMaterialsMarkupWithCompanyByIdAsync(int mmId);
     Task<bool> UpdateMaterialsMarkupAsync(UpdateMaterialsMarkupRequest request);
     Task<bool> DeleteMaterialsMarkupAsync(int mmId);
     Task<bool> ResetMaterialsMarkupToDefaultAsync(int xcccId);

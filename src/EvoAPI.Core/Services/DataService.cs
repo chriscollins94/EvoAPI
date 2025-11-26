@@ -6878,6 +6878,111 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<UpdateMaterialsMarkupRequest> GetMaterialsMarkupByIdAsync(int mmId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    mm_from,
+                    mm_to,
+                    mm_markup,
+                    mm_markuphighquantity
+                FROM MaterialsMarkup
+                WHERE mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = mmId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        return new UpdateMaterialsMarkupRequest
+                        {
+                            MmId = mmId,
+                            FromPrice = reader.GetInt32(0),
+                            ToPrice = reader.GetInt32(1),
+                            MarkupPercentage = reader.GetInt32(2),
+                            MarkupHighQuantity = reader.GetInt32(3)
+                        };
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving materials markup mm_id {MmId}", mmId);
+            throw;
+        }
+    }
+
+    public async Task<(UpdateMaterialsMarkupRequest? MarkupData, string? CompanyName)> GetMaterialsMarkupWithCompanyByIdAsync(int mmId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    mm.mm_from,
+                    mm.mm_to,
+                    mm.mm_markup,
+                    mm.mm_markuphighquantity,
+                    c.c_name
+                FROM MaterialsMarkup mm
+                INNER JOIN xrefCompanyCallCenter xccc ON mm.xccc_id = xccc.xccc_id
+                INNER JOIN company c ON xccc.c_id = c.c_id
+                WHERE mm.mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = mmId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var markupData = new UpdateMaterialsMarkupRequest
+                        {
+                            MmId = mmId,
+                            FromPrice = reader.GetInt32(0),
+                            ToPrice = reader.GetInt32(1),
+                            MarkupPercentage = reader.GetInt32(2),
+                            MarkupHighQuantity = reader.GetInt32(3)
+                        };
+                        var companyName = reader.IsDBNull(4) ? null : reader.GetString(4);
+                        return (markupData, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving materials markup with company mm_id {MmId}", mmId);
+            throw;
+        }
+    }
+
     public async Task<bool> UpdateMaterialsMarkupAsync(UpdateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

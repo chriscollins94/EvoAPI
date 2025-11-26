@@ -139,6 +139,7 @@ builder.Services.AddControllers();
 
 // Register application services
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<IAuditCriticalService, AuditCriticalService>();
 builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
 
