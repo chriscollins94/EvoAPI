@@ -112,3 +112,24 @@ public class UpdateMaterialsMarkupRequest
     public int MarkupPercentage { get; set; }
     public int MarkupHighQuantity { get; set; }
 }
+
+public class CompanyPriorityDto
+{
+    public int XcpId { get; set; }
+    public int CompanyId { get; set; }
+    public int PriorityId { get; set; }
+    public string PriorityName { get; set; } = string.Empty;
+    public string CompanySpecificName { get; set; } = string.Empty;
+    public decimal ArrivalTimeInHours { get; set; }
+    public int PriorityOrder { get; set; }
+}
+
+public class UpdateCompanyPriorityRequest
+{
+    public int XcpId { get; set; }
+    public int CompanyId { get; set; }
+    public int PriorityId { get; set; }
+    public string CompanySpecificName { get; set; } = string.Empty;
+    public decimal ArrivalTimeInHours { get; set; }
+}
+

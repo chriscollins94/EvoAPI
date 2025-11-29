@@ -129,6 +129,10 @@ public interface IDataService
     Task<bool> DeleteMaterialsMarkupAsync(int mmId);
     Task<bool> ResetMaterialsMarkupToDefaultAsync(int xcccId);
     
+    // Company Priority methods
+    Task<List<CompanyPriorityDto>> GetCompanyPrioritiesAsync(int companyId);
+    Task<bool> UpdateCompanyPriorityAsync(UpdateCompanyPriorityRequest request);
+    
     // User Attachment Type methods
     Task<DataTable> GetAllUserAttachmentTypesAsync();
     Task<int?> CreateUserAttachmentTypeAsync(CreateUserAttachmentTypeRequest request);

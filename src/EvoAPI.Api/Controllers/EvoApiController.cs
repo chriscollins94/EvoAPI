@@ -5174,6 +5174,123 @@ public class EvoApiController : BaseController
         }
     }
 
+    // Company Priority endpoints
+    [HttpGet("company-priorities/{companyId}")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CompanyPriorityDto>>>> GetCompanyPriorities(int companyId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (companyId <= 0)
+            {
+                return BadRequest(new ApiResponse<List<CompanyPriorityDto>>
+                {
+                    Success = false,
+                    Message = "Invalid company ID"
+                });
+            }
+
+            var priorities = await _dataService.GetCompanyPrioritiesAsync(companyId);
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetCompanyPriorities", $"Retrieved {priorities.Count} priorities for company c_id {companyId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = true,
+                Message = "Company priorities retrieved successfully",
+                Data = priorities,
+                Count = priorities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving priorities for company c_id {CompanyId}", companyId);
+            await LogErrorAsync("GetCompanyPriorities", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve company priorities"
+            });
+        }
+    }
+
+    [HttpPut("company-priorities")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyPriority([FromBody] UpdateCompanyPriorityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (request?.XcpId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid priority ID"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.CompanySpecificName))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Company specific name is required"
+                });
+            }
+
+            if (request.ArrivalTimeInHours < 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Arrival time must be 0 or greater"
+                });
+            }
+
+            var result = await _dataService.UpdateCompanyPriorityAsync(request);
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("UpdateCompanyPriority", $"Updated company priority xcp_id {request.XcpId}, name '{request.CompanySpecificName}', arrival time {request.ArrivalTimeInHours} hours", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Company priority updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to update company priority"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company priority xcp_id {XcpId}", request?.XcpId);
+            await LogErrorAsync("UpdateCompanyPriority", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to update company priority"
+            });
+        }
+    }
+
     // User Attachment Type endpoints
     [HttpGet("userattachmenttypes")]
     public async Task<ActionResult<ApiResponse<List<UserAttachmentTypeDto>>>> GetUserAttachmentTypes()

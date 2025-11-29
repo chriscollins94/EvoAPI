@@ -7196,6 +7196,170 @@ FROM DailyTechSummary;
         }
     }
 
+    // Company Priority methods
+    public async Task<List<CompanyPriorityDto>> GetCompanyPrioritiesAsync(int companyId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // Match old interface behavior: Load ALL priorities, then merge with company-specific data
+            // This ensures all 9 priorities appear even if not in xrefCompanyPriority yet
+            const string sql = @"
+                SELECT 
+                    ISNULL(xcp.xcp_id, 0) AS xcp_id,
+                    @companyId AS c_id,
+                    p.p_id,
+                    p.p_priority,
+                    ISNULL(xcp.xcp_priority, '') AS xcp_priority,
+                    ISNULL(xcp.xcp_arrivaltimeinhours, p.p_arrivaltimeinhours) AS xcp_arrivaltimeinhours,
+                    ISNULL(p.p_order, 999) AS p_order
+                FROM Priority p
+                LEFT JOIN xrefCompanyPriority xcp ON p.p_id = xcp.p_id AND xcp.c_id = @companyId
+                ORDER BY ISNULL(p.p_order, 999)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@companyId", SqlDbType.Int).Value = companyId;
+                await connection.OpenAsync();
+
+                var priorities = new List<CompanyPriorityDto>();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        priorities.Add(new CompanyPriorityDto
+                        {
+                            XcpId = reader.GetInt32(0), // Will be 0 if not in xrefCompanyPriority
+                            CompanyId = reader.GetInt32(1),
+                            PriorityId = reader.GetInt32(2),
+                            PriorityName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                            CompanySpecificName = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                            ArrivalTimeInHours = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
+                            PriorityOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6)
+                        });
+                    }
+                }
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "GetCompanyPriorities",
+                    Detail = $"Retrieved {priorities.Count} priorities (all system priorities merged with company-specific data) for company c_id {companyId}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return priorities;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving priorities for company c_id {CompanyId}", companyId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyPriorities",
+                Detail = $"Error retrieving priorities for company c_id {companyId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateCompanyPriorityAsync(UpdateCompanyPriorityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            string sql;
+            if (request.XcpId == 0)
+            {
+                // INSERT new record - priority doesn't exist in xrefCompanyPriority yet
+                sql = @"
+                    INSERT INTO xrefCompanyPriority (c_id, p_id, xcp_priority, xcp_arrivaltimeinhours, xcp_insertdatetime)
+                    VALUES (@companyId, @priorityId, @companySpecificName, @arrivalTimeInHours, GETDATE())";
+            }
+            else
+            {
+                // UPDATE existing record
+                sql = @"
+                    UPDATE xrefCompanyPriority
+                    SET 
+                        xcp_priority = @companySpecificName,
+                        xcp_arrivaltimeinhours = @arrivalTimeInHours,
+                        xcp_modifieddatetime = GETDATE()
+                    WHERE xcp_id = @xcpId";
+            }
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                if (request.XcpId == 0)
+                {
+                    command.Parameters.Add("@companyId", SqlDbType.Int).Value = request.CompanyId;
+                    command.Parameters.Add("@priorityId", SqlDbType.Int).Value = request.PriorityId;
+                }
+                else
+                {
+                    command.Parameters.Add("@xcpId", SqlDbType.Int).Value = request.XcpId;
+                }
+                
+                command.Parameters.Add("@companySpecificName", SqlDbType.VarChar, 50).Value = request.CompanySpecificName;
+                
+                var arrivalTimeParam = command.Parameters.Add("@arrivalTimeInHours", SqlDbType.Decimal);
+                arrivalTimeParam.Precision = 18;
+                arrivalTimeParam.Scale = 2;
+                arrivalTimeParam.Value = request.ArrivalTimeInHours;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                var action = request.XcpId == 0 ? "Inserted" : "Updated";
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateCompanyPriority",
+                    Detail = $"{action} company priority for c_id {request.CompanyId}, p_id {request.PriorityId}, name '{request.CompanySpecificName}', arrival time {request.ArrivalTimeInHours} hours",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company priority xcp_id {XcpId}", request.XcpId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyPriority",
+                Detail = $"Error updating company priority xcp_id {request.XcpId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
     // User Attachment Type methods
     public async Task<DataTable> GetAllUserAttachmentTypesAsync()
     {
