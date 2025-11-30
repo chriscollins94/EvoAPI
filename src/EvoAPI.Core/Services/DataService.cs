@@ -5545,6 +5545,43 @@ FROM DailyTechSummary;
         return null;
     }
 
+    private static int? ConvertToNullableInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
+    private static decimal? ConvertToNullableDecimal(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (decimal.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
+    private static bool ConvertToBool(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return false;
+        
+        if (bool.TryParse(value.ToString(), out var result))
+            return result;
+        
+        // Handle bit values (0/1)
+        if (int.TryParse(value.ToString(), out var intResult))
+            return intResult != 0;
+            
+        return false;
+    }
+
     public async Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync()
     {
         var stopwatch = Stopwatch.StartNew();
@@ -8511,6 +8548,687 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Company Trades Management
+
+    public async Task<List<LaborRateDto>> GetCompanyTradesAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    lr.lr_id,
+                    lr.xccc_id,
+                    lr.t_id,
+                    t.t_trade AS TradeName,
+                    t.t_description AS TradeDescription,
+                    tp.t_trade AS ParentTradeName,
+                    t.t_nte AS TNte,
+                    lr.lr_descriptionoverride,
+                    lr.lr_nte,
+                    lr.lr_rateregular,
+                    lr.lr_rateovertime,
+                    lr.lr_rateholiday,
+                    lr.lr_ratespecial,
+                    lr.lr_ratescheduledafterhours,
+                    lr.lr_rateregulardiscount,
+                    lr.lr_rateregulardiscounthourslimit,
+                    lr.lr_ratehelper,
+                    lr.lr_ratehelperovertime,
+                    lr.lr_rateflat,
+                    lr.lr_flatorhourly,
+                    lr.lr_tripcharge,
+                    lr.lr_markup,
+                    lr.lr_note,
+                    lr.lr_insertdatetime,
+                    lr.lr_modifieddatetime
+                FROM dbo.LaborRate lr
+                INNER JOIN dbo.Trade t ON lr.t_id = t.t_id
+                LEFT JOIN dbo.Trade tp ON t.t_id_parent = tp.t_id
+                WHERE lr.xccc_id = @xcccId
+                ORDER BY ISNULL(tp.t_trade, ''), t.t_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<LaborRateDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new LaborRateDto
+                {
+                    LrId = ConvertToInt(row["lr_id"]),
+                    XcccId = ConvertToInt(row["xccc_id"]),
+                    TId = ConvertToInt(row["t_id"]),
+                    TradeName = row["TradeName"]?.ToString() ?? string.Empty,
+                    TradeDescription = row["TradeDescription"]?.ToString(),
+                    ParentTradeName = row["ParentTradeName"]?.ToString(),
+                    TNte = ConvertToNullableInt(row["TNte"]),
+                    LrDescriptionOverride = row["lr_descriptionoverride"]?.ToString(),
+                    LrNte = ConvertToNullableInt(row["lr_nte"]),
+                    LrRateRegular = ConvertToNullableDecimal(row["lr_rateregular"]),
+                    LrRateOvertime = ConvertToNullableDecimal(row["lr_rateovertime"]),
+                    LrRateHoliday = ConvertToNullableDecimal(row["lr_rateholiday"]),
+                    LrRateSpecial = ConvertToNullableDecimal(row["lr_ratespecial"]),
+                    LrRateScheduledAfterHours = ConvertToNullableDecimal(row["lr_ratescheduledafterhours"]),
+                    LrRateRegularDiscount = ConvertToNullableDecimal(row["lr_rateregulardiscount"]),
+                    LrRateRegularDiscountHoursLimit = ConvertToNullableDecimal(row["lr_rateregulardiscounthourslimit"]),
+                    LrRateHelper = ConvertToNullableDecimal(row["lr_ratehelper"]),
+                    LrRateHelperOvertime = ConvertToNullableDecimal(row["lr_ratehelperovertime"]),
+                    LrRateFlat = ConvertToNullableDecimal(row["lr_rateflat"]),
+                    LrFlatOrHourly = row["lr_flatorhourly"]?.ToString(),
+                    LrTripCharge = ConvertToNullableDecimal(row["lr_tripcharge"]),
+                    LrMarkup = ConvertToNullableInt(row["lr_markup"]),
+                    LrNote = row["lr_note"]?.ToString(),
+                    LrInsertDateTime = ConvertToDateTime(row["lr_insertdatetime"]),
+                    LrModifiedDateTime = ConvertToNullableDateTime(row["lr_modifieddatetime"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyTrades",
+                Detail = $"Retrieved {result.Count} labor rates for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyTrades",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving company trades for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CompanyTradeDto>> GetAvailableTradesForCompanyAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    t.t_id,
+                    t.t_id_parent,
+                    t.t_trade AS TradeName,
+                    t.t_description AS TradeDescription,
+                    tp.t_trade AS ParentTradeName,
+                    t.t_nte,
+                    t.t_parentonly,
+                    t.t_highvolume
+                FROM dbo.Trade t
+                LEFT JOIN dbo.Trade tp ON t.t_id_parent = tp.t_id
+                WHERE t.t_id_parent IS NOT NULL
+                  AND t.t_id NOT IN (
+                      SELECT t_id FROM dbo.LaborRate WHERE xccc_id = @xcccId
+                  )
+                ORDER BY ISNULL(tp.t_trade, ''), t.t_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<CompanyTradeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CompanyTradeDto
+                {
+                    TId = ConvertToInt(row["t_id"]),
+                    TIdParent = ConvertToNullableInt(row["t_id_parent"]),
+                    TradeName = row["TradeName"]?.ToString() ?? string.Empty,
+                    TradeDescription = row["TradeDescription"]?.ToString(),
+                    ParentTradeName = row["ParentTradeName"]?.ToString(),
+                    TNte = ConvertToNullableInt(row["t_nte"]),
+                    TParentOnly = ConvertToBool(row["t_parentonly"]),
+                    THighVolume = ConvertToBool(row["t_highvolume"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAvailableTradesForCompany",
+                Detail = $"Retrieved {result.Count} available trades for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAvailableTradesForCompany",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving available trades for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListDto>> GetCompanyChecklistsAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    cl_id,
+                    xccc_id,
+                    cl_name,
+                    cl_publicforquote,
+                    cl_publicforinvoice
+                FROM dbo.CheckList
+                WHERE xccc_id = @xcccId
+                ORDER BY cl_name";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<CheckListDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListDto
+                {
+                    ClId = ConvertToInt(row["cl_id"]),
+                    XcccId = ConvertToInt(row["xccc_id"]),
+                    ClName = row["cl_name"]?.ToString() ?? string.Empty,
+                    ClPublicForQuote = ConvertToBool(row["cl_publicforquote"]),
+                    ClPublicForInvoice = ConvertToBool(row["cl_publicforinvoice"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklists",
+                Detail = $"Retrieved {result.Count} checklists for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<LaborRateDto> CreateCompanyTradeAsync(int xcccId, CreateLaborRateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LrFlatOrHourly))
+            {
+                throw new ArgumentException("Flat/Hourly selection is required");
+            }
+
+            const string sql = @"
+                INSERT INTO dbo.LaborRate (
+                    xccc_id, t_id, lr_descriptionoverride, lr_nte,
+                    lr_rateregular, lr_rateovertime, lr_rateholiday, lr_ratespecial,
+                    lr_ratescheduledafterhours, lr_rateregulardiscount, lr_rateregulardiscounthourslimit,
+                    lr_ratehelper, lr_ratehelperovertime, lr_rateflat, lr_flatorhourly,
+                    lr_tripcharge, lr_markup, lr_note, lr_insertdatetime
+                ) VALUES (
+                    @xcccId, @tId, @lrDescriptionOverride, @lrNte,
+                    @lrRateRegular, @lrRateOvertime, @lrRateHoliday, @lrRateSpecial,
+                    @lrRateScheduledAfterHours, @lrRateRegularDiscount, @lrRateRegularDiscountHoursLimit,
+                    @lrRateHelper, @lrRateHelperOvertime, @lrRateFlat, @lrFlatOrHourly,
+                    @lrTripCharge, @lrMarkup, @lrNote, GETDATE()
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId,
+                ["@tId"] = request.TId,
+                ["@lrDescriptionOverride"] = (object?)request.LrDescriptionOverride ?? DBNull.Value,
+                ["@lrNte"] = (object?)request.LrNte ?? DBNull.Value,
+                ["@lrRateRegular"] = (object?)request.LrRateRegular ?? DBNull.Value,
+                ["@lrRateOvertime"] = (object?)request.LrRateOvertime ?? DBNull.Value,
+                ["@lrRateHoliday"] = (object?)request.LrRateHoliday ?? DBNull.Value,
+                ["@lrRateSpecial"] = (object?)request.LrRateSpecial ?? DBNull.Value,
+                ["@lrRateScheduledAfterHours"] = (object?)request.LrRateScheduledAfterHours ?? DBNull.Value,
+                ["@lrRateRegularDiscount"] = (object?)request.LrRateRegularDiscount ?? DBNull.Value,
+                ["@lrRateRegularDiscountHoursLimit"] = (object?)request.LrRateRegularDiscountHoursLimit ?? DBNull.Value,
+                ["@lrRateHelper"] = (object?)request.LrRateHelper ?? DBNull.Value,
+                ["@lrRateHelperOvertime"] = (object?)request.LrRateHelperOvertime ?? DBNull.Value,
+                ["@lrRateFlat"] = (object?)request.LrRateFlat ?? DBNull.Value,
+                ["@lrFlatOrHourly"] = request.LrFlatOrHourly,
+                ["@lrTripCharge"] = (object?)request.LrTripCharge ?? DBNull.Value,
+                ["@lrMarkup"] = (object?)request.LrMarkup ?? DBNull.Value,
+                ["@lrNote"] = (object?)request.LrNote ?? DBNull.Value
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            var lrId = dt.Rows.Count > 0 ? ConvertToInt(dt.Rows[0][0]) : 0;
+
+            if (lrId == 0)
+            {
+                throw new Exception("Failed to create labor rate");
+            }
+
+            // Retrieve the newly created labor rate
+            var laborRates = await GetCompanyTradesAsync(xcccId);
+            var newLaborRate = laborRates.FirstOrDefault(lr => lr.LrId == lrId);
+
+            if (newLaborRate == null)
+            {
+                throw new Exception("Failed to retrieve newly created labor rate");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompanyTrade",
+                Detail = $"Created labor rate {lrId} for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newLaborRate;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompanyTrade",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating labor rate for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<(LaborRateDto? LaborRate, string? CompanyName, string? TradeName)> GetLaborRateWithCompanyByIdAsync(int lrId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    lr.lr_id, lr.xccc_id, lr.t_id,
+                    t.t_trade, t.t_description,
+                    pt.t_trade AS parent_trade_name,
+                    t.t_nte,
+                    lr.lr_descriptionoverride, lr.lr_nte,
+                    lr.lr_rateregular, lr.lr_rateovertime, lr.lr_rateholiday, lr.lr_ratespecial,
+                    lr.lr_ratescheduledafterhours, lr.lr_rateregulardiscount, lr.lr_rateregulardiscounthourslimit,
+                    lr.lr_ratehelper, lr.lr_ratehelperovertime, lr.lr_rateflat, lr.lr_flatorhourly,
+                    lr.lr_tripcharge, lr.lr_markup, lr.lr_note,
+                    lr.lr_insertdatetime, lr.lr_modifieddatetime,
+                    c.c_name
+                FROM dbo.LaborRate lr
+                INNER JOIN dbo.Trade t ON lr.t_id = t.t_id
+                LEFT JOIN dbo.Trade pt ON t.t_id_parent = pt.t_id
+                INNER JOIN xrefCompanyCallCenter xccc ON lr.xccc_id = xccc.xccc_id
+                INNER JOIN company c ON xccc.c_id = c.c_id
+                WHERE lr.lr_id = @lrId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@lrId", SqlDbType.Int).Value = lrId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var laborRate = new LaborRateDto
+                        {
+                            LrId = reader.GetInt32(0),
+                            XcccId = reader.GetInt32(1),
+                            TId = reader.GetInt32(2),
+                            TradeName = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            TradeDescription = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            ParentTradeName = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            TNte = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                            LrDescriptionOverride = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            LrNte = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                            LrRateRegular = reader.IsDBNull(9) ? null : reader.GetDecimal(9),
+                            LrRateOvertime = reader.IsDBNull(10) ? null : reader.GetDecimal(10),
+                            LrRateHoliday = reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                            LrRateSpecial = reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                            LrRateScheduledAfterHours = reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                            LrRateRegularDiscount = reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+                            LrRateRegularDiscountHoursLimit = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
+                            LrRateHelper = reader.IsDBNull(16) ? null : reader.GetDecimal(16),
+                            LrRateHelperOvertime = reader.IsDBNull(17) ? null : reader.GetDecimal(17),
+                            LrRateFlat = reader.IsDBNull(18) ? null : reader.GetDecimal(18),
+                            LrFlatOrHourly = reader.IsDBNull(19) ? null : reader.GetString(19),
+                            LrTripCharge = reader.IsDBNull(20) ? null : reader.GetDecimal(20),
+                            LrMarkup = reader.IsDBNull(21) ? null : reader.GetInt32(21),
+                            LrNote = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            LrInsertDateTime = reader.GetDateTime(23),
+                            LrModifiedDateTime = reader.IsDBNull(24) ? null : reader.GetDateTime(24)
+                        };
+                        var companyName = reader.IsDBNull(25) ? null : reader.GetString(25);
+                        var tradeName = reader.IsDBNull(3) ? null : reader.GetString(3);
+                        return (laborRate, companyName, tradeName);
+                    }
+                }
+            }
+
+            return (null, null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving labor rate with company lr_id {LrId}", lrId);
+            throw;
+        }
+    }
+
+    public async Task<List<string>> GetChecklistNamesByIdsAsync(int xcccId, List<int> checklistIds)
+    {
+        if (checklistIds == null || !checklistIds.Any())
+        {
+            return new List<string>();
+        }
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var idList = string.Join(",", checklistIds);
+            var sql = $@"
+                SELECT cl_name
+                FROM CheckList
+                WHERE xccc_id = @xcccId AND cl_id IN ({idList})
+                ORDER BY cl_name";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                await connection.OpenAsync();
+
+                var names = new List<string>();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        names.Add(reader.GetString(0));
+                    }
+                }
+                return names;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving checklist names for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<LaborRateDto?> UpdateCompanyTradeAsync(int xcccId, int lrId, UpdateLaborRateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.LaborRate
+                SET lr_descriptionoverride = @lrDescriptionOverride,
+                    lr_nte = @lrNte,
+                    lr_rateregular = @lrRateRegular,
+                    lr_rateovertime = @lrRateOvertime,
+                    lr_rateholiday = @lrRateHoliday,
+                    lr_ratespecial = @lrRateSpecial,
+                    lr_ratescheduledafterhours = @lrRateScheduledAfterHours,
+                    lr_rateregulardiscount = @lrRateRegularDiscount,
+                    lr_rateregulardiscounthourslimit = @lrRateRegularDiscountHoursLimit,
+                    lr_ratehelper = @lrRateHelper,
+                    lr_ratehelperovertime = @lrRateHelperOvertime,
+                    lr_rateflat = @lrRateFlat,
+                    lr_flatorhourly = @lrFlatOrHourly,
+                    lr_tripcharge = @lrTripCharge,
+                    lr_markup = @lrMarkup,
+                    lr_note = @lrNote,
+                    lr_modifieddatetime = GETDATE()
+                WHERE lr_id = @lrId AND xccc_id = @xcccId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId,
+                ["@xcccId"] = xcccId,
+                ["@lrDescriptionOverride"] = (object?)request.LrDescriptionOverride ?? DBNull.Value,
+                ["@lrNte"] = (object?)request.LrNte ?? DBNull.Value,
+                ["@lrRateRegular"] = (object?)request.LrRateRegular ?? DBNull.Value,
+                ["@lrRateOvertime"] = (object?)request.LrRateOvertime ?? DBNull.Value,
+                ["@lrRateHoliday"] = (object?)request.LrRateHoliday ?? DBNull.Value,
+                ["@lrRateSpecial"] = (object?)request.LrRateSpecial ?? DBNull.Value,
+                ["@lrRateScheduledAfterHours"] = (object?)request.LrRateScheduledAfterHours ?? DBNull.Value,
+                ["@lrRateRegularDiscount"] = (object?)request.LrRateRegularDiscount ?? DBNull.Value,
+                ["@lrRateRegularDiscountHoursLimit"] = (object?)request.LrRateRegularDiscountHoursLimit ?? DBNull.Value,
+                ["@lrRateHelper"] = (object?)request.LrRateHelper ?? DBNull.Value,
+                ["@lrRateHelperOvertime"] = (object?)request.LrRateHelperOvertime ?? DBNull.Value,
+                ["@lrRateFlat"] = (object?)request.LrRateFlat ?? DBNull.Value,
+                ["@lrFlatOrHourly"] = (object?)request.LrFlatOrHourly ?? DBNull.Value,
+                ["@lrTripCharge"] = (object?)request.LrTripCharge ?? DBNull.Value,
+                ["@lrMarkup"] = (object?)request.LrMarkup ?? DBNull.Value,
+                ["@lrNote"] = (object?)request.LrNote ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated labor rate
+            var laborRates = await GetCompanyTradesAsync(xcccId);
+            var updatedLaborRate = laborRates.FirstOrDefault(lr => lr.LrId == lrId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyTrade",
+                Detail = $"Updated labor rate {lrId} for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedLaborRate;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyTrade",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating labor rate {LrId} for xcccId {XcccId}", lrId, xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<int>> GetTradeChecklistsAsync(int lrId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT cl_id
+                FROM dbo.xrefLaborRateCheckList
+                WHERE lr_id = @lrId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<int>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(ConvertToInt(row["cl_id"]));
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTradeChecklists",
+                Detail = $"Retrieved {result.Count} checklists for labor rate {lrId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTradeChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists for labor rate {LrId}", lrId);
+            throw;
+        }
+    }
+
+    public async Task UpdateTradeChecklistsAsync(int lrId, List<int> checklistIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Delete existing checklist associations
+            const string deleteSql = @"
+                DELETE FROM dbo.xrefLaborRateCheckList
+                WHERE lr_id = @lrId";
+
+            var deleteParams = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId
+            };
+
+            await ExecuteQueryAsync(deleteSql, deleteParams);
+
+            // Insert new checklist associations
+            if (checklistIds != null && checklistIds.Any())
+            {
+                foreach (var clId in checklistIds)
+                {
+                    const string insertSql = @"
+                        INSERT INTO dbo.xrefLaborRateCheckList (lr_id, cl_id, xlrcl_insertdatetime)
+                        VALUES (@lrId, @clId, GETDATE())";
+
+                    var insertParams = new Dictionary<string, object>
+                    {
+                        ["@lrId"] = lrId,
+                        ["@clId"] = clId
+                    };
+
+                    await ExecuteQueryAsync(insertSql, insertParams);
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTradeChecklists",
+                Detail = $"Updated checklists for labor rate {lrId} with {checklistIds?.Count ?? 0} checklists",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTradeChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating checklists for labor rate {LrId}", lrId);
             throw;
         }
     }

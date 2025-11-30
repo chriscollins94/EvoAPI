@@ -6159,6 +6159,385 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Company Trades Management
+
+    [HttpGet("companies/{xcccId:int}/trades")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<LaborRateDto>>>> GetCompanyTrades(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting trades for company xcccId {XcccId}", xcccId);
+            
+            var trades = await _dataService.GetCompanyTradesAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyTrades", $"Retrieved {trades.Count} trades for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<LaborRateDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {trades.Count} trades",
+                Data = trades,
+                Count = trades.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyTrades", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<LaborRateDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving company trades"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/available-trades")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CompanyTradeDto>>>> GetAvailableTrades(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting available trades for company xcccId {XcccId}", xcccId);
+            
+            var trades = await _dataService.GetAvailableTradesForCompanyAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAvailableTrades", $"Retrieved {trades.Count} available trades", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CompanyTradeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {trades.Count} available trades",
+                Data = trades,
+                Count = trades.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAvailableTrades", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CompanyTradeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving available trades"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/checklists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklists(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists for company xcccId {XcccId}", xcccId);
+            
+            var checklists = await _dataService.GetCompanyChecklistsAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyChecklists", $"Retrieved {checklists.Count} checklists", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklists.Count} checklists",
+                Data = checklists,
+                Count = checklists.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklists"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/trades")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LaborRateDto>>> CreateCompanyTrade(int xcccId, [FromBody] CreateLaborRateRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating trade for company xcccId {XcccId}", xcccId);
+            
+            var laborRate = await _dataService.CreateCompanyTradeAsync(xcccId, request);
+            
+            stopwatch.Stop();
+            
+            // Get company and trade info for audit
+            var (_, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(laborRate.LrId);
+            
+            // Log critical audit with all created values
+            var newValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", request.LrDescriptionOverride },
+                { "LrNte", request.LrNte },
+                { "LrRateRegular", request.LrRateRegular },
+                { "LrRateOvertime", request.LrRateOvertime },
+                { "LrRateHoliday", request.LrRateHoliday },
+                { "LrRateSpecial", request.LrRateSpecial },
+                { "LrRateScheduledAfterHours", request.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", request.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", request.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", request.LrRateHelper },
+                { "LrRateHelperOvertime", request.LrRateHelperOvertime },
+                { "LrRateFlat", request.LrRateFlat },
+                { "LrFlatOrHourly", request.LrFlatOrHourly },
+                { "LrTripCharge", request.LrTripCharge },
+                { "LrMarkup", request.LrMarkup },
+                { "LrNote", request.LrNote }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Created - ID: {laborRate.LrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCompanyTrade", $"Created trade {laborRate.LrId} for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LaborRateDto>
+            {
+                Success = true,
+                Message = "Trade created successfully",
+                Data = laborRate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCompanyTrade", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<LaborRateDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating trade"
+            });
+        }
+    }
+
+    [HttpPut("companies/{xcccId:int}/trades/{lrId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LaborRateDto>>> UpdateCompanyTrade(int xcccId, int lrId, [FromBody] UpdateLaborRateRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating trade {LrId} for company xcccId {XcccId}", lrId, xcccId);
+            
+            // Fetch old values before update for audit comparison
+            var (oldLaborRate, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(lrId);
+            if (oldLaborRate == null)
+            {
+                return NotFound(new ApiResponse<LaborRateDto>
+                {
+                    Success = false,
+                    Message = "Trade not found"
+                });
+            }
+            
+            var laborRate = await _dataService.UpdateCompanyTradeAsync(xcccId, lrId, request);
+            
+            if (laborRate == null)
+            {
+                return NotFound(new ApiResponse<LaborRateDto>
+                {
+                    Success = false,
+                    Message = "Trade not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details - show all fields
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", oldLaborRate.LrDescriptionOverride },
+                { "LrNte", oldLaborRate.LrNte },
+                { "LrRateRegular", oldLaborRate.LrRateRegular },
+                { "LrRateOvertime", oldLaborRate.LrRateOvertime },
+                { "LrRateHoliday", oldLaborRate.LrRateHoliday },
+                { "LrRateSpecial", oldLaborRate.LrRateSpecial },
+                { "LrRateScheduledAfterHours", oldLaborRate.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", oldLaborRate.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", oldLaborRate.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", oldLaborRate.LrRateHelper },
+                { "LrRateHelperOvertime", oldLaborRate.LrRateHelperOvertime },
+                { "LrRateFlat", oldLaborRate.LrRateFlat },
+                { "LrFlatOrHourly", oldLaborRate.LrFlatOrHourly },
+                { "LrTripCharge", oldLaborRate.LrTripCharge },
+                { "LrMarkup", oldLaborRate.LrMarkup },
+                { "LrNote", oldLaborRate.LrNote }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", request.LrDescriptionOverride },
+                { "LrNte", request.LrNte },
+                { "LrRateRegular", request.LrRateRegular },
+                { "LrRateOvertime", request.LrRateOvertime },
+                { "LrRateHoliday", request.LrRateHoliday },
+                { "LrRateSpecial", request.LrRateSpecial },
+                { "LrRateScheduledAfterHours", request.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", request.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", request.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", request.LrRateHelper },
+                { "LrRateHelperOvertime", request.LrRateHelperOvertime },
+                { "LrRateFlat", request.LrRateFlat },
+                { "LrFlatOrHourly", request.LrFlatOrHourly },
+                { "LrTripCharge", request.LrTripCharge },
+                { "LrMarkup", request.LrMarkup },
+                { "LrNote", request.LrNote }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Updated - ID: {lrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCompanyTrade", $"Updated trade {lrId} for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LaborRateDto>
+            {
+                Success = true,
+                Message = "Trade updated successfully",
+                Data = laborRate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCompanyTrade", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<LaborRateDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating trade"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<int>>>> GetTradeChecklists(int xcccId, int lrId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists for trade {LrId}", lrId);
+            
+            var checklistIds = await _dataService.GetTradeChecklistsAsync(lrId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetTradeChecklists", $"Retrieved {checklistIds.Count} checklists for trade {lrId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<int>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklistIds.Count} checklists",
+                Data = checklistIds,
+                Count = checklistIds.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTradeChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<int>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving trade checklists"
+            });
+        }
+    }
+
+    [HttpPut("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateTradeChecklists(int xcccId, int lrId, [FromBody] List<int> checklistIds)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating checklists for trade {LrId}", lrId);
+            
+            // Get old checklist IDs and names before update
+            var oldChecklistIds = await _dataService.GetTradeChecklistsAsync(lrId);
+            var oldChecklistNames = await _dataService.GetChecklistNamesByIdsAsync(xcccId, oldChecklistIds);
+            var newChecklistNames = await _dataService.GetChecklistNamesByIdsAsync(xcccId, checklistIds ?? new List<int>());
+            
+            // Get company and trade info for audit
+            var (_, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(lrId);
+            
+            await _dataService.UpdateTradeChecklistsAsync(lrId, checklistIds);
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with before/after checklist names
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Checklists", oldChecklistNames.Any() ? string.Join(", ", oldChecklistNames) : "null" }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Checklists", newChecklistNames.Any() ? string.Join(", ", newChecklistNames) : "null" }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Checklists Updated - ID: {lrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateTradeChecklists", $"Updated checklists for trade {lrId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Checklists updated successfully",
+                Count = checklistIds?.Count ?? 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateTradeChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating trade checklists"
+            });
+        }
+    }
+
+    #endregion
+
     #region Employee Attachments
 
     [HttpGet("employees/{id:int}/attachments")]

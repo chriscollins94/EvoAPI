@@ -159,4 +159,15 @@ public interface IDataService
     Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);
     Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null);
     Task<List<CertificationsLicensingReportDto>> GetCertificationsLicensingReportAsync();
+
+    // Company Trades Management methods
+    Task<List<LaborRateDto>> GetCompanyTradesAsync(int xcccId);
+    Task<List<CompanyTradeDto>> GetAvailableTradesForCompanyAsync(int xcccId);
+    Task<List<CheckListDto>> GetCompanyChecklistsAsync(int xcccId);
+    Task<LaborRateDto> CreateCompanyTradeAsync(int xcccId, CreateLaborRateRequest request);
+    Task<(LaborRateDto? LaborRate, string? CompanyName, string? TradeName)> GetLaborRateWithCompanyByIdAsync(int lrId);
+    Task<List<string>> GetChecklistNamesByIdsAsync(int xcccId, List<int> checklistIds);
+    Task<LaborRateDto?> UpdateCompanyTradeAsync(int xcccId, int lrId, UpdateLaborRateRequest request);
+    Task<List<int>> GetTradeChecklistsAsync(int lrId);
+    Task UpdateTradeChecklistsAsync(int lrId, List<int> checklistIds);
 }
