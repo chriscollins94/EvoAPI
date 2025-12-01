@@ -170,4 +170,11 @@ public interface IDataService
     Task<LaborRateDto?> UpdateCompanyTradeAsync(int xcccId, int lrId, UpdateLaborRateRequest request);
     Task<List<int>> GetTradeChecklistsAsync(int lrId);
     Task UpdateTradeChecklistsAsync(int lrId, List<int> checklistIds);
+    
+    // Contact management
+    Task<List<ContactDto>> GetCompanyContactsAsync(int cId);
+    Task<List<ContactTitleDto>> GetContactTitlesAsync();
+    Task<(ContactDto? Contact, string? CompanyName)> GetContactWithCompanyByIdAsync(int conId);
+    Task<ContactDto> CreateContactAsync(int cId, CreateContactRequest request);
+    Task<ContactDto?> UpdateContactAsync(int conId, UpdateContactRequest request);
 }

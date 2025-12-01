@@ -6538,6 +6538,285 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Company Contacts
+
+    [HttpGet("companies/{cId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactDto>>>> GetCompanyContacts(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contacts for company c_id {CId}", cId);
+            
+            var contacts = await _dataService.GetCompanyContactsAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyContacts", $"Retrieved {contacts.Count} contacts for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyContacts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contacts"
+            });
+        }
+    }
+
+    [HttpGet("contact-titles")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactTitleDto>>>> GetContactTitles()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contact titles");
+            
+            var titles = await _dataService.GetContactTitlesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetContactTitles", $"Retrieved {titles.Count} contact titles", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactTitleDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {titles.Count} contact titles",
+                Data = titles,
+                Count = titles.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetContactTitles", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactTitleDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contact titles"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> CreateContact(int cId, [FromBody] CreateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating contact for company c_id {CId}", cId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "First name is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Last name is required"
+                });
+            }
+            
+            var contact = await _dataService.CreateContactAsync(cId, request);
+            
+            stopwatch.Stop();
+            
+            // Get company name for audit
+            var (_, companyName) = await _dataService.GetContactWithCompanyByIdAsync(contact.ConId);
+            
+            // Log critical audit with all created values
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CtId", request.CtId },
+                { "CtTitle", contact.CtTitle },
+                { "ConFirstname", request.ConFirstname },
+                { "ConLastname", request.ConLastname },
+                { "ConEmail", request.ConEmail },
+                { "ConPhone", request.ConPhone },
+                { "ConMobile", request.ConMobile },
+                { "ConFax", request.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Created - ID: {contact.ConId} - {request.ConFirstname} {request.ConLastname}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateContact", $"Created contact {contact.ConId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact created successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating contact"
+            });
+        }
+    }
+
+    [HttpPut("contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> UpdateContact(int conId, [FromBody] UpdateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating contact {ConId}", conId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "First name is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Last name is required"
+                });
+            }
+            
+            // Fetch old values before update for audit comparison
+            var (oldContact, companyName) = await _dataService.GetContactWithCompanyByIdAsync(conId);
+            if (oldContact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            var contact = await _dataService.UpdateContactAsync(conId, request);
+            
+            if (contact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "CtId", oldContact.CtId },
+                { "CtTitle", oldContact.CtTitle },
+                { "ConFirstname", oldContact.ConFirstname },
+                { "ConLastname", oldContact.ConLastname },
+                { "ConEmail", oldContact.ConEmail },
+                { "ConPhone", oldContact.ConPhone },
+                { "ConMobile", oldContact.ConMobile },
+                { "ConFax", oldContact.ConFax }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CtId", request.CtId },
+                { "CtTitle", contact.CtTitle },
+                { "ConFirstname", request.ConFirstname },
+                { "ConLastname", request.ConLastname },
+                { "ConEmail", request.ConEmail },
+                { "ConPhone", request.ConPhone },
+                { "ConMobile", request.ConMobile },
+                { "ConFax", request.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Updated - ID: {conId} - {request.ConFirstname} {request.ConLastname}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateContact", $"Updated contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact updated successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating contact"
+            });
+        }
+    }
+
+    #endregion
+
     #region Employee Attachments
 
     [HttpGet("employees/{id:int}/attachments")]

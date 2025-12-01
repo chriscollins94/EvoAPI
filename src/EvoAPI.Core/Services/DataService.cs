@@ -9234,4 +9234,400 @@ FROM DailyTechSummary;
     }
 
     #endregion
+
+    #region Contact Management
+
+    public async Task<List<ContactDto>> GetCompanyContactsAsync(int cId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax,
+                    c.con_insertdatetime,
+                    c.con_modifieddatetime
+                FROM contact c
+                INNER JOIN xrefcompanycontact xcc ON c.con_id = xcc.con_id
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE xcc.c_id = @cId
+                ORDER BY ct.ct_title, c.con_lastname, c.con_firstname";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cId"] = cId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<ContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactDto
+                {
+                    ConId = ConvertToInt(row["con_id"]),
+                    OId = ConvertToNullableInt(row["o_id"]),
+                    CtId = ConvertToInt(row["ct_id"]),
+                    CtTitle = row["ct_title"]?.ToString(),
+                    ConFirstname = row["con_firstname"]?.ToString(),
+                    ConLastname = row["con_lastname"]?.ToString(),
+                    ConEmail = row["con_email"]?.ToString(),
+                    ConPhone = row["con_phone"]?.ToString(),
+                    ConMobile = row["con_mobile"]?.ToString(),
+                    ConFax = row["con_fax"]?.ToString(),
+                    ConInsertDateTime = ConvertToDateTime(row["con_insertdatetime"]),
+                    ConModifiedDateTime = ConvertToNullableDateTime(row["con_modifieddatetime"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyContacts",
+                Detail = $"Retrieved {result.Count} contacts for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contacts for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<List<ContactTitleDto>> GetContactTitlesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ct_id,
+                    o_id,
+                    ct_title,
+                    ct_insertdatetime,
+                    ct_modifieddatetime,
+                    ct_active
+                FROM contacttitle
+                WHERE ct_active = 1
+                ORDER BY ct_title";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<ContactTitleDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactTitleDto
+                {
+                    CtId = ConvertToInt(row["ct_id"]),
+                    OId = ConvertToNullableInt(row["o_id"]),
+                    CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                    CtInsertDateTime = ConvertToDateTime(row["ct_insertdatetime"]),
+                    CtModifiedDateTime = ConvertToNullableDateTime(row["ct_modifieddatetime"]),
+                    CtActive = ConvertToBool(row["ct_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetContactTitles",
+                Detail = $"Retrieved {result.Count} active contact titles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetContactTitles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contact titles");
+            throw;
+        }
+    }
+
+    public async Task<(ContactDto? Contact, string? CompanyName)> GetContactWithCompanyByIdAsync(int conId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id, c.o_id, c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname, c.con_lastname, c.con_email,
+                    c.con_phone, c.con_mobile, c.con_fax,
+                    c.con_insertdatetime, c.con_modifieddatetime,
+                    co.c_name
+                FROM contact c
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                INNER JOIN xrefcompanycontact xcc ON c.con_id = xcc.con_id
+                INNER JOIN company co ON xcc.c_id = co.c_id
+                WHERE c.con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var contact = new ContactDto
+                        {
+                            ConId = reader.GetInt32(0),
+                            OId = reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                            CtId = reader.GetInt32(2),
+                            CtTitle = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            ConFirstname = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            ConLastname = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            ConEmail = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            ConPhone = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            ConMobile = reader.IsDBNull(8) ? null : reader.GetString(8),
+                            ConFax = reader.IsDBNull(9) ? null : reader.GetString(9),
+                            ConInsertDateTime = reader.GetDateTime(10),
+                            ConModifiedDateTime = reader.IsDBNull(11) ? null : reader.GetDateTime(11)
+                        };
+                        var companyName = reader.IsDBNull(12) ? null : reader.GetString(12);
+                        return (contact, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving contact with company con_id {ConId}", conId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto> CreateContactAsync(int cId, CreateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            int conId;
+            
+            // Insert contact
+            const string insertContactSql = @"
+                INSERT INTO contact (
+                    o_id, ct_id, con_firstname, con_lastname, con_email,
+                    con_phone, con_mobile, con_fax, con_insertdatetime
+                ) VALUES (
+                    @oId, @ctId, @conFirstname, @conLastname, @conEmail,
+                    @conPhone, @conMobile, @conFax, GETDATE()
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertContactSql, connection))
+            {
+                command.Parameters.Add("@oId", SqlDbType.Int).Value = 1;
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@conFirstname", SqlDbType.VarChar, 50).Value = (object?)request.ConFirstname ?? DBNull.Value;
+                command.Parameters.Add("@conLastname", SqlDbType.VarChar, 50).Value = (object?)request.ConLastname ?? DBNull.Value;
+                command.Parameters.Add("@conEmail", SqlDbType.VarChar, 100).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@conPhone", SqlDbType.VarChar, 15).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@conMobile", SqlDbType.VarChar, 15).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@conFax", SqlDbType.VarChar, 15).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                conId = (int)await command.ExecuteScalarAsync();
+            }
+
+            if (conId == 0)
+            {
+                throw new Exception("Failed to create contact");
+            }
+
+            // Create xref entry
+            const string insertXrefSql = @"
+                INSERT INTO xrefcompanycontact (c_id, con_id, xccon_insertdatetime)
+                VALUES (@cId, @conId, GETDATE())";
+
+            var xrefParams = new Dictionary<string, object>
+            {
+                ["@cId"] = cId,
+                ["@conId"] = conId
+            };
+
+            await ExecuteQueryAsync(insertXrefSql, xrefParams);
+
+            // Retrieve the newly created contact
+            var contacts = await GetCompanyContactsAsync(cId);
+            var newContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            if (newContact == null)
+            {
+                throw new Exception("Failed to retrieve newly created contact");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateContact",
+                Detail = $"Created contact {conId} for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating contact for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> UpdateContactAsync(int conId, UpdateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            // Get c_id from xref table
+            const string getCIdSql = "SELECT c_id FROM xrefcompanycontact WHERE con_id = @conId";
+            int cId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCIdSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"Contact {conId} not found in xref table");
+                }
+                cId = (int)result;
+            }
+
+            const string sql = @"
+                UPDATE contact
+                SET ct_id = @ctId,
+                    con_firstname = @conFirstname,
+                    con_lastname = @conLastname,
+                    con_email = @conEmail,
+                    con_phone = @conPhone,
+                    con_mobile = @conMobile,
+                    con_fax = @conFax,
+                    con_modifieddatetime = GETDATE()
+                WHERE con_id = @conId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@conId"] = conId,
+                ["@ctId"] = request.CtId,
+                ["@conFirstname"] = (object?)request.ConFirstname ?? DBNull.Value,
+                ["@conLastname"] = (object?)request.ConLastname ?? DBNull.Value,
+                ["@conEmail"] = (object?)request.ConEmail ?? DBNull.Value,
+                ["@conPhone"] = (object?)request.ConPhone ?? DBNull.Value,
+                ["@conMobile"] = (object?)request.ConMobile ?? DBNull.Value,
+                ["@conFax"] = (object?)request.ConFax ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated contact
+            var contacts = await GetCompanyContactsAsync(cId);
+            var updatedContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateContact",
+                Detail = $"Updated contact {conId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    #endregion
 }
