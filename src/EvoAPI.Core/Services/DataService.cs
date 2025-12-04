@@ -2173,12 +2173,12 @@ public class DataService : IDataService
             {
                 var addressRequest = new CreateAddressRequest
                 {
-                    Address1 = request.Address1,
-                    Address2 = request.Address2,
-                    City = request.City,
-                    State = request.State,
-                    Zip = request.Zip,
-                    Active = true
+                    AAddress1 = request.Address1,
+                    AAddress2 = request.Address2,
+                    ACity = request.City,
+                    AState = request.State,
+                    AZip = request.Zip,
+                    AtId = 1
                 };
                 addressId = await CreateAddressAsync(addressRequest);
             }
@@ -2272,26 +2272,25 @@ public class DataService : IDataService
                 {
                     var addressRequest = new UpdateAddressRequest
                     {
-                        Id = addressId.Value,
-                        Address1 = request.Address1,
-                        Address2 = request.Address2,
-                        City = request.City,
-                        State = request.State,
-                        Zip = request.Zip,
-                        Active = true
+                        AAddress1 = request.Address1,
+                        AAddress2 = request.Address2,
+                        ACity = request.City,
+                        AState = request.State,
+                        AZip = request.Zip,
+                        AtId = 1
                     };
-                    await UpdateAddressAsync(addressRequest);
+                    await UpdateEmployeeAddressAsync(addressId.Value, addressRequest);
                 }
                 else
                 {
                     var addressRequest = new CreateAddressRequest
                     {
-                        Address1 = request.Address1,
-                        Address2 = request.Address2,
-                        City = request.City,
-                        State = request.State,
-                        Zip = request.Zip,
-                        Active = true
+                        AAddress1 = request.Address1,
+                        AAddress2 = request.Address2,
+                        ACity = request.City,
+                        AState = request.State,
+                        AZip = request.Zip,
+                        AtId = 1
                     };
                     addressId = await CreateAddressAsync(addressRequest);
                 }
@@ -2464,12 +2463,12 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                INSERT INTO dbo.Address (
-                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
+                INSERT INTO address (
+                    o_id, at_id, a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
                 )
                 OUTPUT INSERTED.a_id
                 VALUES (
-                    GETDATE(), @Address1, @Address2, @City, @State, @Zip, @Active
+                    1, @AtId, GETDATE(), @AAddress1, @AAddress2, @ACity, @AState, @AZip, 1
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2477,12 +2476,12 @@ public class DataService : IDataService
             await connection.OpenAsync();
             
             using var command = new SqlCommand(sql, connection);
-            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@AtId", request.AtId);
+            command.Parameters.AddWithValue("@AAddress1", request.AAddress1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AAddress2", request.AAddress2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ACity", request.ACity ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AState", request.AState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AZip", request.AZip ?? (object)DBNull.Value);
 
             var addressId = (int)await command.ExecuteScalarAsync();
             
@@ -2515,22 +2514,23 @@ public class DataService : IDataService
         }
     }
 
-    public async Task<bool> UpdateAddressAsync(UpdateAddressRequest request)
+    // Simple update for employee address management (returns bool)
+    private async Task<bool> UpdateEmployeeAddressAsync(int addressId, UpdateAddressRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             const string sql = @"
-                UPDATE dbo.Address 
+                UPDATE address 
                 SET 
+                    at_id = @AtId,
                     a_modifieddatetime = GETDATE(),
-                    a_address1 = @Address1,
-                    a_address2 = @Address2,
-                    a_city = @City,
-                    a_state = @State,
-                    a_zip = @Zip,
-                    a_active = @Active
+                    a_address1 = @AAddress1,
+                    a_address2 = @AAddress2,
+                    a_city = @ACity,
+                    a_state = @AState,
+                    a_zip = @AZip
                 WHERE a_id = @AddressId";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2538,13 +2538,13 @@ public class DataService : IDataService
             await connection.OpenAsync();
             
             using var command = new SqlCommand(sql, connection);
-            command.Parameters.AddWithValue("@AddressId", request.Id);
-            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@AddressId", addressId);
+            command.Parameters.AddWithValue("@AtId", request.AtId);
+            command.Parameters.AddWithValue("@AAddress1", request.AAddress1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AAddress2", request.AAddress2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ACity", request.ACity ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AState", request.AState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AZip", request.AZip ?? (object)DBNull.Value);
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
             
@@ -2552,8 +2552,8 @@ public class DataService : IDataService
             await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "UpdateAddress",
-                Detail = $"Updated address with ID {request.Id}",
+                Description = "UpdateEmployeeAddress",
+                Detail = $"Updated employee address with ID {addressId}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
@@ -2566,13 +2566,13 @@ public class DataService : IDataService
             await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "UpdateAddress",
+                Description = "UpdateEmployeeAddress",
                 Detail = ex.ToString(),
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
             
-            _logger.LogError(ex, "Error updating address with ID {AddressId}", request.Id);
+            _logger.LogError(ex, "Error updating employee address with ID {AddressId}", addressId);
             throw;
         }
     }
@@ -9625,6 +9625,425 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error updating contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Address Management
+
+    public async Task<List<AddressDto>> GetCompanyAddressesAsync(int cId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id,
+                    a.o_id,
+                    a.at_id,
+                    at.at_title,
+                    a.a_insertdatetime,
+                    a.a_modifieddatetime,
+                    a.a_description,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    a.a_latitude,
+                    a.a_longitude,
+                    a.a_picture,
+                    a.a_active,
+                    a.a_tempid
+                FROM address a
+                INNER JOIN xrefcompanyaddress xca ON a.a_id = xca.a_id
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                WHERE xca.c_id = @cId
+                ORDER BY at.at_title, a.a_address1";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cId"] = cId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<AddressDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressDto
+                {
+                    AId = ConvertToInt(row["a_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtId = ConvertToInt(row["at_id"]),
+                    AtTitle = row["at_title"]?.ToString(),
+                    AInsertDateTime = ConvertToDateTime(row["a_insertdatetime"]),
+                    AModifiedDateTime = ConvertToNullableDateTime(row["a_modifieddatetime"]),
+                    ADescription = row["a_description"]?.ToString(),
+                    AAddress1 = row["a_address1"]?.ToString(),
+                    AAddress2 = row["a_address2"]?.ToString(),
+                    ACity = row["a_city"]?.ToString(),
+                    AState = row["a_state"]?.ToString(),
+                    AZip = row["a_zip"]?.ToString(),
+                    ALatitude = row["a_latitude"]?.ToString(),
+                    ALongitude = row["a_longitude"]?.ToString(),
+                    APicture = row["a_picture"]?.ToString(),
+                    AActive = ConvertToBool(row["a_active"]),
+                    ATempId = row["a_tempid"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyAddresses",
+                Detail = $"Retrieved {result.Count} addresses for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyAddresses",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving addresses for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<List<AddressTitleDto>> GetAddressTitlesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    at_id,
+                    o_id,
+                    at_insertdatetime,
+                    at_modifieddatetime,
+                    at_title,
+                    at_active
+                FROM addresstitle
+                WHERE at_active = 1
+                ORDER BY at_title";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<AddressTitleDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressTitleDto
+                {
+                    AtId = ConvertToInt(row["at_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtInsertDateTime = ConvertToDateTime(row["at_insertdatetime"]),
+                    AtModifiedDateTime = ConvertToNullableDateTime(row["at_modifieddatetime"]),
+                    AtTitle = row["at_title"]?.ToString() ?? string.Empty,
+                    AtActive = ConvertToBool(row["at_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressTitles",
+                Detail = $"Retrieved {result.Count} active address titles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressTitles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving address titles");
+            throw;
+        }
+    }
+
+    public async Task<(AddressDto? Address, string? CompanyName)> GetAddressWithCompanyByIdAsync(int aId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id, a.o_id, a.at_id,
+                    at.at_title,
+                    a.a_insertdatetime, a.a_modifieddatetime, a.a_description,
+                    a.a_address1, a.a_address2, a.a_city, a.a_state, a.a_zip,
+                    a.a_latitude, a.a_longitude, a.a_picture, a.a_active, a.a_tempid,
+                    co.c_name
+                FROM address a
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                INNER JOIN xrefcompanyaddress xca ON a.a_id = xca.a_id
+                INNER JOIN company co ON xca.c_id = co.c_id
+                WHERE a.a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var address = new AddressDto
+                        {
+                            AId = reader.GetInt32(0),
+                            OId = reader.GetInt32(1),
+                            AtId = reader.GetInt32(2),
+                            AtTitle = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            AInsertDateTime = reader.GetDateTime(4),
+                            AModifiedDateTime = reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                            ADescription = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            AAddress1 = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            AAddress2 = reader.IsDBNull(8) ? null : reader.GetString(8),
+                            ACity = reader.IsDBNull(9) ? null : reader.GetString(9),
+                            AState = reader.IsDBNull(10) ? null : reader.GetString(10),
+                            AZip = reader.IsDBNull(11) ? null : reader.GetString(11),
+                            ALatitude = reader.IsDBNull(12) ? null : reader.GetString(12),
+                            ALongitude = reader.IsDBNull(13) ? null : reader.GetString(13),
+                            APicture = reader.IsDBNull(14) ? null : reader.GetString(14),
+                            AActive = reader.GetBoolean(15),
+                            ATempId = reader.IsDBNull(16) ? null : reader.GetString(16)
+                        };
+                        var companyName = reader.IsDBNull(17) ? null : reader.GetString(17);
+                        return (address, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving address with company a_id {AId}", aId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto> CreateAddressAsync(int cId, CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            int aId;
+            
+            // Insert address
+            const string insertAddressSql = @"
+                INSERT INTO address (
+                    o_id, at_id, a_description, a_address1, a_address2,
+                    a_city, a_state, a_zip, a_latitude, a_longitude,
+                    a_insertdatetime, a_active
+                ) VALUES (
+                    @oId, @atId, @aDescription, @aAddress1, @aAddress2,
+                    @aCity, @aState, @aZip, @aLatitude, @aLongitude,
+                    GETDATE(), 1
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertAddressSql, connection))
+            {
+                command.Parameters.Add("@oId", SqlDbType.Int).Value = 1;
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@aDescription", SqlDbType.VarChar, 150).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@aAddress1", SqlDbType.VarChar, 150).Value = (object?)request.AAddress1 ?? DBNull.Value;
+                command.Parameters.Add("@aAddress2", SqlDbType.VarChar, 150).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@aCity", SqlDbType.VarChar, 100).Value = (object?)request.ACity ?? DBNull.Value;
+                command.Parameters.Add("@aState", SqlDbType.VarChar, 50).Value = (object?)request.AState ?? DBNull.Value;
+                command.Parameters.Add("@aZip", SqlDbType.VarChar, 15).Value = (object?)request.AZip ?? DBNull.Value;
+                command.Parameters.Add("@aLatitude", SqlDbType.VarChar, 25).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@aLongitude", SqlDbType.VarChar, 25).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                aId = (int)await command.ExecuteScalarAsync();
+            }
+
+            if (aId == 0)
+            {
+                throw new Exception("Failed to create address");
+            }
+
+            // Create xref entry
+            const string insertXrefSql = @"
+                INSERT INTO xrefcompanyaddress (c_id, a_id, xca_insertdatetime)
+                VALUES (@cId, @aId, GETDATE())";
+
+            var xrefParams = new Dictionary<string, object>
+            {
+                ["@cId"] = cId,
+                ["@aId"] = aId
+            };
+
+            await ExecuteQueryAsync(insertXrefSql, xrefParams);
+
+            // Retrieve the newly created address
+            var addresses = await GetCompanyAddressesAsync(cId);
+            var newAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            if (newAddress == null)
+            {
+                throw new Exception("Failed to retrieve newly created address");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = $"Created address {aId} for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto?> UpdateAddressAsync(int aId, UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            // Get c_id from xref table
+            const string getCIdSql = "SELECT c_id FROM xrefcompanyaddress WHERE a_id = @aId";
+            int cId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCIdSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"Address {aId} not found in xref table");
+                }
+                cId = (int)result;
+            }
+
+            const string sql = @"
+                UPDATE address
+                SET at_id = @atId,
+                    a_description = @aDescription,
+                    a_address1 = @aAddress1,
+                    a_address2 = @aAddress2,
+                    a_city = @aCity,
+                    a_state = @aState,
+                    a_zip = @aZip,
+                    a_latitude = @aLatitude,
+                    a_longitude = @aLongitude,
+                    a_modifieddatetime = GETDATE()
+                WHERE a_id = @aId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@aId"] = aId,
+                ["@atId"] = request.AtId,
+                ["@aDescription"] = (object?)request.ADescription ?? DBNull.Value,
+                ["@aAddress1"] = (object?)request.AAddress1 ?? DBNull.Value,
+                ["@aAddress2"] = (object?)request.AAddress2 ?? DBNull.Value,
+                ["@aCity"] = (object?)request.ACity ?? DBNull.Value,
+                ["@aState"] = (object?)request.AState ?? DBNull.Value,
+                ["@aZip"] = (object?)request.AZip ?? DBNull.Value,
+                ["@aLatitude"] = (object?)request.ALatitude ?? DBNull.Value,
+                ["@aLongitude"] = (object?)request.ALongitude ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated address
+            var addresses = await GetCompanyAddressesAsync(cId);
+            var updatedAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = $"Updated address {aId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address {AId}", aId);
             throw;
         }
     }

@@ -106,7 +106,6 @@ public interface IDataService
     Task<bool> UpdateEmployeeAsync(UpdateEmployeeRequest request);
     Task<bool> UpdateEmployeeRolesAsync(int userId, List<int> roleIds);
     Task<int?> CreateAddressAsync(CreateAddressRequest request);
-    Task<bool> UpdateAddressAsync(UpdateAddressRequest request);
     
     // TradeGeneral Management methods
     Task<DataTable> GetAllTradeGeneralsAsync();
@@ -177,4 +176,11 @@ public interface IDataService
     Task<(ContactDto? Contact, string? CompanyName)> GetContactWithCompanyByIdAsync(int conId);
     Task<ContactDto> CreateContactAsync(int cId, CreateContactRequest request);
     Task<ContactDto?> UpdateContactAsync(int conId, UpdateContactRequest request);
+    
+    // Address Management
+    Task<List<AddressDto>> GetCompanyAddressesAsync(int cId);
+    Task<List<AddressTitleDto>> GetAddressTitlesAsync();
+    Task<(AddressDto? Address, string? CompanyName)> GetAddressWithCompanyByIdAsync(int aId);
+    Task<AddressDto> CreateAddressAsync(int cId, CreateAddressRequest request);
+    Task<AddressDto?> UpdateAddressAsync(int aId, UpdateAddressRequest request);
 }

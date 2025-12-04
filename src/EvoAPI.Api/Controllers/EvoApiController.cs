@@ -6491,7 +6491,7 @@ public class EvoApiController : BaseController
             // Get company and trade info for audit
             var (_, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(lrId);
             
-            await _dataService.UpdateTradeChecklistsAsync(lrId, checklistIds);
+            await _dataService.UpdateTradeChecklistsAsync(lrId, checklistIds ?? new List<int>());
             
             stopwatch.Stop();
             
@@ -6811,6 +6811,270 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while updating contact"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Company Addresses
+
+    [HttpGet("companies/{cId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressDto>>>> GetCompanyAddresses(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting addresses for company {CId}", cId);
+            
+            var addresses = await _dataService.GetCompanyAddressesAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyAddresses", $"Retrieved {addresses.Count} addresses for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {addresses.Count} addresses",
+                Data = addresses,
+                Count = addresses.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyAddresses", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving addresses"
+            });
+        }
+    }
+
+    [HttpGet("address-titles")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressTitleDto>>>> GetAddressTitles()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting address titles");
+            
+            var titles = await _dataService.GetAddressTitlesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAddressTitles", $"Retrieved {titles.Count} address titles", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressTitleDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {titles.Count} address titles",
+                Data = titles,
+                Count = titles.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAddressTitles", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressTitleDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving address titles"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> CreateAddress(int cId, [FromBody] CreateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating address for company {CId}", cId);
+            
+            // Validate required fields
+            if (request.AtId <= 0 || string.IsNullOrWhiteSpace(request.AAddress1) || 
+                string.IsNullOrWhiteSpace(request.ACity) || string.IsNullOrWhiteSpace(request.AState) || 
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title, Address 1, City, State, and Zip are required"
+                });
+            }
+            
+            var address = await _dataService.CreateAddressAsync(cId, request);
+            
+            // Get company name for audit
+            var (addressForAudit, companyName) = await _dataService.GetAddressWithCompanyByIdAsync(address.AId);
+            
+            // Audit logging
+            SetAuditCriticalUserContext();
+            var newValues = new Dictionary<string, string>
+            {
+                ["AtId"] = address.AtId.ToString(),
+                ["AtTitle"] = address.AtTitle ?? "",
+                ["ADescription"] = address.ADescription ?? "",
+                ["AAddress1"] = address.AAddress1 ?? "",
+                ["AAddress2"] = address.AAddress2 ?? "",
+                ["ACity"] = address.ACity ?? "",
+                ["AState"] = address.AState ?? "",
+                ["AZip"] = address.AZip ?? "",
+                ["ALatitude"] = address.ALatitude ?? "",
+                ["ALongitude"] = address.ALongitude ?? ""
+            };
+            
+            var newValuesObj = new Dictionary<string, object?>
+            {
+                ["AtId"] = address.AtId,
+                ["AtTitle"] = address.AtTitle,
+                ["ADescription"] = address.ADescription,
+                ["AAddress1"] = address.AAddress1,
+                ["AAddress2"] = address.AAddress2,
+                ["ACity"] = address.ACity,
+                ["AState"] = address.AState,
+                ["AZip"] = address.AZip,
+                ["ALatitude"] = address.ALatitude,
+                ["ALongitude"] = address.ALongitude
+            };
+            
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Created - ID: {address.AId} - {address.AAddress1}, {address.ACity}, {address.AState} - {companyName}",
+                null,
+                newValuesObj,
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            );
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateAddress", $"Created address {address.AId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address created successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating address"
+            });
+        }
+    }
+
+    [HttpPut("addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> UpdateAddress(int aId, [FromBody] UpdateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating address {AId}", aId);
+            
+            // Validate required fields
+            if (request.AtId <= 0 || string.IsNullOrWhiteSpace(request.AAddress1) || 
+                string.IsNullOrWhiteSpace(request.ACity) || string.IsNullOrWhiteSpace(request.AState) || 
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title, Address 1, City, State, and Zip are required"
+                });
+            }
+            
+            // Get old values for audit
+            var (oldAddress, companyName) = await _dataService.GetAddressWithCompanyByIdAsync(aId);
+            if (oldAddress == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = $"Address {aId} not found"
+                });
+            }
+            
+            var address = await _dataService.UpdateAddressAsync(aId, request);
+            if (address == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = $"Address {aId} not found after update"
+                });
+            }
+            
+            // Audit logging with before/after values
+            SetAuditCriticalUserContext();
+            var oldValues = new Dictionary<string, object?>
+            {
+                ["AtId"] = oldAddress.AtId,
+                ["AtTitle"] = oldAddress.AtTitle,
+                ["ADescription"] = oldAddress.ADescription,
+                ["AAddress1"] = oldAddress.AAddress1,
+                ["AAddress2"] = oldAddress.AAddress2,
+                ["ACity"] = oldAddress.ACity,
+                ["AState"] = oldAddress.AState,
+                ["AZip"] = oldAddress.AZip,
+                ["ALatitude"] = oldAddress.ALatitude,
+                ["ALongitude"] = oldAddress.ALongitude
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                ["AtId"] = address.AtId,
+                ["AtTitle"] = address.AtTitle,
+                ["ADescription"] = address.ADescription,
+                ["AAddress1"] = address.AAddress1,
+                ["AAddress2"] = address.AAddress2,
+                ["ACity"] = address.ACity,
+                ["AState"] = address.AState,
+                ["AZip"] = address.AZip,
+                ["ALatitude"] = address.ALatitude,
+                ["ALongitude"] = address.ALongitude
+            };
+            
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Updated - ID: {address.AId} - {address.AAddress1}, {address.ACity}, {address.AState} - {companyName}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            );
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateAddress", $"Updated address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address updated successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating address"
             });
         }
     }
