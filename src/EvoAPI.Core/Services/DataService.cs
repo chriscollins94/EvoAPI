@@ -2188,13 +2188,15 @@ public class DataService : IDataService
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
-                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
+                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id,
+                    uc_id_shirt, uc_id_jacket, upw_id, upl_id
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
-                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId,
+                    @ShirtSizeId, @JacketSizeId, @PantsWaistId, @PantsLengthId
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2319,8 +2321,9 @@ public class DataService : IDataService
                     u_picture = @Picture,
                     z_id = @ZoneId,
                     uc_id_shirt = @ShirtSizeId,
-                    uc_id_pants = @PantsSizeId,
-                    uc_id_jacket = @JacketSizeId";
+                    uc_id_jacket = @JacketSizeId,
+                    upw_id = @PantsWaistId,
+                    upl_id = @PantsLengthId";
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2353,8 +2356,9 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@ShirtSizeId", request.ShirtSizeId.HasValue && request.ShirtSizeId.Value > 0 ? request.ShirtSizeId.Value : (object)DBNull.Value);
-            command.Parameters.AddWithValue("@PantsSizeId", request.PantsSizeId.HasValue && request.PantsSizeId.Value > 0 ? request.PantsSizeId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? request.JacketSizeId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PantsWaistId", request.PantsWaistId.HasValue && request.PantsWaistId.Value > 0 ? request.PantsWaistId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PantsLengthId", request.PantsLengthId.HasValue && request.PantsLengthId.Value > 0 ? request.PantsLengthId.Value : (object)DBNull.Value);
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2736,11 +2740,14 @@ public class DataService : IDataService
                     a.a_zip as Zip,
                     -- Clothing Size IDs and Text
                     u.uc_id_shirt as ShirtSizeId,
-                    u.uc_id_pants as PantsSizeId,
                     u.uc_id_jacket as JacketSizeId,
                     uc_shirt.uc_clothingsize as ShirtSize,
-                    uc_pants.uc_clothingsize as PantsSize,
                     uc_jacket.uc_clothingsize as JacketSize,
+                    -- Pants Size IDs and Text
+                    u.upw_id as PantsWaistId,
+                    u.upl_id as PantsLengthId,
+                    upw.upw_size as PantsWaistSize,
+                    upl.upl_size as PantsLengthSize,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -2754,8 +2761,9 @@ public class DataService : IDataService
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
                 LEFT JOIN dbo.userclothing uc_shirt ON u.uc_id_shirt = uc_shirt.uc_id
-                LEFT JOIN dbo.userclothing uc_pants ON u.uc_id_pants = uc_pants.uc_id
                 LEFT JOIN dbo.userclothing uc_jacket ON u.uc_id_jacket = uc_jacket.uc_id
+                LEFT JOIN dbo.UserPantsWaist upw ON u.upw_id = upw.upw_id
+                LEFT JOIN dbo.UserPantsLength upl ON u.upl_id = upl.upl_id
                 LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
                 LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
                 LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
@@ -7773,7 +7781,389 @@ FROM DailyTechSummary;
         }
     }
 
-    // User Relationship methods
+    // User Pants Waist methods
+    public async Task<DataTable> GetAllUserPantsWaistAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    upw_id,
+                    upw_insertdatetime,
+                    upw_modifieddatetime,
+                    upw_size,
+                    upw_sex
+                FROM dbo.UserPantsWaist
+                ORDER BY upw_size, upw_sex";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsWaist",
+                Detail = $"Retrieved {result.Rows.Count} user pants waist sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user pants waist sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserPantsWaistAsync(CreateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserPantsWaist 
+                (upw_size, upw_sex, upw_insertdatetime, upw_modifieddatetime)
+                VALUES 
+                (@Size, @Sex, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserPantsWaist",
+                    Detail = $"Created new user pants waist size '{request.Size}' ({request.Sex}) with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user pants waist size {Size}", request.Size);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserPantsWaistAsync(UpdateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserPantsWaist
+                SET 
+                    upw_size = @Size,
+                    upw_sex = @Sex,
+                    upw_modifieddatetime = GETDATE()
+                WHERE upw_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsWaist",
+                Detail = $"Updated user pants waist size {request.Id} - Size: {request.Size}, Sex: {request.Sex}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user pants waist size {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Pants Length methods
+    public async Task<DataTable> GetAllUserPantsLengthAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    upl_id,
+                    upl_insertdatetime,
+                    upl_modifieddatetime,
+                    upl_size,
+                    upl_sex
+                FROM dbo.UserPantsLength
+                ORDER BY upl_size, upl_sex";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsLength",
+                Detail = $"Retrieved {result.Rows.Count} user pants length sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user pants length sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserPantsLengthAsync(CreateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserPantsLength 
+                (upl_size, upl_sex, upl_insertdatetime, upl_modifieddatetime)
+                VALUES 
+                (@Size, @Sex, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserPantsLength",
+                    Detail = $"Created new user pants length size '{request.Size}' ({request.Sex}) with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user pants length size {Size}", request.Size);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserPantsLengthAsync(UpdateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserPantsLength
+                SET 
+                    upl_size = @Size,
+                    upl_sex = @Sex,
+                    upl_modifieddatetime = GETDATE()
+                WHERE upl_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsLength",
+                Detail = $"Updated user pants length size {request.Id} - Size: {request.Size}, Sex: {request.Sex}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user pants length size {Id}", request.Id);
+            throw;
+        }
+    }
     public async Task<DataTable> GetAllUserRelationshipsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

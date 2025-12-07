@@ -142,6 +142,16 @@ public interface IDataService
     Task<int?> CreateUserClothingSizeAsync(CreateUserClothingSizeRequest request);
     Task<bool> UpdateUserClothingSizeAsync(UpdateUserClothingSizeRequest request);
 
+    // User Pants Waist methods
+    Task<DataTable> GetAllUserPantsWaistAsync();
+    Task<int?> CreateUserPantsWaistAsync(CreateUserPantsWaistRequest request);
+    Task<bool> UpdateUserPantsWaistAsync(UpdateUserPantsWaistRequest request);
+
+    // User Pants Length methods
+    Task<DataTable> GetAllUserPantsLengthAsync();
+    Task<int?> CreateUserPantsLengthAsync(CreateUserPantsLengthRequest request);
+    Task<bool> UpdateUserPantsLengthAsync(UpdateUserPantsLengthRequest request);
+
     // User Relationship methods
     Task<DataTable> GetAllUserRelationshipsAsync();
     Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request);

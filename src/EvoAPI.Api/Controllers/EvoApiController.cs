@@ -3231,6 +3231,40 @@ public class EvoApiController : BaseController
         return clothingSizes;
     }
 
+    private static List<UserPantsWaistDto> ConvertDataTableToUserPantsWaist(DataTable dataTable)
+    {
+        var pantsWaist = new List<UserPantsWaistDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            pantsWaist.Add(new UserPantsWaistDto
+            {
+                Id = Convert.ToInt32(row["upw_id"]),
+                Size = row["upw_size"]?.ToString() ?? string.Empty,
+                Sex = row["upw_sex"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return pantsWaist;
+    }
+
+    private static List<UserPantsLengthDto> ConvertDataTableToUserPantsLength(DataTable dataTable)
+    {
+        var pantsLength = new List<UserPantsLengthDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            pantsLength.Add(new UserPantsLengthDto
+            {
+                Id = Convert.ToInt32(row["upl_id"]),
+                Size = row["upl_size"]?.ToString() ?? string.Empty,
+                Sex = row["upl_sex"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return pantsLength;
+    }
+
     private static List<UserRelationshipDto> ConvertDataTableToUserRelationships(DataTable dataTable)
     {
         var relationships = new List<UserRelationshipDto>();
@@ -4066,10 +4100,12 @@ public class EvoApiController : BaseController
                     Zip = row["Zip"]?.ToString(),
                     // Clothing Size Information
                     ShirtSizeId = row["ShirtSizeId"] != DBNull.Value ? Convert.ToInt32(row["ShirtSizeId"]) : null,
-                    PantsSizeId = row["PantsSizeId"] != DBNull.Value ? Convert.ToInt32(row["PantsSizeId"]) : null,
+                    PantsWaistId = row["PantsWaistId"] != DBNull.Value ? Convert.ToInt32(row["PantsWaistId"]) : null,
+                    PantsLengthId = row["PantsLengthId"] != DBNull.Value ? Convert.ToInt32(row["PantsLengthId"]) : null,
                     JacketSizeId = row["JacketSizeId"] != DBNull.Value ? Convert.ToInt32(row["JacketSizeId"]) : null,
                     ShirtSize = row["ShirtSize"]?.ToString(),
-                    PantsSize = row["PantsSize"]?.ToString(),
+                    PantsWaistSize = row["PantsWaistSize"]?.ToString(),
+                    PantsLengthSize = row["PantsLengthSize"]?.ToString(),
                     JacketSize = row["JacketSize"]?.ToString(),
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
@@ -5722,6 +5758,502 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while updating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    // User Pants Waist endpoints
+    [HttpGet("userpantswaist")]
+    public async Task<ActionResult<ApiResponse<List<UserPantsWaistDto>>>> GetUserPantsWaist()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user pants waist sizes");
+            
+            var dataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var pantsWaist = ConvertDataTableToUserPantsWaist(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserPantsWaist", $"Retrieved {pantsWaist.Count} user pants waist sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserPantsWaistDto>>
+            {
+                Success = true,
+                Message = "User pants waist sizes retrieved successfully",
+                Data = pantsWaist,
+                Count = pantsWaist.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user pants waist sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user pants waist sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userpantswaist")]
+    public async Task<ActionResult<ApiResponse<UserPantsWaistDto>>> CreateUserPantsWaist([FromBody] CreateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user pants waist size: {Size} ({Sex})", request.Size, request.Sex);
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var existingSizes = ConvertDataTableToUserPantsWaist(existingDataTable);
+            if (existingSizes.Any(s => s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "This pants waist size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserPantsWaistAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newPantsWaist = new UserPantsWaistDto
+                {
+                    Id = newId.Value,
+                    Size = request.Size.Trim(),
+                    Sex = request.Sex
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsWaist", $"Created user pants waist size - Size: {request.Size}, Sex: {request.Sex} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = true,
+                    Message = "User pants waist size created successfully",
+                    Data = newPantsWaist,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsWaist", $"Failed to create user pants waist size - {request.Size}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user pants waist size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user pants waist size {Size}", request.Size);
+            
+            return StatusCode(500, new ApiResponse<UserPantsWaistDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user pants waist size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userpantswaist/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserPantsWaist(int id, [FromBody] UpdateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user pants waist size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var existingSizes = ConvertDataTableToUserPantsWaist(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This pants waist size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserPantsWaistAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserPantsWaist", $"Updated user pants waist size {id} - Size: {request.Size}, Sex: {request.Sex}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User pants waist size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserPantsWaist", $"Failed to update user pants waist size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User pants waist size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user pants waist size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user pants waist size",
+                Count = 0
+            });
+        }
+    }
+
+    // User Pants Length endpoints
+    [HttpGet("userpantslength")]
+    public async Task<ActionResult<ApiResponse<List<UserPantsLengthDto>>>> GetUserPantsLength()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user pants length sizes");
+            
+            var dataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var pantsLength = ConvertDataTableToUserPantsLength(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserPantsLength", $"Retrieved {pantsLength.Count} user pants length sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserPantsLengthDto>>
+            {
+                Success = true,
+                Message = "User pants length sizes retrieved successfully",
+                Data = pantsLength,
+                Count = pantsLength.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user pants length sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user pants length sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userpantslength")]
+    public async Task<ActionResult<ApiResponse<UserPantsLengthDto>>> CreateUserPantsLength([FromBody] CreateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user pants length size: {Size} ({Sex})", request.Size, request.Sex);
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var existingSizes = ConvertDataTableToUserPantsLength(existingDataTable);
+            if (existingSizes.Any(s => s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "This pants length size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserPantsLengthAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newPantsLength = new UserPantsLengthDto
+                {
+                    Id = newId.Value,
+                    Size = request.Size.Trim(),
+                    Sex = request.Sex
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsLength", $"Created user pants length size - Size: {request.Size}, Sex: {request.Sex} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = true,
+                    Message = "User pants length size created successfully",
+                    Data = newPantsLength,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsLength", $"Failed to create user pants length size - {request.Size}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user pants length size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user pants length size {Size}", request.Size);
+            
+            return StatusCode(500, new ApiResponse<UserPantsLengthDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user pants length size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userpantslength/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserPantsLength(int id, [FromBody] UpdateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user pants length size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var existingSizes = ConvertDataTableToUserPantsLength(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This pants length size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserPantsLengthAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserPantsLength", $"Updated user pants length size {id} - Size: {request.Size}, Sex: {request.Sex}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User pants length size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserPantsLength", $"Failed to update user pants length size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User pants length size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user pants length size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user pants length size",
                 Count = 0
             });
         }

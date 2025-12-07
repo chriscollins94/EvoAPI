@@ -35,13 +35,19 @@ public class EmployeeDto
 
     // Clothing Size Information (IDs reference userclothing table)
     public int? ShirtSizeId { get; set; }
-    public int? PantsSizeId { get; set; }
     public int? JacketSizeId { get; set; }
+    
+    // Pants Size Information (IDs reference UserPantsWaist and UserPantsLength tables)
+    public int? PantsWaistId { get; set; }
+    public int? PantsLengthId { get; set; }
     
     // Clothing Size Display Text (resolved from userclothing table)
     public string? ShirtSize { get; set; }
-    public string? PantsSize { get; set; }
     public string? JacketSize { get; set; }
+    
+    // Pants Size Display Text (resolved from UserPantsWaist and UserPantsLength tables)
+    public string? PantsWaistSize { get; set; }
+    public string? PantsLengthSize { get; set; }
 
     // Role Information
     public List<UserRoleDto> Roles { get; set; } = new();
@@ -114,6 +120,14 @@ public class CreateEmployeeRequest
     public string? State { get; set; }
     public string? Zip { get; set; }
     
+    // Clothing Size Assignments (IDs reference userclothing table)
+    public int? ShirtSizeId { get; set; }
+    public int? JacketSizeId { get; set; }
+    
+    // Pants Size Assignments (IDs reference UserPantsWaist and UserPantsLength tables)
+    public int? PantsWaistId { get; set; }
+    public int? PantsLengthId { get; set; }
+    
     // Role Assignments
     public List<int> RoleIds { get; set; } = new();
 }
@@ -149,8 +163,11 @@ public class UpdateEmployeeRequest
     
     // Clothing Size Assignments (IDs reference userclothing table)
     public int? ShirtSizeId { get; set; }
-    public int? PantsSizeId { get; set; }
     public int? JacketSizeId { get; set; }
+    
+    // Pants Size Assignments (IDs reference UserPantsWaist and UserPantsLength tables)
+    public int? PantsWaistId { get; set; }
+    public int? PantsLengthId { get; set; }
     
     // Role Assignments
     public List<int> RoleIds { get; set; } = new();
