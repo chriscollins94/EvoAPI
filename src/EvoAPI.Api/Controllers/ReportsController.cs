@@ -107,6 +107,41 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("receipts/tech")]
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetTechReceiptsReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechReceiptsDashboardAsync(UserId);
+            var reportData = ConvertDataTableToReceiptsReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechReceiptsReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = true,
+                Message = "Tech receipts data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechReceiptsReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech receipts data"
+            });
+        }
+    }
+
     [HttpGet("tech-detail")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<TechDetailReportDto>>>> GetTechDetailReport()

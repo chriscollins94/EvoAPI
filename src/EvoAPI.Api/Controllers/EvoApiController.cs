@@ -6487,6 +6487,44 @@ public class EvoApiController : BaseController
     }
 
     // User Emergency Contact endpoints
+    [HttpGet("employees/emergency-contacts/all")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>>> GetAllEmergencyContacts()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting emergency contacts for all employees");
+            
+            var contactsByUserId = await _dataService.GetAllEmergencyContactsAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAllEmergencyContacts", $"Retrieved emergency contacts for {contactsByUserId.Count} employees", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>
+            {
+                Success = true,
+                Message = $"Retrieved emergency contacts for {contactsByUserId.Count} employees",
+                Data = contactsByUserId,
+                Count = contactsByUserId.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAllEmergencyContacts", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving emergency contacts for all employees");
+            
+            return StatusCode(500, new ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving emergency contacts",
+                Count = 0
+            });
+        }
+    }
+
     [HttpGet("employees/{id:int}/emergency-contacts")]
     [EvoAuthorize]
     public async Task<ActionResult<ApiResponse<List<UserEmergencyContactDto>>>> GetUserEmergencyContacts(int id)
@@ -7613,6 +7651,158 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Company Locations
+
+    [HttpGet("companies/{cId:int}/locations")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<LocationDto>>>> GetCompanyLocations(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting locations for company {CId}", cId);
+            
+            var locations = await _dataService.GetCompanyLocationsAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyLocations", $"Retrieved {locations.Count} locations for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<LocationDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {locations.Count} locations",
+                Data = locations,
+                Count = locations.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyLocations", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving locations for company {CId}", cId);
+            
+            return StatusCode(500, new ApiResponse<List<LocationDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving locations"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/locations")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LocationDto>>> CreateLocation(int cId, [FromBody] CreateLocationRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating location for company {CId}", cId);
+            
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LLocation) || 
+                string.IsNullOrWhiteSpace(request.AAddress1) ||
+                string.IsNullOrWhiteSpace(request.ACity) ||
+                string.IsNullOrWhiteSpace(request.AState) ||
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = "Location, Address 1, City, State, and Zip are required"
+                });
+            }
+
+            var location = await _dataService.CreateLocationAsync(cId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateLocation", $"Created location {location.LId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LocationDto>
+            {
+                Success = true,
+                Message = "Location created successfully",
+                Data = location,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateLocation", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating location for company {CId}", cId);
+            
+            return StatusCode(500, new ApiResponse<LocationDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating location"
+            });
+        }
+    }
+
+    [HttpPut("locations/{lId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LocationDto>>> UpdateLocation(int lId, [FromBody] UpdateLocationRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating location {LId}", lId);
+            
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LLocation) || 
+                string.IsNullOrWhiteSpace(request.AAddress1) ||
+                string.IsNullOrWhiteSpace(request.ACity) ||
+                string.IsNullOrWhiteSpace(request.AState) ||
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = "Location, Address 1, City, State, and Zip are required"
+                });
+            }
+
+            var location = await _dataService.UpdateLocationAsync(lId, request);
+            
+            if (location == null)
+            {
+                return NotFound(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = $"Location with ID {lId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateLocation", $"Updated location {lId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LocationDto>
+            {
+                Success = true,
+                Message = "Location updated successfully",
+                Data = location,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateLocation", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating location {LId}", lId);
+            
+            return StatusCode(500, new ApiResponse<LocationDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating location"
+            });
+        }
+    }
+
+    #endregion
+
     #region Employee Attachments
 
     [HttpGet("employees/{id:int}/attachments")]
@@ -7683,6 +7873,44 @@ public class EvoApiController : BaseController
             await LogErrorAsync("GetCertificationsLicensingReport", ex, stopwatch.Elapsed);
             
             _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            
+            return StatusCode(500, new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the report",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/certifications-licensing/tech")]
+    public async Task<ActionResult<ApiResponse<List<CertificationsLicensingReportDto>>>> GetTechCertificationsLicensingReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting tech certifications and licensing report for user {UserId}", UserId);
+            
+            // Get certifications and licensing for current user only
+            var reportData = await _dataService.GetTechCertificationsLicensingReportAsync(UserId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetTechCertificationsLicensingReport", $"Retrieved {reportData.Count} attachment records", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {reportData.Count} certification and licensing records",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTechCertificationsLicensingReport", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving tech certifications and licensing report");
             
             return StatusCode(500, new ApiResponse<List<CertificationsLicensingReportDto>>
             {

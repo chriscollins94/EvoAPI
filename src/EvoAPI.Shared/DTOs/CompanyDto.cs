@@ -12,6 +12,7 @@ public class CompanyDetailDto
     public decimal? TripCharge { get; set; }
     public int? BillableRuleId { get; set; }
     public string? BillableRuleDescription { get; set; }
+    public int? BillableRuleRoundToMinute { get; set; }
     public int? TermsId { get; set; }
     public string? TermsDescription { get; set; }
     public int? TermsNumberOfDays { get; set; }

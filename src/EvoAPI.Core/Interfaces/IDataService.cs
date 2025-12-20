@@ -51,6 +51,7 @@ public interface IDataService
     // Reports methods
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
+    Task<DataTable> GetTechReceiptsDashboardAsync(int userId);
     Task<DataTable> GetTechDetailDashboardAsync();
     Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId);
     Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null);
@@ -158,6 +159,7 @@ public interface IDataService
     Task<bool> UpdateUserRelationshipAsync(UpdateUserRelationshipRequest request);
 
     // User Emergency Contact methods
+    Task<Dictionary<int, List<UserEmergencyContactDto>>> GetAllEmergencyContactsAsync();
     Task<List<UserEmergencyContactDto>> GetUserEmergencyContactsAsync(int userId);
     Task<int?> CreateUserEmergencyContactAsync(int userId, CreateUserEmergencyContactRequest request);
     Task<bool> UpdateUserEmergencyContactAsync(int userId, UpdateUserEmergencyContactRequest request);
@@ -168,6 +170,7 @@ public interface IDataService
     Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId);
     Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null);
     Task<List<CertificationsLicensingReportDto>> GetCertificationsLicensingReportAsync();
+    Task<List<CertificationsLicensingReportDto>> GetTechCertificationsLicensingReportAsync(int userId);
 
     // Company Trades Management methods
     Task<List<LaborRateDto>> GetCompanyTradesAsync(int xcccId);
@@ -193,4 +196,9 @@ public interface IDataService
     Task<(AddressDto? Address, string? CompanyName)> GetAddressWithCompanyByIdAsync(int aId);
     Task<AddressDto> CreateAddressAsync(int cId, CreateAddressRequest request);
     Task<AddressDto?> UpdateAddressAsync(int aId, UpdateAddressRequest request);
+    
+    // Location Management
+    Task<List<LocationDto>> GetCompanyLocationsAsync(int cId);
+    Task<LocationDto> CreateLocationAsync(int cId, CreateLocationRequest request);
+    Task<LocationDto?> UpdateLocationAsync(int lId, UpdateLocationRequest request);
 }
