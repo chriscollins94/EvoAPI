@@ -74,6 +74,7 @@ public class CompanyListDto
     public int CallCenterId { get; set; }
     public string CompanyName { get; set; } = string.Empty;
     public bool Active { get; set; }
+    public string? Note { get; set; }
 }
 
 public class UpdateCompanyGeneralInfoRequest

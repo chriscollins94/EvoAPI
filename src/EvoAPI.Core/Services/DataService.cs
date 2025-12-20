@@ -6604,7 +6604,8 @@ FROM DailyTechSummary;
                     xccc.c_id as company_id,
                     xccc.cc_id as callcenter_id,
                     c.c_name as company_name,
-                    xccc.xccc_active
+                    xccc.xccc_active,
+                    xccc.xccc_note
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 WHERE xccc.cc_id = @callCenterId
@@ -6625,7 +6626,8 @@ FROM DailyTechSummary;
                             CompanyId = reader.GetInt32(1),
                             CallCenterId = reader.GetInt32(2),
                             CompanyName = reader.GetString(3),
-                            Active = reader.GetBoolean(4)
+                            Active = reader.GetBoolean(4),
+                            Note = reader.IsDBNull(5) ? null : reader.GetString(5)
                         });
                     }
                 }
