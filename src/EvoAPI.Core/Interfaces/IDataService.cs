@@ -16,6 +16,7 @@ public interface IDataService
     Task<DataTable> GetAllCallCentersAsync();
     Task<bool> UpdateCallCenterAsync(UpdateCallCenterRequest request);
     Task<int?> CreateCallCenterAsync(CreateCallCenterRequest request);
+    Task<ConfigSettingDto?> GetConfigSettingAsync(string identifier);
     Task<DataTable> GetAllAttackPointNotesAsync();
     Task<bool> UpdateAttackPointNoteAsync(UpdateAttackPointNoteRequest request);
     Task<int?> CreateAttackPointNoteAsync(CreateAttackPointNoteRequest request);

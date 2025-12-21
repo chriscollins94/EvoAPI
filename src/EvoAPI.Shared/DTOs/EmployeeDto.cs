@@ -49,6 +49,11 @@ public class EmployeeDto
     public string? PantsWaistSize { get; set; }
     public string? PantsLengthSize { get; set; }
 
+    // License Information
+    public string? LicenseNumber { get; set; }
+    public string? LicenseState { get; set; }
+    public DateTime? LicenseExpiration { get; set; }
+
     // Role Information
     public List<UserRoleDto> Roles { get; set; } = new();
     
@@ -128,6 +133,11 @@ public class CreateEmployeeRequest
     public int? PantsWaistId { get; set; }
     public int? PantsLengthId { get; set; }
     
+    // License Information
+    public string? LicenseNumber { get; set; }
+    public string? LicenseState { get; set; }
+    public DateTime? LicenseExpiration { get; set; }
+    
     // Role Assignments
     public List<int> RoleIds { get; set; } = new();
 }
@@ -168,6 +178,11 @@ public class UpdateEmployeeRequest
     // Pants Size Assignments (IDs reference UserPantsWaist and UserPantsLength tables)
     public int? PantsWaistId { get; set; }
     public int? PantsLengthId { get; set; }
+    
+    // License Information
+    public string? LicenseNumber { get; set; }
+    public string? LicenseState { get; set; }
+    public DateTime? LicenseExpiration { get; set; }
     
     // Role Assignments
     public List<int> RoleIds { get; set; } = new();

@@ -326,6 +326,59 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("configsettings/{identifier}")]
+        public async Task<ActionResult<ApiResponse<ConfigSettingDto>>> GetConfigSetting(string identifier)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting config setting: {Identifier}", identifier);
+                
+                // Get data from service
+                var configSetting = await _dataService.GetConfigSettingAsync(identifier);
+    
+                stopwatch.Stop();
+                
+                if (configSetting == null)
+                {
+                    await LogOperationAsync("GetConfigSetting", $"Config setting not found: {identifier}", stopwatch.Elapsed);
+                    
+                    return NotFound(new ApiResponse<ConfigSettingDto>
+                    {
+                        Success = false,
+                        Message = $"Config setting '{identifier}' not found",
+                        Count = 0
+                    });
+                }
+                
+                // Log successful operation
+                await LogOperationAsync("GetConfigSetting", $"Retrieved config setting: {identifier}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<ConfigSettingDto>
+                {
+                    Success = true,
+                    Message = "Config setting retrieved successfully",
+                    Data = configSetting,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetConfigSetting", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving config setting: {Identifier}", identifier);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving config setting",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("attackpointstatus")]
         public async Task<ActionResult<ApiResponse<List<AttackPointStatusDto>>>> GetAttackPointStatus()
         {
@@ -3990,7 +4043,10 @@ public class EvoApiController : BaseController
                 Address2 = row["Address2"]?.ToString(),
                 City = row["City"]?.ToString(),
                 State = row["State"]?.ToString(),
-                Zip = row["Zip"]?.ToString()
+                Zip = row["Zip"]?.ToString(),
+                LicenseNumber = row["LicenseNumber"]?.ToString(),
+                LicenseState = row["LicenseState"]?.ToString(),
+                LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null
             };
 
             employees.Add(employee);
@@ -4116,6 +4172,9 @@ public class EvoApiController : BaseController
                     PantsWaistSize = row["PantsWaistSize"]?.ToString(),
                     PantsLengthSize = row["PantsLengthSize"]?.ToString(),
                     JacketSize = row["JacketSize"]?.ToString(),
+                    LicenseNumber = row["LicenseNumber"]?.ToString(),
+                    LicenseState = row["LicenseState"]?.ToString(),
+                    LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4208,6 +4267,9 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    LicenseNumber = row["LicenseNumber"]?.ToString(),
+                    LicenseState = row["LicenseState"]?.ToString(),
+                    LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null,
                     Roles = new List<UserRoleDto>()
                 };
 

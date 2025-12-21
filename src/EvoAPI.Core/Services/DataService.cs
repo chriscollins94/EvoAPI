@@ -25,6 +25,64 @@ public class DataService : IDataService
         _googleMapsService = googleMapsService;
     }
 
+    public async Task<ConfigSettingDto?> GetConfigSettingAsync(string identifier)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    cs_id,
+                    cs_type,
+                    cs_identifier,
+                    cs_value,
+                    cs_insertdatetime,
+                    cs_modifieddatetime,
+                    cs_description
+                FROM ConfigSetting
+                WHERE cs_identifier = @identifier";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.AddWithValue("@identifier", identifier);
+                await connection.OpenAsync();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        stopwatch.Stop();
+                        return new ConfigSettingDto
+                        {
+                            CsId = reader.GetInt32(0),
+                            CsType = reader.IsDBNull(1) ? null : reader.GetString(1),
+                            CsIdentifier = reader.GetString(2),
+                            CsValue = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            CsInsertDateTime = reader.GetDateTime(4),
+                            CsModifiedDateTime = reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                            CsDescription = reader.IsDBNull(6) ? null : reader.GetString(6)
+                        };
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting config setting {Identifier}", identifier);
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetWorkOrdersAsync(int numberOfDays)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -1903,7 +1961,10 @@ public class DataService : IDataService
                     a.a_address2 as Address2,
                     a.a_city as City,
                     a.a_state as State,
-                    a.a_zip as Zip
+                    a.a_zip as Zip,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration
                 FROM dbo.[User] u
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
@@ -1965,6 +2026,9 @@ public class DataService : IDataService
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     u.z_id as ZoneId,
                     z.z_number as ZoneNumber,
                     z.z_description as ZoneName,
@@ -2335,7 +2399,10 @@ public class DataService : IDataService
                     uc_id_shirt = @ShirtSizeId,
                     uc_id_jacket = @JacketSizeId,
                     upw_id = @PantsWaistId,
-                    upl_id = @PantsLengthId";
+                    upl_id = @PantsLengthId,
+                    u_licensenumber = @LicenseNumber,
+                    u_licensestate = @LicenseState,
+                    u_licenseexpiration = @LicenseExpiration";
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2371,6 +2438,9 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? request.JacketSizeId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("@PantsWaistId", request.PantsWaistId.HasValue && request.PantsWaistId.Value > 0 ? request.PantsWaistId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("@PantsLengthId", request.PantsLengthId.HasValue && request.PantsLengthId.Value > 0 ? request.PantsLengthId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseNumber", request.LicenseNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseState", request.LicenseState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseExpiration", request.LicenseExpiration.HasValue ? (object)request.LicenseExpiration.Value : DBNull.Value);
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2628,6 +2698,9 @@ public class DataService : IDataService
                     a.a_city as City,
                     a.a_state as State,
                     a.a_zip as Zip,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -2760,6 +2833,10 @@ public class DataService : IDataService
                     u.upl_id as PantsLengthId,
                     upw.upw_size as PantsWaistSize,
                     upl.upl_size as PantsLengthSize,
+                    -- License Information
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -6708,6 +6785,9 @@ FROM DailyTechSummary;
                     xccc.xccc_licenserep,
                     xccc.xccc_invoiceextratext,
                     xccc.xccc_note,
+                    c.c_portalurl,
+                    c.c_portalname,
+                    c.c_portalcredentials,
                     xccc.xccc_insertdatetime,
                     xccc.xccc_modifieddatetime,
                     br.br_description,
@@ -6752,12 +6832,15 @@ FROM DailyTechSummary;
                             LicenseRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
                             InvoiceExtraText = reader.IsDBNull(18) ? null : reader.GetString(18),
                             Note = reader.IsDBNull(19) ? null : reader.GetString(19),
-                            InsertDateTime = reader.GetDateTime(20),
-                            ModifiedDateTime = reader.IsDBNull(21) ? null : reader.GetDateTime(21),
-                            BillableRuleDescription = reader.IsDBNull(22) ? null : reader.GetString(22),
-                            BillableRuleRoundToMinute = reader.IsDBNull(23) ? null : reader.GetInt32(23),
-                            TermsDescription = reader.IsDBNull(24) ? null : reader.GetString(24),
-                            TermsNumberOfDays = reader.IsDBNull(25) ? 0 : reader.GetInt32(25)
+                            PortalUrl = reader.IsDBNull(20) ? null : reader.GetString(20),
+                            PortalName = reader.IsDBNull(21) ? null : reader.GetString(21),
+                            PortalCredentials = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            InsertDateTime = reader.GetDateTime(23),
+                            ModifiedDateTime = reader.IsDBNull(24) ? null : reader.GetDateTime(24),
+                            BillableRuleDescription = reader.IsDBNull(25) ? null : reader.GetString(25),
+                            BillableRuleRoundToMinute = reader.IsDBNull(26) ? null : reader.GetInt32(26),
+                            TermsDescription = reader.IsDBNull(27) ? null : reader.GetString(27),
+                            TermsNumberOfDays = reader.IsDBNull(28) ? 0 : reader.GetInt32(28)
                         };
                     }
                 }
@@ -6905,7 +6988,14 @@ FROM DailyTechSummary;
                     xccc_invoiceextratext = @invoiceextratext,
                     xccc_note = @note,
                     xccc_modifieddatetime = GETDATE()
-                WHERE xccc_id = @xcccId";
+                WHERE xccc_id = @xcccId;
+                
+                UPDATE Company
+                SET
+                    c_portalurl = @portalurl,
+                    c_portalname = @portalname,
+                    c_portalcredentials = @portalcredentials
+                WHERE c_id = (SELECT c_id FROM xrefCompanyCallCenter WHERE xccc_id = @xcccId)";
 
             using (var connection = new SqlConnection(connectionString))
             using (var command = new SqlCommand(sql, connection))
@@ -6926,6 +7016,9 @@ FROM DailyTechSummary;
                 command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
                 command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
                 command.Parameters.Add("@note", SqlDbType.VarChar, 8000).Value = !string.IsNullOrEmpty(request.Note) ? (object)request.Note : DBNull.Value;
+                command.Parameters.Add("@portalurl", SqlDbType.VarChar, 100).Value = !string.IsNullOrEmpty(request.PortalUrl) ? (object)request.PortalUrl : DBNull.Value;
+                command.Parameters.Add("@portalname", SqlDbType.VarChar, 50).Value = !string.IsNullOrEmpty(request.PortalName) ? (object)request.PortalName : DBNull.Value;
+                command.Parameters.Add("@portalcredentials", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.PortalCredentials) ? (object)request.PortalCredentials : DBNull.Value;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
