@@ -2284,7 +2284,10 @@ public class EvoApiController : BaseController
                         { "Active", currentCallCenter?.Active },
                         { "Note", currentCallCenter?.Note },
                         { "OId", currentCallCenter?.OId },
-                        { "Attack", currentCallCenter?.Attack }
+                        { "Attack", currentCallCenter?.Attack },
+                        { "PortalName", currentCallCenter?.PortalName },
+                        { "PortalUrl", currentCallCenter?.PortalUrl },
+                        { "PortalCredentials", currentCallCenter?.PortalCredentials }
                     };
                     
                     var newValues = new Dictionary<string, object?>
@@ -2293,7 +2296,10 @@ public class EvoApiController : BaseController
                         { "Active", request.Active },
                         { "Note", request.Note },
                         { "OId", request.OId },
-                        { "Attack", request.Attack }
+                        { "Attack", request.Attack },
+                        { "PortalName", request.PortalName },
+                        { "PortalUrl", request.PortalUrl },
+                        { "PortalCredentials", request.PortalCredentials }
                     };
                     
                     SetAuditCriticalUserContext();
@@ -3186,7 +3192,10 @@ public class EvoApiController : BaseController
                 Active = Convert.ToBoolean(row["Active"]),
                 TempId = row["TempId"]?.ToString(),
                 Note = row["Note"]?.ToString(),
-                Attack = Convert.ToInt32(row["Attack"])
+                Attack = Convert.ToInt32(row["Attack"]),
+                PortalUrl = row["PortalUrl"]?.ToString(),
+                PortalName = row["PortalName"]?.ToString(),
+                PortalCredentials = row["PortalCredentials"]?.ToString()
             };
 
             callCenters.Add(callCenter);

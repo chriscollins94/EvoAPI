@@ -646,7 +646,10 @@ public class DataService : IDataService
                     cc_active as Active,
                     cc_tempid as TempId,
                     cc_note as Note,
-                    cc_attack as Attack
+                    cc_attack as Attack,
+                    cc_portalurl as PortalUrl,
+                    cc_portalname as PortalName,
+                    cc_portalcredentials as PortalCredentials
                 FROM dbo.CallCenter
                 ORDER BY cc_name";
 
@@ -696,6 +699,9 @@ public class DataService : IDataService
                     cc_tempid = @TempId,
                     cc_note = @Note,
                     cc_attack = @Attack,
+                    cc_portalurl = @PortalUrl,
+                    cc_portalname = @PortalName,
+                    cc_portalcredentials = @PortalCredentials,
                     cc_modifieddatetime = GETDATE()
                 WHERE cc_id = @Id";
 
@@ -707,7 +713,10 @@ public class DataService : IDataService
                 { "@Active", request.Active },
                 { "@TempId", request.TempId ?? (object)DBNull.Value },
                 { "@Note", request.Note ?? (object)DBNull.Value },
-                { "@Attack", request.Attack }
+                { "@Attack", request.Attack },
+                { "@PortalUrl", request.PortalUrl ?? (object)DBNull.Value },
+                { "@PortalName", request.PortalName ?? (object)DBNull.Value },
+                { "@PortalCredentials", request.PortalCredentials ?? (object)DBNull.Value }
             };
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -767,9 +776,9 @@ public class DataService : IDataService
         {
             const string sql = @"
                 INSERT INTO dbo.CallCenter 
-                (o_id, cc_name, cc_active, cc_tempid, cc_note, cc_attack, cc_insertdatetime, cc_modifieddatetime)
+                (o_id, cc_name, cc_active, cc_tempid, cc_note, cc_attack, cc_portalurl, cc_portalname, cc_portalcredentials, cc_insertdatetime, cc_modifieddatetime)
                 VALUES 
-                (@OId, @Name, @Active, @TempId, @Note, @Attack, GETDATE(), GETDATE());
+                (@OId, @Name, @Active, @TempId, @Note, @Attack, @PortalUrl, @PortalName, @PortalCredentials, GETDATE(), GETDATE());
                 
                 SELECT SCOPE_IDENTITY() as NewId;";
 
@@ -780,7 +789,10 @@ public class DataService : IDataService
                 { "@Active", request.Active },
                 { "@TempId", (object)DBNull.Value },
                 { "@Note", request.Note ?? (object)DBNull.Value },
-                { "@Attack", request.Attack }
+                { "@Attack", request.Attack },
+                { "@PortalUrl", request.PortalUrl ?? (object)DBNull.Value },
+                { "@PortalName", request.PortalName ?? (object)DBNull.Value },
+                { "@PortalCredentials", request.PortalCredentials ?? (object)DBNull.Value }
             };
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");

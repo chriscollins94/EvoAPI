@@ -28,6 +28,9 @@ public class CompanyDetailDto
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }
     public string? Note { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalName { get; set; }
+    public string? PortalCredentials { get; set; }
     
     // Timestamps
     public DateTime InsertDateTime { get; set; }
@@ -95,6 +98,9 @@ public class UpdateCompanyGeneralInfoRequest
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }
     public string? Note { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalName { get; set; }
+    public string? PortalCredentials { get; set; }
 }
 
 public class CreateMaterialsMarkupRequest
