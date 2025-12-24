@@ -3158,6 +3158,7 @@ public class EvoApiController : BaseController
                 RequestNumber = CleanString(row["RequestNumber"]),
                 TotalDue = row["TotalDue"] != DBNull.Value ? Convert.ToDecimal(row["TotalDue"]) : null,
                 Priority = CleanString(row["Priority"]),
+                PriorityColor = CleanString(row["PriorityColor"]),
                 Status = CleanString(row["Status"]),
                 SecondaryStatus = CleanString(row["SecondaryStatus"]),
                 StatusColor = CleanString(row["StatusColor"]),
