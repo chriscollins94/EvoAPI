@@ -421,20 +421,20 @@ public class EvoApiController : BaseController
             }
         }
 
-        [HttpGet("zones")]
-        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZones()
+        [HttpGet("zones/legacy")]
+        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZonesLegacy()
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             
             try
             {
-                _logger.LogInformation("Getting zones");
+                _logger.LogInformation("Getting zones (legacy endpoint)");
                 
                 var dataTable = await _dataService.GetAllZonesAsync();
                 var zones = ConvertDataTableToZones(dataTable);
                 
                 stopwatch.Stop();
-                await LogOperationAsync("GetZones", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
+                await LogOperationAsync("GetZonesLegacy", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<List<ZoneDto>>
                 {

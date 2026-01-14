@@ -9,4 +9,17 @@ public class ZoneDto
     public string? Description { get; set; }
     public string? Acronym { get; set; }
     public int UserId { get; set; }
+    
+    // Extended properties for region-zone management
+    public int ZoneId { get; set; }
+    public string ZoneNumber { get; set; } = string.Empty;
+    public string ZoneDescription { get; set; } = string.Empty;
+    public string ZoneAcronym { get; set; } = string.Empty;
+    public string? ZoneEmail { get; set; }
+    public int? ZfmUserId { get; set; }
+    public string? ZfmName { get; set; }
+    public string? ZfmPicture { get; set; }
+    public int? RegionId { get; set; }
+    public string? RegionName { get; set; }
+    public int EmployeeCount { get; set; }
 }
