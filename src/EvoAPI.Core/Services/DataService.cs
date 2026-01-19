@@ -4051,7 +4051,6 @@ FROM DailyTechSummary;
                 LEFT JOIN address a ON rp.a_id = a.a_id  -- Join with address table if a_id exists
                 LEFT JOIN zone z ON rp.z_id = z.z_id     -- Join with zone table if z_id exists
                 WHERE rp.rn = 1
-                    AND rp.u_id NOT IN (SELECT DISTINCT u_id FROM zone WHERE u_id IS NOT NULL)  -- Exclude zone managers
                 ORDER BY z.z_number, rp.u_lastname, rp.u_firstname;
             ";
 
