@@ -15,6 +15,11 @@ namespace EvoAPI.Shared.DTOs
         public string? TaxCity { get; set; }
         public string? TaxCounty { get; set; }
         public string? TaxState { get; set; }
+        public string? TaxStateCounty { get; set; }
+        public string? TaxCountyDescription { get; set; }
+        public decimal? TaxRateState { get; set; }
+        public decimal? TaxRateLabor { get; set; }
+        public decimal? TaxRateMaterial { get; set; }
         public int ZoneMicroId { get; set; }
     }
 }

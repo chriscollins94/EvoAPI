@@ -255,6 +255,11 @@ namespace EvoAPI.Api.Controllers
                         tax_city,
                         tax_county,
                         tax_state,
+                        tax_statecounty,
+                        tax_countydescription,
+                        ISNULL(tax_ratestate, 0) as tax_ratestate,
+                        ISNULL(tax_ratelabor, 0) as tax_ratelabor,
+                        ISNULL(tax_ratematerial, 0) as tax_ratematerial,
                         zm_id
                     FROM tax
                     WHERE zm_id = @ZoneMicroId
@@ -276,6 +281,11 @@ namespace EvoAPI.Api.Controllers
                         TaxCity = row["tax_city"]?.ToString(),
                         TaxCounty = row["tax_county"]?.ToString(),
                         TaxState = row["tax_state"]?.ToString(),
+                        TaxStateCounty = row["tax_statecounty"]?.ToString(),
+                        TaxCountyDescription = row["tax_countydescription"]?.ToString(),
+                        TaxRateState = row["tax_ratestate"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratestate"]) : null,
+                        TaxRateLabor = row["tax_ratelabor"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratelabor"]) : null,
+                        TaxRateMaterial = row["tax_ratematerial"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratematerial"]) : null,
                         ZoneMicroId = zmId
                     });
                 }
@@ -318,6 +328,11 @@ namespace EvoAPI.Api.Controllers
                         tax_city,
                         tax_county,
                         tax_state,
+                        tax_statecounty,
+                        tax_countydescription,
+                        ISNULL(tax_ratestate, 0) as tax_ratestate,
+                        ISNULL(tax_ratelabor, 0) as tax_ratelabor,
+                        ISNULL(tax_ratematerial, 0) as tax_ratematerial,
                         zm_id
                     FROM tax
                     WHERE tax_id = @TaxId";
@@ -344,6 +359,11 @@ namespace EvoAPI.Api.Controllers
                     TaxCity = row["tax_city"]?.ToString(),
                     TaxCounty = row["tax_county"]?.ToString(),
                     TaxState = row["tax_state"]?.ToString(),
+                    TaxStateCounty = row["tax_statecounty"]?.ToString(),
+                    TaxCountyDescription = row["tax_countydescription"]?.ToString(),
+                    TaxRateState = row["tax_ratestate"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratestate"]) : null,
+                    TaxRateLabor = row["tax_ratelabor"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratelabor"]) : null,
+                    TaxRateMaterial = row["tax_ratematerial"] != DBNull.Value ? Convert.ToDecimal(row["tax_ratematerial"]) : null,
                     ZoneMicroId = ConvertToInt(row["zm_id"])
                 };
 
@@ -377,18 +397,21 @@ namespace EvoAPI.Api.Controllers
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                if (string.IsNullOrWhiteSpace(request.TaxZip) || string.IsNullOrWhiteSpace(request.TaxState))
+                if (string.IsNullOrWhiteSpace(request.TaxZip) || string.IsNullOrWhiteSpace(request.TaxState) ||
+                    string.IsNullOrWhiteSpace(request.TaxStateCounty) || string.IsNullOrWhiteSpace(request.TaxCountyDescription))
                 {
                     return BadRequest(new ApiResponse<TaxRecordDto>
                     {
                         Success = false,
-                        Message = "Tax Zip and State are required"
+                        Message = "Tax Zip, State, State/County, and County Description are required"
                     });
                 }
 
                 const string sql = @"
-                    INSERT INTO tax (zm_id, tax_zip, tax_city, tax_county, tax_state, tax_insertdatetime)
-                    VALUES (@ZoneMicroId, @TaxZip, @TaxCity, @TaxCounty, @TaxState, GETUTCDATE());
+                    INSERT INTO tax (zm_id, tax_zip, tax_city, tax_county, tax_state, tax_statecounty, 
+                                     tax_countydescription, tax_ratestate, tax_ratelabor, tax_ratematerial, tax_insertdatetime)
+                    VALUES (@ZoneMicroId, @TaxZip, @TaxCity, @TaxCounty, @TaxState, @TaxStateCounty, 
+                            @TaxCountyDescription, @TaxRateState, @TaxRateLabor, @TaxRateMaterial, GETUTCDATE());
                     SELECT CAST(SCOPE_IDENTITY() AS INT) AS NewId;";
 
                 var resultTable = await _dataService.ExecuteQueryAsync(sql, new Dictionary<string, object>
@@ -397,7 +420,12 @@ namespace EvoAPI.Api.Controllers
                     { "@TaxZip", request.TaxZip },
                     { "@TaxCity", string.IsNullOrWhiteSpace(request.TaxCity) ? (object)DBNull.Value : request.TaxCity },
                     { "@TaxCounty", string.IsNullOrWhiteSpace(request.TaxCounty) ? (object)DBNull.Value : request.TaxCounty },
-                    { "@TaxState", request.TaxState }
+                    { "@TaxState", request.TaxState },
+                    { "@TaxStateCounty", request.TaxStateCounty },
+                    { "@TaxCountyDescription", request.TaxCountyDescription },
+                    { "@TaxRateState", request.TaxRateState.HasValue ? (object)request.TaxRateState.Value : DBNull.Value },
+                    { "@TaxRateLabor", request.TaxRateLabor.HasValue ? (object)request.TaxRateLabor.Value : DBNull.Value },
+                    { "@TaxRateMaterial", request.TaxRateMaterial.HasValue ? (object)request.TaxRateMaterial.Value : DBNull.Value }
                 });
 
                 var newId = ConvertToInt(resultTable.Rows[0]["NewId"]);
@@ -437,12 +465,13 @@ namespace EvoAPI.Api.Controllers
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                if (string.IsNullOrWhiteSpace(request.TaxZip) || string.IsNullOrWhiteSpace(request.TaxState))
+                if (string.IsNullOrWhiteSpace(request.TaxZip) || string.IsNullOrWhiteSpace(request.TaxState) ||
+                    string.IsNullOrWhiteSpace(request.TaxStateCounty) || string.IsNullOrWhiteSpace(request.TaxCountyDescription))
                 {
                     return BadRequest(new ApiResponse<TaxRecordDto>
                     {
                         Success = false,
-                        Message = "Tax Zip and State are required"
+                        Message = "Tax Zip, State, State/County, and County Description are required"
                     });
                 }
 
@@ -453,6 +482,11 @@ namespace EvoAPI.Api.Controllers
                         tax_city = @TaxCity,
                         tax_county = @TaxCounty,
                         tax_state = @TaxState,
+                        tax_statecounty = @TaxStateCounty,
+                        tax_countydescription = @TaxCountyDescription,
+                        tax_ratestate = @TaxRateState,
+                        tax_ratelabor = @TaxRateLabor,
+                        tax_ratematerial = @TaxRateMaterial,
                         tax_modifieddatetime = GETUTCDATE()
                     WHERE tax_id = @TaxId";
 
@@ -463,7 +497,12 @@ namespace EvoAPI.Api.Controllers
                     { "@TaxZip", request.TaxZip },
                     { "@TaxCity", string.IsNullOrWhiteSpace(request.TaxCity) ? (object)DBNull.Value : request.TaxCity },
                     { "@TaxCounty", string.IsNullOrWhiteSpace(request.TaxCounty) ? (object)DBNull.Value : request.TaxCounty },
-                    { "@TaxState", request.TaxState }
+                    { "@TaxState", request.TaxState },
+                    { "@TaxStateCounty", request.TaxStateCounty },
+                    { "@TaxCountyDescription", request.TaxCountyDescription },
+                    { "@TaxRateState", request.TaxRateState.HasValue ? (object)request.TaxRateState.Value : DBNull.Value },
+                    { "@TaxRateLabor", request.TaxRateLabor.HasValue ? (object)request.TaxRateLabor.Value : DBNull.Value },
+                    { "@TaxRateMaterial", request.TaxRateMaterial.HasValue ? (object)request.TaxRateMaterial.Value : DBNull.Value }
                 });
 
                 stopwatch.Stop();
@@ -567,6 +606,11 @@ namespace EvoAPI.Api.Controllers
         public string? TaxCity { get; set; }
         public string? TaxCounty { get; set; }
         public string TaxState { get; set; } = string.Empty;
+        public string TaxStateCounty { get; set; } = string.Empty;
+        public string TaxCountyDescription { get; set; } = string.Empty;
+        public decimal? TaxRateState { get; set; }
+        public decimal? TaxRateLabor { get; set; }
+        public decimal? TaxRateMaterial { get; set; }
     }
 
     public class UpdateTaxRecordRequest
@@ -576,5 +620,10 @@ namespace EvoAPI.Api.Controllers
         public string? TaxCity { get; set; }
         public string? TaxCounty { get; set; }
         public string TaxState { get; set; } = string.Empty;
+        public string TaxStateCounty { get; set; } = string.Empty;
+        public string TaxCountyDescription { get; set; } = string.Empty;
+        public decimal? TaxRateState { get; set; }
+        public decimal? TaxRateLabor { get; set; }
+        public decimal? TaxRateMaterial { get; set; }
     }
 }
