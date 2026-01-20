@@ -3612,7 +3612,7 @@ public class DataService : IDataService
                         INNER JOIN tax WITH (NOLOCK) ON LEFT(a.a_zip,5) = tax.tax_zip
                         INNER JOIN ZoneMicro zm WITH (NOLOCK) ON tax.zm_id = zm.zm_id
                         INNER JOIN zone z WITH (NOLOCK) ON CASE 
-                            WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
+                            WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'TNSP')
                             ELSE zm.z_id 
                         END = z.z_id
                         INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
@@ -4028,7 +4028,7 @@ FROM DailyTechSummary;
                         ROW_NUMBER() OVER (PARTITION BY perf.u_id ORDER BY perf.perf_insertdatetime DESC) AS rn
                     FROM performance perf
                     JOIN [user] u ON perf.u_id = u.u_id
-                    WHERE u.u_active = 1
+                    WHERE u.u_active = 1 and u.u_id not in (43)
                 )
                 SELECT 
                     rp.u_id, 
