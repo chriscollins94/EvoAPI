@@ -387,11 +387,11 @@ namespace EvoAPI.Api.Controllers
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                // Check if zone has employees
+                // Check if zone has active employees
                 const string checkSql = @"
                     SELECT COUNT(*) AS EmployeeCount
                     FROM [user] 
-                    WHERE z_id = @ZoneId";
+                    WHERE z_id = @ZoneId AND u_active = 1";
 
                 var checkTable = await _dataService.ExecuteQueryAsync(checkSql, new Dictionary<string, object>
                 {
@@ -407,6 +407,17 @@ namespace EvoAPI.Api.Controllers
                         Message = $"Cannot delete zone. It has {employeeCount} employee(s) assigned to it."
                     });
                 }
+
+                // Unassign any inactive employees from this zone before deletion
+                const string unassignSql = @"
+                    UPDATE [user]
+                    SET z_id = NULL
+                    WHERE z_id = @ZoneId AND u_active = 0";
+
+                await _dataService.ExecuteNonQueryAsync(unassignSql, new Dictionary<string, object>
+                {
+                    { "@ZoneId", id }
+                });
 
                 const string deleteSql = @"
                     DELETE FROM zone 

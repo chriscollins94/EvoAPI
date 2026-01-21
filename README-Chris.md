@@ -8,7 +8,9 @@ cd "c:\users\chris\source\repos\evoapi"; $env:ASPNETCORE_ENVIRONMENT="Test"; dot
 cd "c:\users\chris\source\repos\evoapi"; dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi-test
 
 ## Production Environment  
-cd "c:\users\chris\source\repos\evoapi"; dotnet publish src/EvoAPI.Api -c Release -o publish/evoapi-prod
+
+
+
 
 # Deployment notes:
 ## Test deployment:
