@@ -2849,7 +2849,10 @@ public class DataService : IDataService
                     xutg.xutg_id as UserTradeGeneralId,
                     xutg.tg_id as TradeGeneralId,
                     tg.tg_trade as Trade,
-                    tg.tg_type as TradeType
+                    tg.tg_type as TradeType,
+                    -- Facility Manager flags
+                    CASE WHEN zfm.z_id IS NOT NULL THEN 1 ELSE 0 END as IsZoneFacilityManager,
+                    CASE WHEN rfm.reg_id IS NOT NULL THEN 1 ELSE 0 END as IsRegionFacilityManager
                 FROM dbo.[User] u
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
@@ -2861,6 +2864,10 @@ public class DataService : IDataService
                 LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
                 LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
                 LEFT JOIN dbo.TradeGeneral tg ON xutg.tg_id = tg.tg_id
+                -- Check if this user manages any zone
+                LEFT JOIN dbo.Zone zfm ON u.u_id = zfm.u_id
+                -- Check if this user manages any region
+                LEFT JOIN dbo.Region rfm ON u.u_id = rfm.u_id
                 ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role, tg.tg_type, tg.tg_trade";
             
             var result = await ExecuteQueryAsync(sql);
@@ -4002,7 +4009,7 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTechDetailDashboardAsync()
+    public async Task<DataTable> GetTechDetailDashboardAsync(int? userId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -4015,6 +4022,32 @@ FROM DailyTechSummary;
             }
 
             var sql = @"
+                -- First, determine if user is Regional Facility Manager or Zone Facility Manager
+                -- RFM takes priority over ZFM
+                DECLARE @ManagedZones TABLE (z_id INT);
+                DECLARE @IsRFM BIT = 0;
+                
+                IF @UserId IS NOT NULL
+                BEGIN
+                    -- Check if user is Regional Facility Manager
+                    IF EXISTS (SELECT 1 FROM region WHERE u_id = @UserId)
+                    BEGIN
+                        SET @IsRFM = 1;
+                        -- Get all zones in the user's managed region(s)
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z.z_id 
+                        FROM zone z
+                        INNER JOIN region r ON z.reg_id = r.reg_id
+                        WHERE r.u_id = @UserId;
+                    END
+                    ELSE
+                    BEGIN
+                        -- User is not RFM, check if they're Zone Facility Manager
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z_id FROM zone WHERE u_id = @UserId;
+                    END
+                END;
+
                 WITH RankedPerformance AS (
                     SELECT 
                         u.u_id, 
@@ -4032,6 +4065,11 @@ FROM DailyTechSummary;
                     FROM performance perf
                     JOIN [user] u ON perf.u_id = u.u_id
                     WHERE u.u_active = 1 and u.u_id not in (43)
+                    -- Filter by managed zones if user is a Zone Facility Manager
+                    AND (
+                        NOT EXISTS (SELECT 1 FROM @ManagedZones)  -- No managed zones = show all
+                        OR u.z_id IN (SELECT z_id FROM @ManagedZones)  -- Has managed zones = filter by them
+                    )
                 )
                 SELECT 
                     rp.u_id, 
@@ -4063,6 +4101,17 @@ FROM DailyTechSummary;
                 using (var command = new SqlCommand(sql, connection))
                 {
                     command.CommandTimeout = 60;
+                    
+                    // Add userId parameter
+                    if (userId.HasValue)
+                    {
+                        command.Parameters.AddWithValue("@UserId", userId.Value);
+                    }
+                    else
+                    {
+                        command.Parameters.AddWithValue("@UserId", DBNull.Value);
+                    }
+                    
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();
                     adapter.Fill(dataTable);
@@ -4072,7 +4121,7 @@ FROM DailyTechSummary;
                     {
                         Name = "DataService",
                         Description = "GetTechDetailDashboard",
-                        Detail = $"Retrieved {dataTable.Rows.Count} tech detail records",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech detail records (userId: {(userId.HasValue ? userId.Value.ToString() : "all")})",
                         ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                         MachineName = Environment.MachineName
                     });
@@ -4173,7 +4222,7 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null)
+    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null, int? userId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -4185,7 +4234,32 @@ FROM DailyTechSummary;
             var effectiveStartDate = startDate ?? DateTime.Now.AddDays(-90);
             var effectiveEndDate = endDate ?? DateTime.Now;
             
-            const string sql = @"
+            var sql = @"
+                -- Determine if user is Regional Facility Manager or Zone Facility Manager
+                DECLARE @ManagedZones TABLE (z_id INT);
+                DECLARE @IsRFM BIT = 0;
+                
+                IF @UserId IS NOT NULL
+                BEGIN
+                    -- Check if user is Regional Facility Manager
+                    IF EXISTS (SELECT 1 FROM region WHERE u_id = @UserId)
+                    BEGIN
+                        SET @IsRFM = 1;
+                        -- Get all zones in the user's managed region(s)
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z.z_id 
+                        FROM zone z
+                        INNER JOIN region r ON z.reg_id = r.reg_id
+                        WHERE r.u_id = @UserId;
+                    END
+                    ELSE
+                    BEGIN
+                        -- User is not RFM, check if they're Zone Facility Manager
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z_id FROM zone WHERE u_id = @UserId;
+                    END
+                END;
+
                 SELECT 
                     tt.tt_id,
                     ttt.ttt_id,
@@ -4235,6 +4309,11 @@ FROM DailyTechSummary;
                 WHERE tt.tt_begin >= @StartDate 
                     AND tt.tt_begin <= @EndDate
                     AND ttt.ttt_id NOT IN (1)
+                    -- Filter by managed zones if user is a ZFM or RFM
+                    AND (
+                        NOT EXISTS (SELECT 1 FROM @ManagedZones)  -- No managed zones = show all
+                        OR u.z_id IN (SELECT z_id FROM @ManagedZones)  -- Has managed zones = filter by them
+                    )
                 ORDER BY tt.tt_id DESC;
             ";
 
@@ -4245,6 +4324,17 @@ FROM DailyTechSummary;
                 {
                     command.Parameters.AddWithValue("@StartDate", effectiveStartDate);
                     command.Parameters.AddWithValue("@EndDate", effectiveEndDate);
+                    
+                    // Add userId parameter
+                    if (userId.HasValue)
+                    {
+                        command.Parameters.AddWithValue("@UserId", userId.Value);
+                    }
+                    else
+                    {
+                        command.Parameters.AddWithValue("@UserId", DBNull.Value);
+                    }
+                    
                     command.CommandTimeout = 60;
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();

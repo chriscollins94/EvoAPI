@@ -60,6 +60,10 @@ public class EmployeeDto
     // Trade General Information
     public List<UserTradeGeneralDto> TradeGenerals { get; set; } = new();
 
+    // Facility Manager Flags
+    public bool IsZoneFacilityManager { get; set; }
+    public bool IsRegionFacilityManager { get; set; }
+
     // Computed Properties
     public string FullName => $"{FirstName} {LastName}".Trim();
     public string DisplayName => !string.IsNullOrEmpty(FullName) ? FullName : Username;

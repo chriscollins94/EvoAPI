@@ -4380,6 +4380,8 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4549,6 +4551,8 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4657,6 +4661,8 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>()
                 };
 

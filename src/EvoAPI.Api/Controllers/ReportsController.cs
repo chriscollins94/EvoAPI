@@ -150,17 +150,79 @@ public class ReportsController : BaseController
         
         try
         {
-            var dataTable = await _dataService.GetTechDetailDashboardAsync();
+            // Pass current UserId to enable zone/region-based filtering
+            var dataTable = await _dataService.GetTechDetailDashboardAsync(UserId);
             var reportData = ConvertDataTableToTechDetailReport(dataTable);
+            
+            // Check if user is Regional Facility Manager first (takes priority)
+            var managedRegionsTable = await _dataService.ExecuteQueryAsync(
+                "SELECT reg_id, reg_description FROM region WHERE u_id = @UserId ORDER BY reg_description",
+                new Dictionary<string, object> { { "@UserId", UserId } }
+            );
+            
+            var managedRegions = new List<string>();
+            var regionZones = new List<string>();
+            
+            foreach (System.Data.DataRow row in managedRegionsTable.Rows)
+            {
+                managedRegions.Add(row["reg_description"]?.ToString() ?? "");
+            }
+            
+            // If user is RFM, get all zones in their managed regions
+            if (managedRegions.Count > 0)
+            {
+                var zonesInRegionTable = await _dataService.ExecuteQueryAsync(
+                    @"SELECT z.z_number 
+                      FROM zone z
+                      INNER JOIN region r ON z.reg_id = r.reg_id
+                      WHERE r.u_id = @UserId
+                      ORDER BY z.z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in zonesInRegionTable.Rows)
+                {
+                    regionZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
+            
+            // If not RFM, check if they're Zone Facility Manager
+            var managedZones = new List<string>();
+            if (managedRegions.Count == 0)
+            {
+                var managedZonesTable = await _dataService.ExecuteQueryAsync(
+                    "SELECT z_id, z_number FROM zone WHERE u_id = @UserId ORDER BY z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in managedZonesTable.Rows)
+                {
+                    managedZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetTechDetailReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var filterMessage = "Showing all technicians";
+            if (managedRegions.Count > 0)
+            {
+                var regionText = string.Join(", ", managedRegions);
+                var zonesText = regionZones.Count > 0 ? $" (zones: {string.Join(", ", regionZones)})" : "";
+                filterMessage = $"Showing technicians in your region(s): {regionText}{zonesText}";
+            }
+            else if (managedZones.Count > 0)
+            {
+                filterMessage = $"Showing technicians in your zone(s): {string.Join(", ", managedZones)}";
+            }
+            
+            await LogAuditAsync("GetTechDetailReport", $"Retrieved {reportData.Count} records - {filterMessage}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechDetailReportDto>>
             {
                 Success = true,
-                Message = "Tech detail report data retrieved successfully",
+                Message = (managedRegions.Count > 0 || managedZones.Count > 0)
+                    ? $"Tech detail report data retrieved successfully. {filterMessage}"
+                    : "Tech detail report data retrieved successfully",
                 Data = reportData,
                 Count = reportData.Count
             });
@@ -233,8 +295,56 @@ public class ReportsController : BaseController
         
         try
         {
-            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate);
+            // Pass current UserId to enable zone/region-based filtering
+            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate, UserId);
             var reportData = ConvertDataTableToTechActivityReport(dataTable);
+            
+            // Check if user is Regional Facility Manager first (takes priority)
+            var managedRegionsTable = await _dataService.ExecuteQueryAsync(
+                "SELECT reg_id, reg_description FROM region WHERE u_id = @UserId ORDER BY reg_description",
+                new Dictionary<string, object> { { "@UserId", UserId } }
+            );
+            
+            var managedRegions = new List<string>();
+            var regionZones = new List<string>();
+            
+            foreach (System.Data.DataRow row in managedRegionsTable.Rows)
+            {
+                managedRegions.Add(row["reg_description"]?.ToString() ?? "");
+            }
+            
+            // If user is RFM, get all zones in their managed regions
+            if (managedRegions.Count > 0)
+            {
+                var zonesInRegionTable = await _dataService.ExecuteQueryAsync(
+                    @"SELECT z.z_number 
+                      FROM zone z
+                      INNER JOIN region r ON z.reg_id = r.reg_id
+                      WHERE r.u_id = @UserId
+                      ORDER BY z.z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in zonesInRegionTable.Rows)
+                {
+                    regionZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
+            
+            // If not RFM, check if they're Zone Facility Manager
+            var managedZones = new List<string>();
+            if (managedRegions.Count == 0)
+            {
+                var managedZonesTable = await _dataService.ExecuteQueryAsync(
+                    "SELECT z_id, z_number FROM zone WHERE u_id = @UserId ORDER BY z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in managedZonesTable.Rows)
+                {
+                    managedZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
             
             stopwatch.Stop();
             
@@ -242,12 +352,26 @@ public class ReportsController : BaseController
                 $"from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}" : 
                 "for last 90 days (default)";
             
-            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var filterMessage = "Showing all technicians";
+            if (managedRegions.Count > 0)
+            {
+                var regionText = string.Join(", ", managedRegions);
+                var zonesText = regionZones.Count > 0 ? $" (zones: {string.Join(", ", regionZones)})" : "";
+                filterMessage = $"Showing technicians in your region(s): {regionText}{zonesText}";
+            }
+            else if (managedZones.Count > 0)
+            {
+                filterMessage = $"Showing technicians in your zone(s): {string.Join(", ", managedZones)}";
+            }
+            
+            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo} - {filterMessage}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechActivityReportDto>>
             {
                 Success = true,
-                Message = "Tech activity report data retrieved successfully",
+                Message = (managedRegions.Count > 0 || managedZones.Count > 0)
+                    ? $"Tech activity report data retrieved successfully. {filterMessage}"
+                    : "Tech activity report data retrieved successfully",
                 Data = reportData,
                 Count = reportData.Count
             });

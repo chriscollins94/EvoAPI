@@ -53,9 +53,9 @@ public interface IDataService
     Task<DataTable> GetHighVolumeDashboardAsync();
     Task<DataTable> GetReceiptsDashboardAsync();
     Task<DataTable> GetTechReceiptsDashboardAsync(int userId);
-    Task<DataTable> GetTechDetailDashboardAsync();
+    Task<DataTable> GetTechDetailDashboardAsync(int? userId = null);
     Task<DataTable> GetTechDetailByTechnicianAsync(int technicianId);
-    Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null);
+    Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null, int? userId = null);
     Task<DataTable> GetServiceRequestNumberChangesAsync();
     Task<DataTable> GetActiveServiceRequestsAsync();
     
