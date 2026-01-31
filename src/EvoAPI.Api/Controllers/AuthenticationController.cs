@@ -41,7 +41,8 @@ public class AuthenticationController : BaseController
 
         try
         {
-            await LogAuditAsync("Login Attempt", $"Username: {request.Username}");
+            // Fire-and-forget audit logging (don't block login response)
+            _ = LogAuditAsync("Login Attempt", $"Username: {request.Username}");
 
             // Handle 2FA: Check if password ends with 3 digits
             var password = request.Password;
@@ -76,7 +77,7 @@ public class AuthenticationController : BaseController
             SetAuthenticationCookies(tokenResult.Token, xsrfToken, request.Username, tokenResult.ExpiresInSeconds);
 
             stopwatch.Stop();
-            await LogAuditAsync("Login Success", $"User: {request.Username}, UserId: {user.UserId}");
+            _ = LogAuditAsync("Login Success", $"User: {request.Username}, UserId: {user.UserId}");
 
             return Ok(new ApiResponse<LoginResponse>
             {
@@ -101,7 +102,7 @@ public class AuthenticationController : BaseController
         catch (UnauthorizedAccessException ex)
         {
             stopwatch.Stop();
-            await LogAuditErrorAsync("Login Failed", new Exception($"Username: {request.Username}, Error: {ex.Message}"));
+            _ = LogAuditErrorAsync("Login Failed", new Exception($"Username: {request.Username}, Error: {ex.Message}"));
 
             return Unauthorized(new ApiResponse<LoginResponse>
             {
@@ -116,7 +117,7 @@ public class AuthenticationController : BaseController
         {
             stopwatch.Stop();
             _logger.LogError(ex, "Login error for user: {Username}", request.Username);
-            await LogAuditErrorAsync("Login Error", ex);
+            _ = LogAuditErrorAsync("Login Error", ex);
 
             return StatusCode(500, new ApiResponse<LoginResponse>
             {
@@ -192,7 +193,7 @@ public class AuthenticationController : BaseController
 
         try
         {
-            await LogAuditAsync("Logout Attempt", $"User: {Username}");
+            _ = LogAuditAsync("Logout Attempt", $"User: {Username}");
 
             // Update TimeTracking record with logout time
             if (request != null)
@@ -204,7 +205,7 @@ public class AuthenticationController : BaseController
             ClearAuthenticationCookies();
 
             stopwatch.Stop();
-            await LogAuditAsync("Logout Success", $"User: {Username}");
+            _ = LogAuditAsync("Logout Success", $"User: {Username}");
 
             return Ok(new ApiResponse<object>
             {
@@ -219,7 +220,7 @@ public class AuthenticationController : BaseController
         {
             stopwatch.Stop();
             _logger.LogError(ex, "Logout error for user: {Username}", Username);
-            await LogAuditErrorAsync("Logout Error", ex);
+            _ = LogAuditErrorAsync("Logout Error", ex);
 
             return StatusCode(500, new ApiResponse<object>
             {
