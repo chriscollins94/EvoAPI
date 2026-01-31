@@ -143,6 +143,11 @@ builder.Services.AddScoped<IAuditCriticalService, AuditCriticalService>();
 builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
 
+// Register authentication services
+builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
+builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<ITimeTrackingService, TimeTrackingService>();
+
 // Register generic HttpClient for controllers (used by EvoApiController for file uploads)
 builder.Services.AddHttpClient();
 

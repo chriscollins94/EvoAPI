@@ -161,3 +161,83 @@ This setup is for development only. In production:
 - Use `npm run build` and `npm run export` for static builds
 - Deploy APIs separately with proper CORS configuration
 - Use environment variables for API endpoints
+
+---
+
+## Code Reuse Checklist - IMPORTANT!
+
+**Before creating new services or functionality, ALWAYS check if it already exists:**
+
+### Step 1: Search for Existing Services
+```bash
+# Find all service interfaces
+find src/EvoAPI.Core/Interfaces -name "I*.cs"
+
+# Find all service implementations
+find src/EvoAPI.Core/Services -name "*.cs"
+find src/EvoAPI.Infrastructure/Services -name "*.cs"
+
+# Search for specific functionality
+grep -r "FunctionalityName" src/
+```
+
+### Step 2: Check Common Existing Services
+
+✅ **DataService** (`IDataService`) - ALWAYS CHECK FIRST
+- Generic SQL execution: `ExecuteQueryAsync()`, `ExecuteNonQueryAsync()`
+- Config retrieval: `GetConfigSettingAsync(identifier)`
+- User management: `GetAllUsersAsync()`, `GetUserByIdAsync()`
+- Many domain-specific queries already exist
+
+✅ **AuditService** (`IAuditService`)
+- `LogAsync()` - Log events
+- `LogErrorAsync()` - Log errors
+- Automatically logs via AuditMiddleware
+
+✅ **Existing Infrastructure**
+- JWT authentication already configured in Program.cs
+- GetEvoWSSigningKey() method for token signing
+- CORS policy already configured
+- BaseController with auth helpers
+
+### Step 3: Review Program.cs Service Registrations
+
+Check `src/EvoAPI.Api/Program.cs` for all registered services:
+```csharp
+builder.Services.AddScoped<IServiceName, ServiceImplementation>();
+```
+
+### Step 4: Check for Similar Patterns
+
+Before creating:
+- **New Repository?** → Check if DataService already has the query
+- **New Config Service?** → Use `IDataService.GetConfigSettingAsync()`
+- **New Audit Logic?** → Use existing `IAuditService`
+- **New Auth Logic?** → Check if BaseController or existing middleware handles it
+
+### Example Checklist for New Feature:
+
+When adding login functionality:
+- [x] Check if JWT setup exists → YES (Program.cs lines 180-208)
+- [x] Check if config retrieval exists → YES (IDataService.GetConfigSettingAsync)
+- [x] Check if audit logging exists → YES (IAuditService)
+- [x] Check if database access exists → YES (DataService.ExecuteQueryAsync)
+- [ ] Need to create AuthenticationService → NO existing service
+- [ ] Need to create JwtTokenService → NO existing service (only validation, not creation)
+
+**Result:** Create only 3 new services instead of 7, saving significant development time.
+
+### When to Create New Services:
+
+✅ **DO create new service when:**
+- Functionality is completely new and doesn't exist
+- Existing service would become too large (> 1000 lines)
+- Clear separation of concerns requires it
+- Business logic is complex and domain-specific
+
+❌ **DON'T create new service when:**
+- DataService already has a method for it
+- It's a simple database query (use DataService.ExecuteQueryAsync)
+- It's configuration retrieval (use DataService.GetConfigSettingAsync)
+- It's audit logging (use IAuditService)
+- It's a one-time operation (consider static helper method)
