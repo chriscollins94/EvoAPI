@@ -62,18 +62,11 @@ public class AuthenticationService : IAuthenticationService
 
         var row = result.Rows[0];
 
-        // Get user permissions
+        // Get user permissions (using f_functionidentifier which includes TECH/ADMIN)
         var functions = await GetUserPermissionsAsync(username);
 
-        // Determine access level
+        // Determine access level from function identifiers
         var accessLevel = DetermineAccessLevel(functions);
-
-        // Add access level to functions list for frontend compatibility
-        // Frontend checks user.function.includes('ADMIN') or includes('TECH')
-        if (!string.IsNullOrEmpty(accessLevel) && !functions.Contains(accessLevel))
-        {
-            functions.Add(accessLevel);
-        }
 
         return new AuthenticatedUser
         {
@@ -108,15 +101,17 @@ public class AuthenticationService : IAuthenticationService
 
     public async Task<List<string>> GetUserPermissionsAsync(string username)
     {
+        // Use f_functionidentifier to match legacy JWT format
+        // Legacy code in TokenManager.cs uses f_functionidentifier for function claims
         var sql = @"
-            SELECT DISTINCT f.f_function
+            SELECT DISTINCT f.f_functionidentifier
             FROM [User] u
             INNER JOIN xrefUserRole xur ON u.u_id = xur.u_id
             INNER JOIN Role r ON r.r_id = xur.r_id
             INNER JOIN xrefRoleFunction xrf ON r.r_id = xrf.r_id
             INNER JOIN [Function] f ON xrf.f_id = f.f_id
             WHERE u.u_username = @username
-            ORDER BY f.f_function";
+            ORDER BY f.f_functionidentifier";
 
         var parameters = new Dictionary<string, object>
         {
@@ -128,7 +123,7 @@ public class AuthenticationService : IAuthenticationService
         var functions = new List<string>();
         foreach (DataRow row in result.Rows)
         {
-            functions.Add(row["f_function"].ToString() ?? string.Empty);
+            functions.Add(row["f_functionidentifier"].ToString() ?? string.Empty);
         }
 
         return functions;
@@ -146,10 +141,12 @@ public class AuthenticationService : IAuthenticationService
 
     private string DetermineAccessLevel(List<string> functions)
     {
-        if (functions.Any(f => f.Contains("ADMIN", StringComparison.OrdinalIgnoreCase)))
+        // Legacy logic: Check for exact matches of "ADMIN" and "TECH" in function identifiers
+        // ADMIN takes priority over TECH
+        if (functions.Contains("ADMIN"))
             return "ADMIN";
 
-        if (functions.Any(f => f.Equals("TECH", StringComparison.OrdinalIgnoreCase)))
+        if (functions.Contains("TECH"))
             return "TECH";
 
         return "USER";

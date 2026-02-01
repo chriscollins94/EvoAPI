@@ -18,4 +18,24 @@ public interface ITimeTrackingService
     /// Retrieves the aggregate TimeTracking status for today
     /// </summary>
     Task<TimeTrackingStatus> GetTimeTrackingStatusAsync(int userId);
+
+    /// <summary>
+    /// Clock in (ttt_id = 2) with geolocation
+    /// </summary>
+    Task<int> ClockInAsync(int userId, decimal latitude, decimal longitude);
+
+    /// <summary>
+    /// Clock out (ttt_id = 2) with geolocation
+    /// </summary>
+    Task<bool> ClockOutAsync(int userId, decimal latitude, decimal longitude);
+
+    /// <summary>
+    /// Start break (ttt_id = 4) with geolocation
+    /// </summary>
+    Task<int> StartBreakAsync(int userId, decimal latitude, decimal longitude);
+
+    /// <summary>
+    /// End break (ttt_id = 4) with geolocation
+    /// </summary>
+    Task<bool> EndBreakAsync(int userId, decimal latitude, decimal longitude);
 }

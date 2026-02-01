@@ -8,7 +8,7 @@ using System.Diagnostics;
 namespace EvoAPI.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("EvoApi/authentication")]
 public class AuthenticationController : BaseController
 {
     private readonly IAuthenticationService _authenticationService;
@@ -136,18 +136,26 @@ public class AuthenticationController : BaseController
     {
         try
         {
+            _logger.LogInformation("GetUserToken called - checking for AccessToken cookie");
+            
             // Read AccessToken from cookie
             if (!Request.Cookies.TryGetValue("AccessToken", out var token))
             {
+                _logger.LogWarning("AccessToken cookie not found");
                 return Unauthorized(new { message = "AccessToken cookie not found" });
             }
 
+            _logger.LogInformation("AccessToken cookie found, validating token");
+            
             // Validate and decode the token
             var principal = _jwtTokenService.ValidateJwtToken(token);
             if (principal == null)
             {
+                _logger.LogWarning("Token validation failed");
                 return Unauthorized(new { message = "Invalid token" });
             }
+            
+            _logger.LogInformation("Token validated successfully");
 
             // Helper function to get first claim value or empty string
             string GetClaimValue(string claimType)

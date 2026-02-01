@@ -51,13 +51,21 @@ public class JwtTokenService : IJwtTokenService
         };
 
         // Add function claims (multiple claims with same key)
+        // Also add accesslevel claims for TECH and ADMIN (matching legacy TokenManager.cs behavior)
         foreach (var function in user.Functions)
         {
             claims.Add(new Claim("function", function));
-        }
 
-        // Add access level claim
-        claims.Add(new Claim("accesslevel", user.AccessLevel));
+            // Legacy behavior: Add accesslevel claim for each TECH or ADMIN function
+            if (function == "TECH")
+            {
+                claims.Add(new Claim("accesslevel", "TECH"));
+            }
+            if (function == "ADMIN")
+            {
+                claims.Add(new Claim("accesslevel", "ADMIN"));
+            }
+        }
 
         // Get signing key - use the same method as Program.cs
         var keyString = "{ 08, 98, 50, 42, 23, 02, 49, 3, 45, 94, 236, 171, 97, 208, 160, 38, 99, 76, 251, 210, 86, 6, 90, 121, 208, 251, 70, 178, 75, 208, 67, 26, 62, 110, 190, 160, 162, 162, 97, 168, 177, 209, 30, 40, 82, 208, 50, 193, 118, 119, 135, 47, 74, 94, 228, 99, 54, 22, 189, 248, 169, 43, 168, 161 }";
