@@ -50,6 +50,19 @@ public class EvoApiController : BaseController
             _auditCriticalService.IPAddress = ClientIPAddress;
             _auditCriticalService.UserAgent = UserAgent;
         }
+
+        private static bool IsValidEmail(string email)
+        {
+            try
+            {
+                var addr = new System.Net.Mail.MailAddress(email);
+                return addr.Address == email;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     #endregion
 
     #region Get
@@ -8673,6 +8686,675 @@ public class EvoApiController : BaseController
                 baseUrlIsEmpty = string.IsNullOrEmpty(evoWSBaseUrl)
             });
             return null;
+        }
+    }
+
+    #endregion
+
+    #region Call Center Contacts
+
+    [HttpGet("callcenters/{ccId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactDto>>>> GetCallCenterContacts(int ccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contacts for call center cc_id {CcId}", ccId);
+            
+            var contacts = await _dataService.GetCallCenterContactsAsync(ccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCallCenterContacts", $"Retrieved {contacts.Count} contacts for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCallCenterContacts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contacts"
+            });
+        }
+    }
+
+    [HttpPost("callcenters/{ccId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> CreateCallCenterContact(int ccId, [FromBody] CreateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating contact for call center cc_id {CcId}", ccId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname) && string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "At least first name or last name is required"
+                });
+            }
+            
+            // Email validation if provided
+            if (!string.IsNullOrWhiteSpace(request.ConEmail) && !IsValidEmail(request.ConEmail))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Invalid email format"
+                });
+            }
+            
+            var contact = await _dataService.CreateCallCenterContactAsync(ccId, request);
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with new contact details
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CallCenterId", ccId },
+                { "Title", contact.CtTitle },
+                { "FirstName", contact.ConFirstname },
+                { "LastName", contact.ConLastname },
+                { "Email", contact.ConEmail },
+                { "Phone", contact.ConPhone },
+                { "Mobile", contact.ConMobile },
+                { "Fax", contact.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Created - {contact.ConFirstname} {contact.ConLastname} (ID: {contact.ConId})",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCallCenterContact", $"Created contact {contact.ConId} for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact created successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCallCenterContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating contact"
+            });
+        }
+    }
+
+    [HttpPut("callcenters/contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> UpdateCallCenterContact(int conId, [FromBody] UpdateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating call center contact {ConId}", conId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname) && string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "At least first name or last name is required"
+                });
+            }
+            
+            // Email validation if provided
+            if (!string.IsNullOrWhiteSpace(request.ConEmail) && !IsValidEmail(request.ConEmail))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Invalid email format"
+                });
+            }
+            
+            // Get current contact data for audit logging (need to get all contacts to find this one)
+            // We'll need to fetch from all call centers since we don't have ccId in this endpoint
+            var allCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+            var allCallCenters = ConvertDataTableToCallCenters(allCallCentersDataTable);
+            ContactDto? currentContact = null;
+            
+            // Find the contact across all call centers
+            foreach (var cc in allCallCenters ?? new List<CallCenterDto>())
+            {
+                var contacts = await _dataService.GetCallCenterContactsAsync(cc.Id);
+                currentContact = contacts.FirstOrDefault(c => c.ConId == conId);
+                if (currentContact != null) break;
+            }
+            
+            var contact = await _dataService.UpdateCallCenterContactAsync(conId, request);
+            
+            if (contact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Title", currentContact?.CtTitle },
+                { "FirstName", currentContact?.ConFirstname },
+                { "LastName", currentContact?.ConLastname },
+                { "Email", currentContact?.ConEmail },
+                { "Phone", currentContact?.ConPhone },
+                { "Mobile", currentContact?.ConMobile },
+                { "Fax", currentContact?.ConFax }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Title", contact.CtTitle },
+                { "FirstName", contact.ConFirstname },
+                { "LastName", contact.ConLastname },
+                { "Email", contact.ConEmail },
+                { "Phone", contact.ConPhone },
+                { "Mobile", contact.ConMobile },
+                { "Fax", contact.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Updated - {contact.ConFirstname} {contact.ConLastname} (ID: {conId})",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCallCenterContact", $"Updated contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact updated successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCallCenterContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating contact"
+            });
+        }
+    }
+
+    [HttpDelete("callcenters/{ccId:int}/contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterContactXref(int ccId, int conId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting contact xref for call center {CcId} and contact {ConId}", ccId, conId);
+            
+            // Get contact details before deletion for audit logging
+            var contacts = await _dataService.GetCallCenterContactsAsync(ccId);
+            var contactToDelete = contacts.FirstOrDefault(c => c.ConId == conId);
+            
+            var deleted = await _dataService.DeleteCallCenterContactXrefAsync(ccId, conId);
+            
+            if (!deleted)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Contact association not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with deleted contact details
+            if (contactToDelete != null)
+            {
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "CallCenterId", ccId },
+                    { "ContactId", conId },
+                    { "Title", contactToDelete.CtTitle },
+                    { "FirstName", contactToDelete.ConFirstname },
+                    { "LastName", contactToDelete.ConLastname },
+                    { "Email", contactToDelete.ConEmail },
+                    { "Phone", contactToDelete.ConPhone },
+                    { "Mobile", contactToDelete.ConMobile },
+                    { "Fax", contactToDelete.ConFax }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Contact Deleted - {contactToDelete.ConFirstname} {contactToDelete.ConLastname} (ID: {conId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+            }
+            
+            await LogOperationAsync("DeleteCallCenterContactXref", $"Deleted contact xref for call center {ccId} and contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Contact removed from call center successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteCallCenterContactXref", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting contact association"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Call Center Addresses
+
+    [HttpGet("callcenters/{ccId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressDto>>>> GetCallCenterAddresses(int ccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting addresses for call center cc_id {CcId}", ccId);
+            
+            var addresses = await _dataService.GetCallCenterAddressesAsync(ccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCallCenterAddresses", $"Retrieved {addresses.Count} addresses for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {addresses.Count} addresses",
+                Data = addresses,
+                Count = addresses.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCallCenterAddresses", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving addresses"
+            });
+        }
+    }
+
+    [HttpPost("callcenters/{ccId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> CreateCallCenterAddress(int ccId, [FromBody] CreateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating address for call center cc_id {CcId}", ccId);
+            
+            // Validate required fields
+            if (request.AtId <= 0)
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AAddress1))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address 1 is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ACity))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "City is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AState))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "State is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Zip is required"
+                });
+            }
+            
+            var address = await _dataService.CreateCallCenterAddressAsync(ccId, request);
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with new address details
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CallCenterId", ccId },
+                { "Title", address.AtTitle },
+                { "Address1", address.AAddress1 },
+                { "Address2", address.AAddress2 },
+                { "City", address.ACity },
+                { "State", address.AState },
+                { "Zip", address.AZip },
+                { "Latitude", address.ALatitude },
+                { "Longitude", address.ALongitude }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Created - {address.AAddress1}, {address.ACity}, {address.AState} (ID: {address.AId})",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCallCenterAddress", $"Created address {address.AId} for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address created successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCallCenterAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating address"
+            });
+        }
+    }
+
+    [HttpPut("callcenters/addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> UpdateCallCenterAddress(int aId, [FromBody] UpdateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating call center address {AId}", aId);
+            
+            // Validate required fields
+            if (request.AtId <= 0)
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AAddress1))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address 1 is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ACity))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "City is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AState))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "State is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Zip is required"
+                });
+            }
+            
+            // Get current address data for audit logging (need to get all addresses to find this one)
+            var allCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+            var allCallCenters = ConvertDataTableToCallCenters(allCallCentersDataTable);
+            AddressDto? currentAddress = null;
+            
+            // Find the address across all call centers
+            foreach (var cc in allCallCenters ?? new List<CallCenterDto>())
+            {
+                var addresses = await _dataService.GetCallCenterAddressesAsync(cc.Id);
+                currentAddress = addresses.FirstOrDefault(a => a.AId == aId);
+                if (currentAddress != null) break;
+            }
+            
+            var address = await _dataService.UpdateCallCenterAddressAsync(aId, request);
+            
+            if (address == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Title", currentAddress?.AtTitle },
+                { "Address1", currentAddress?.AAddress1 },
+                { "Address2", currentAddress?.AAddress2 },
+                { "City", currentAddress?.ACity },
+                { "State", currentAddress?.AState },
+                { "Zip", currentAddress?.AZip },
+                { "Latitude", currentAddress?.ALatitude },
+                { "Longitude", currentAddress?.ALongitude }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Title", address.AtTitle },
+                { "Address1", address.AAddress1 },
+                { "Address2", address.AAddress2 },
+                { "City", address.ACity },
+                { "State", address.AState },
+                { "Zip", address.AZip },
+                { "Latitude", address.ALatitude },
+                { "Longitude", address.ALongitude }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Updated - {address.AAddress1}, {address.ACity}, {address.AState} (ID: {aId})",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCallCenterAddress", $"Updated address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address updated successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCallCenterAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating address"
+            });
+        }
+    }
+
+    [HttpDelete("callcenters/{ccId:int}/addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterAddressXref(int ccId, int aId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting address xref for call center {CcId} and address {AId}", ccId, aId);
+            
+            // Get address details before deletion for audit logging
+            var addresses = await _dataService.GetCallCenterAddressesAsync(ccId);
+            var addressToDelete = addresses.FirstOrDefault(a => a.AId == aId);
+            
+            var deleted = await _dataService.DeleteCallCenterAddressXrefAsync(ccId, aId);
+            
+            if (!deleted)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Address association not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with deleted address details
+            if (addressToDelete != null)
+            {
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "CallCenterId", ccId },
+                    { "AddressId", aId },
+                    { "Title", addressToDelete.AtTitle },
+                    { "Address1", addressToDelete.AAddress1 },
+                    { "Address2", addressToDelete.AAddress2 },
+                    { "City", addressToDelete.ACity },
+                    { "State", addressToDelete.AState },
+                    { "Zip", addressToDelete.AZip },
+                    { "Latitude", addressToDelete.ALatitude },
+                    { "Longitude", addressToDelete.ALongitude }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Address Deleted - {addressToDelete.AAddress1}, {addressToDelete.ACity}, {addressToDelete.AState} (ID: {aId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+            }
+            
+            await LogOperationAsync("DeleteCallCenterAddressXref", $"Deleted address xref for call center {ccId} and address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Address removed from call center successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteCallCenterAddressXref", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting address association"
+            });
         }
     }
 

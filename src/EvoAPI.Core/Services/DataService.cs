@@ -11186,4 +11186,679 @@ FROM DailyTechSummary;
     }
 
     #endregion
+
+    #region Call Center Contacts
+
+    public async Task<List<ContactDto>> GetCallCenterContactsAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax
+                FROM contact c
+                INNER JOIN xrefcallcentercontact xccc ON c.con_id = xccc.con_id
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE xccc.cc_id = @ccId
+                ORDER BY ct.ct_title, c.con_lastname, c.con_firstname";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@ccId"] = ccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<ContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactDto
+                {
+                    ConId = ConvertToInt(row["con_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    CtId = ConvertToInt(row["ct_id"]),
+                    CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                    ConFirstname = row["con_firstname"]?.ToString() ?? string.Empty,
+                    ConLastname = row["con_lastname"]?.ToString() ?? string.Empty,
+                    ConEmail = row["con_email"]?.ToString() ?? string.Empty,
+                    ConPhone = row["con_phone"]?.ToString() ?? string.Empty,
+                    ConMobile = row["con_mobile"]?.ToString() ?? string.Empty,
+                    ConFax = row["con_fax"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterContacts",
+                Detail = $"Retrieved {result.Count} contacts for call center cc_id {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contacts for call center cc_id {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto> CreateCallCenterContactAsync(int ccId, CreateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            int newConId;
+
+            // Insert contact
+            const string insertContactSql = @"
+                INSERT INTO contact (o_id, ct_id, con_firstname, con_lastname, con_email, con_phone, con_mobile, con_fax, con_insertdatetime)
+                VALUES (1, @ctId, @firstname, @lastname, @email, @phone, @mobile, @fax, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertContactSql, connection))
+            {
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@firstname", SqlDbType.VarChar).Value = request.ConFirstname;
+                command.Parameters.Add("@lastname", SqlDbType.VarChar).Value = request.ConLastname;
+                command.Parameters.Add("@email", SqlDbType.VarChar).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@phone", SqlDbType.VarChar).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@mobile", SqlDbType.VarChar).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@fax", SqlDbType.VarChar).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                newConId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Create cross-reference
+            const string insertXrefSql = @"
+                INSERT INTO xrefcallcentercontact (cc_id, con_id)
+                VALUES (@ccId, @conId)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertXrefSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = newConId;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve the created contact
+            var contacts = await GetCallCenterContactsAsync(ccId);
+            var createdContact = contacts.FirstOrDefault(c => c.ConId == newConId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterContact",
+                Detail = $"Created contact {newConId} for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return createdContact ?? new ContactDto();
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating contact for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> UpdateCallCenterContactAsync(int conId, UpdateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string updateContactSql = @"
+                UPDATE contact
+                SET ct_id = @ctId,
+                    con_firstname = @firstname,
+                    con_lastname = @lastname,
+                    con_email = @email,
+                    con_phone = @phone,
+                    con_mobile = @mobile,
+                    con_fax = @fax,
+                    con_modifieddatetime = GETDATE()
+                WHERE con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateContactSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@firstname", SqlDbType.VarChar).Value = request.ConFirstname;
+                command.Parameters.Add("@lastname", SqlDbType.VarChar).Value = request.ConLastname;
+                command.Parameters.Add("@email", SqlDbType.VarChar).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@phone", SqlDbType.VarChar).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@mobile", SqlDbType.VarChar).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@fax", SqlDbType.VarChar).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Get the cc_id to retrieve the updated contact
+            const string getCcIdSql = "SELECT cc_id FROM xrefcallcentercontact WHERE con_id = @conId";
+            int ccId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCcIdSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+                ccId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the updated contact
+            var contacts = await GetCallCenterContactsAsync(ccId);
+            var updatedContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterContact",
+                Detail = $"Updated contact {conId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteCallCenterContactXrefAsync(int ccId, int conId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string deleteSql = @"
+                DELETE FROM xrefcallcentercontact
+                WHERE cc_id = @ccId AND con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(deleteSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "DeleteCallCenterContactXref",
+                    Detail = $"Deleted xref for call center {ccId} and contact {conId}. Rows affected: {rowsAffected}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteCallCenterContactXref",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting contact xref for call center {CcId} and contact {ConId}", ccId, conId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> GetContactByIdAsync(int conId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax
+                FROM contact c
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE c.con_id = @conId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@conId"] = conId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            if (dt.Rows.Count == 0)
+            {
+                return null;
+            }
+
+            var row = dt.Rows[0];
+            var contact = new ContactDto
+            {
+                ConId = ConvertToInt(row["con_id"]),
+                OId = ConvertToInt(row["o_id"]),
+                CtId = ConvertToInt(row["ct_id"]),
+                CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                ConFirstname = row["con_firstname"]?.ToString() ?? string.Empty,
+                ConLastname = row["con_lastname"]?.ToString() ?? string.Empty,
+                ConEmail = row["con_email"]?.ToString() ?? string.Empty,
+                ConPhone = row["con_phone"]?.ToString() ?? string.Empty,
+                ConMobile = row["con_mobile"]?.ToString() ?? string.Empty,
+                ConFax = row["con_fax"]?.ToString() ?? string.Empty
+            };
+
+            stopwatch.Stop();
+            return contact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Call Center Addresses
+
+    public async Task<List<AddressDto>> GetCallCenterAddressesAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id,
+                    a.o_id,
+                    a.at_id,
+                    at.at_title,
+                    a.a_description,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    a.a_latitude,
+                    a.a_longitude,
+                    a.a_active
+                FROM address a
+                INNER JOIN xrefcallcenteraddress xcca ON a.a_id = xcca.a_id
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                WHERE xcca.cc_id = @ccId
+                ORDER BY at.at_title, a.a_city";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@ccId"] = ccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<AddressDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressDto
+                {
+                    AId = ConvertToInt(row["a_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtId = ConvertToInt(row["at_id"]),
+                    AtTitle = row["at_title"]?.ToString() ?? string.Empty,
+                    ADescription = row["a_description"]?.ToString() ?? string.Empty,
+                    AAddress1 = row["a_address1"]?.ToString() ?? string.Empty,
+                    AAddress2 = row["a_address2"]?.ToString() ?? string.Empty,
+                    ACity = row["a_city"]?.ToString() ?? string.Empty,
+                    AState = row["a_state"]?.ToString() ?? string.Empty,
+                    AZip = row["a_zip"]?.ToString() ?? string.Empty,
+                    ALatitude = row["a_latitude"]?.ToString() ?? string.Empty,
+                    ALongitude = row["a_longitude"]?.ToString() ?? string.Empty,
+                    AActive = ConvertToBool(row["a_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterAddresses",
+                Detail = $"Retrieved {result.Count} addresses for call center cc_id {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterAddresses",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving addresses for call center cc_id {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto> CreateCallCenterAddressAsync(int ccId, CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            int newAId;
+
+            // Insert address
+            const string insertAddressSql = @"
+                INSERT INTO address (o_id, at_id, a_description, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_active, a_insertdatetime)
+                VALUES (1, @atId, @description, @address1, @address2, @city, @state, @zip, @latitude, @longitude, 1, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertAddressSql, connection))
+            {
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                newAId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Create cross-reference
+            const string insertXrefSql = @"
+                INSERT INTO xrefcallcenteraddress (cc_id, a_id)
+                VALUES (@ccId, @aId)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertXrefSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = newAId;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve the created address
+            var addresses = await GetCallCenterAddressesAsync(ccId);
+            var createdAddress = addresses.FirstOrDefault(a => a.AId == newAId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterAddress",
+                Detail = $"Created address {newAId} for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return createdAddress ?? new AddressDto();
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto?> UpdateCallCenterAddressAsync(int aId, UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string updateAddressSql = @"
+                UPDATE address
+                SET at_id = @atId,
+                    a_description = @description,
+                    a_address1 = @address1,
+                    a_address2 = @address2,
+                    a_city = @city,
+                    a_state = @state,
+                    a_zip = @zip,
+                    a_latitude = @latitude,
+                    a_longitude = @longitude,
+                    a_active = @active,
+                    a_modifieddatetime = GETDATE()
+                WHERE a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateAddressSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Get the cc_id to retrieve the updated address
+            const string getCcIdSql = "SELECT cc_id FROM xrefcallcenteraddress WHERE a_id = @aId";
+            int ccId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCcIdSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+                ccId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the updated address
+            var addresses = await GetCallCenterAddressesAsync(ccId);
+            var updatedAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterAddress",
+                Detail = $"Updated address {aId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address {AId}", aId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteCallCenterAddressXrefAsync(int ccId, int aId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string deleteSql = @"
+                DELETE FROM xrefcallcenteraddress
+                WHERE cc_id = @ccId AND a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(deleteSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "DeleteCallCenterAddressXref",
+                    Detail = $"Deleted xref for call center {ccId} and address {aId}. Rows affected: {rowsAffected}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteCallCenterAddressXref",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting address xref for call center {CcId} and address {AId}", ccId, aId);
+            throw;
+        }
+    }
+
+    #endregion
 }

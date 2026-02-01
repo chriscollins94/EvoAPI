@@ -203,4 +203,16 @@ public interface IDataService
     Task<List<LocationDto>> GetCompanyLocationsAsync(int cId);
     Task<LocationDto> CreateLocationAsync(int cId, CreateLocationRequest request);
     Task<LocationDto?> UpdateLocationAsync(int lId, UpdateLocationRequest request);
+
+    // Call Center Contact Management
+    Task<List<ContactDto>> GetCallCenterContactsAsync(int ccId);
+    Task<ContactDto> CreateCallCenterContactAsync(int ccId, CreateContactRequest request);
+    Task<ContactDto?> UpdateCallCenterContactAsync(int conId, UpdateContactRequest request);
+    Task<bool> DeleteCallCenterContactXrefAsync(int ccId, int conId);
+
+    // Call Center Address Management
+    Task<List<AddressDto>> GetCallCenterAddressesAsync(int ccId);
+    Task<AddressDto> CreateCallCenterAddressAsync(int ccId, CreateAddressRequest request);
+    Task<AddressDto?> UpdateCallCenterAddressAsync(int aId, UpdateAddressRequest request);
+    Task<bool> DeleteCallCenterAddressXrefAsync(int ccId, int aId);
 }
