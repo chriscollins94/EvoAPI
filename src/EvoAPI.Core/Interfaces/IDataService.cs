@@ -81,6 +81,11 @@ public interface IDataService
     
     // Attachments methods
     Task<DataTable> GetAttachmentsByServiceRequestAsync(int srId);
+    Task<DataTable> GetAttachmentsByCallCenterAsync(int ccId);
+    Task<DataTable> GetAllCallCenterAttachmentsAsync();
+    Task<DataTable?> GetAttachmentByIdAsync(int attId);
+    Task<bool> UpdateAttachmentDescriptionAsync(int attId, string description);
+    Task<bool> DeleteAttachmentAsync(int attId);
     
     // Pending Tech Info methods
     Task<DataTable> GetPendingTechInfoAsync(int userId);

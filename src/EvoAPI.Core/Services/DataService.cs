@@ -5272,6 +5272,213 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetAttachmentsByCallCenterAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    att_id,
+                    att_insertdatetime,
+                    att_filename,
+                    att_description,
+                    att_active,
+                    att_receipt,
+                    att_public,
+                    att_signoff,
+                    att_submittedby,
+                    att_receiptamount,
+                    att_extension,
+                    cc_id
+                FROM attachment 
+                WHERE cc_id = @cc_id
+                ORDER BY att_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cc_id"] = ccId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByCallCenter",
+                Detail = $"Retrieved {result.Rows.Count} attachments for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByCallCenter",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachments for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAttachmentDescriptionAsync(int attId, string description)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE attachment 
+                SET att_description = @description, att_modifieddatetime = GETUTCDATE()
+                WHERE att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId,
+                ["@description"] = description ?? string.Empty
+            };
+
+            await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttachmentDescription",
+                Detail = $"Updated attachment {attId} description",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttachmentDescription",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating attachment {AttId} description", attId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteAttachmentAsync(int attId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM attachment 
+                WHERE att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId
+            };
+
+            await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttachment",
+                Detail = $"Deleted attachment {attId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting attachment {AttId}", attId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable?> GetAttachmentByIdAsync(int attId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.att_id, a.att_filename, a.att_extension, a.att_description, 
+                    a.att_insertdatetime, a.att_modifieddatetime, a.att_active,
+                    a.att_receipt, a.att_public, a.att_signoff, a.att_submittedby,
+                    a.att_receiptamount, a.sr_id, a.cc_id,
+                    cc.cc_name, cc.cc_id
+                FROM attachment a
+                LEFT JOIN CallCenter cc ON a.cc_id = cc.cc_id
+                WHERE a.att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentById",
+                Detail = $"Retrieved attachment {attId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachment {AttId}", attId);
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetPendingTechInfoAsync(int userId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -11860,5 +12067,94 @@ FROM DailyTechSummary;
         }
     }
 
+    /// <summary>
+    /// Gets all call center attachments (one per call center, most recent)
+    /// Returns a DataTable with cc_id and attachment details for bulk loading
+    /// </summary>
+    public async Task<DataTable> GetAllCallCenterAttachmentsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+                throw new InvalidOperationException("Connection string not configured");
+
+            const string sql = @"
+                SELECT 
+                    a.att_id,
+                    a.cc_id,
+                    a.att_filename,
+                    a.att_extension,
+                    a.att_description,
+                    a.att_insertdatetime,
+                    a.att_modifieddatetime,
+                    a.att_active,
+                    a.att_receipt,
+                    a.att_public,
+                    a.att_signoff,
+                    a.att_submittedby,
+                    a.att_receiptamount,
+                    a.sr_id
+                FROM (
+                    SELECT 
+                        att_id,
+                        cc_id,
+                        att_filename,
+                        att_extension,
+                        att_description,
+                        att_insertdatetime,
+                        att_modifieddatetime,
+                        att_active,
+                        att_receipt,
+                        att_public,
+                        att_signoff,
+                        att_submittedby,
+                        att_receiptamount,
+                        sr_id,
+                        ROW_NUMBER() OVER (PARTITION BY cc_id ORDER BY att_insertdatetime DESC) as rn
+                    FROM attachment
+                    WHERE cc_id IS NOT NULL AND cc_id > 0
+                ) a
+                WHERE a.rn = 1
+                ORDER BY a.cc_id";
+
+            var dt = new DataTable();
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.CommandTimeout = 30;
+                var adapter = new SqlDataAdapter(command);
+                adapter.Fill(dt);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenterAttachments",
+                Detail = $"Retrieved {dt.Rows.Count} call center attachments",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return dt;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenterAttachments",
+                Detail = $"Error retrieving call center attachments: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
     #endregion
 }
+

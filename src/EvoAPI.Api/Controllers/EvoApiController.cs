@@ -1791,6 +1791,258 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("call-center-attachments")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetCallCenterAttachments([FromQuery] int ccId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attachments for call center {CcId}", ccId);
+                
+                // Validate input
+                if (ccId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid call center ID is required",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetAttachmentsByCallCenterAsync(ccId);
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetCallCenterAttachments", $"Retrieved {attachments.Count} attachments for call center {ccId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCallCenterAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attachments for call center {CcId}", ccId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("call-center-attachments-all")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetAllCallCenterAttachments()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all call center attachments");
+                
+                // Get data from service - gets one attachment per call center (most recent)
+                var dataTable = await _dataService.GetAllCallCenterAttachmentsAsync();
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAllCallCenterAttachments", $"Retrieved {attachments.Count} call center attachments", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Call center attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAllCallCenterAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving all call center attachments");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("call-center-attachment-description")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateCallCenterAttachmentDescription([FromBody] UpdateAttachmentDescriptionRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (request == null || request.AttachmentId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid attachment ID is required"
+                    });
+                }
+
+                _logger.LogInformation("Updating attachment {AttId} description", request.AttachmentId);
+                
+                // Fetch current attachment for change history
+                var attachmentsTable = await _dataService.GetAttachmentByIdAsync(request.AttachmentId);
+                if (attachmentsTable == null || attachmentsTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Attachment not found"
+                    });
+                }
+                
+                var currentAttachmentRow = attachmentsTable.Rows[0];
+                
+                await _dataService.UpdateAttachmentDescriptionAsync(request.AttachmentId, request.Description);
+                
+                stopwatch.Stop();
+                
+                // Log critical change
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "Description", currentAttachmentRow["att_description"] ?? "" }
+                };
+                
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "Description", request.Description ?? "" }
+                };
+                
+                SetAuditCriticalUserContext();
+                var filename = currentAttachmentRow["att_filename"]?.ToString() ?? "Unknown";
+                var ccId = currentAttachmentRow["cc_id"];
+                var ccName = currentAttachmentRow["cc_name"]?.ToString() ?? "Unknown";
+                await _auditCriticalService.LogChangeAsync(
+                    $"Attachment Description Updated - {filename} (Call Center: {ccName} - ID: {ccId}, Attachment ID: {request.AttachmentId})",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
+                await LogOperationAsync("UpdateCallCenterAttachmentDescription", $"Updated attachment {request.AttachmentId} description", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Attachment description updated successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateCallCenterAttachmentDescription", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attachment description");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating attachment description"
+                });
+            }
+        }
+
+        [HttpDelete("call-center-attachment/{attachmentId}")]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterAttachment(int attachmentId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (attachmentId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid attachment ID is required"
+                    });
+                }
+
+                _logger.LogInformation("Deleting attachment {AttId}", attachmentId);
+                
+                // Fetch current attachment for change history
+                var attachmentsTable = await _dataService.GetAttachmentByIdAsync(attachmentId);
+                if (attachmentsTable == null || attachmentsTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Attachment not found"
+                    });
+                }
+                
+                var attachmentToDelete = attachmentsTable.Rows[0];
+                
+                await _dataService.DeleteAttachmentAsync(attachmentId);
+                
+                stopwatch.Stop();
+                
+                // Log critical change
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "Filename", attachmentToDelete["att_filename"] ?? "" },
+                    { "Description", attachmentToDelete["att_description"] ?? "" },
+                    { "InsertDateTime", attachmentToDelete["att_insertdatetime"] }
+                };
+                
+                SetAuditCriticalUserContext();
+                var filename = attachmentToDelete["att_filename"]?.ToString() ?? "Unknown";
+                var ccId = attachmentToDelete["cc_id"];
+                var ccName = attachmentToDelete["cc_name"]?.ToString() ?? "Unknown";
+                await _auditCriticalService.LogChangeAsync(
+                    $"Attachment Deleted - {filename} (Call Center: {ccName} - ID: {ccId}, Attachment ID: {attachmentId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
+                await LogOperationAsync("DeleteCallCenterAttachment", $"Deleted attachment {attachmentId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Attachment deleted successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteCallCenterAttachment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error deleting attachment {AttId}", attachmentId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting attachment"
+                });
+            }
+        }
+
         [HttpGet("pending-tech-info")]
         public async Task<ActionResult<ApiResponse<List<PendingTechInfoDto>>>> GetPendingTechInfo([FromQuery] int? userId = null)
         {
@@ -3613,6 +3865,7 @@ public class EvoApiController : BaseController
             var attachment = new AttachmentDto
             {
                 att_id = Convert.ToInt32(row["att_id"]),
+                cc_id = row.Table.Columns.Contains("cc_id") && row["cc_id"] != DBNull.Value ? Convert.ToInt32(row["cc_id"]) : 0,
                 att_insertdatetime = Convert.ToDateTime(row["att_insertdatetime"]),
                 att_filename = CleanString(row["att_filename"]),
                 att_description = CleanString(row["att_description"]),

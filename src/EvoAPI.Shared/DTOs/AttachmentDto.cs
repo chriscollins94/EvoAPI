@@ -3,6 +3,7 @@ namespace EvoAPI.Shared.DTOs;
 public class AttachmentDto
 {
     public int att_id { get; set; }
+    public int cc_id { get; set; }
     public DateTime att_insertdatetime { get; set; }
     public string att_filename { get; set; } = string.Empty;
     public string att_description { get; set; } = string.Empty;
@@ -14,3 +15,4 @@ public class AttachmentDto
     public decimal? att_receiptamount { get; set; }
     public int sr_id { get; set; }
 }
+
