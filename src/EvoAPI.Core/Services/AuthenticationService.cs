@@ -25,9 +25,45 @@ public class AuthenticationService : IAuthenticationService
 
     public async Task<AuthenticatedUser> ValidateCredentialsAsync(string username, string password, bool require2fa = false)
     {
-        _logger.LogInformation("Validating credentials for user: {Username}", username);
+        _logger.LogInformation("Validating credentials for user: {Username}, require2fa: {Require2fa}", username, require2fa);
 
-        // Query user from database
+        // First, query user to check if they require 2FA
+        var userCheckSql = @"
+            SELECT u.u_id, u.u_2fa, u.u_active
+            FROM [User] u
+            WHERE u.u_username = @username";
+
+        var userCheckParams = new Dictionary<string, object> { { "@username", username } };
+        var userCheckResult = await _dataService.ExecuteQueryAsync(userCheckSql, userCheckParams);
+
+        if (userCheckResult.Rows.Count == 0)
+        {
+            _logger.LogWarning("User not found: {Username}", username);
+            throw new UnauthorizedAccessException("Invalid username or password");
+        }
+
+        var userRow = userCheckResult.Rows[0];
+        var userRequires2fa = Convert.ToInt32(userRow["u_2fa"]) == 1;
+        var userActive = Convert.ToInt32(userRow["u_active"]) == 1;
+
+        _logger.LogInformation("User check for {Username}: Active={Active}, Requires2FA={Requires2FA}", 
+            username, userActive, userRequires2fa);
+
+        // If account is not active, reject
+        if (!userActive)
+        {
+            _logger.LogWarning("Account not active: {Username}", username);
+            throw new UnauthorizedAccessException("Invalid username or password");
+        }
+
+        // If account requires 2FA but no valid code was provided, reject
+        if (userRequires2fa && !require2fa)
+        {
+            _logger.LogWarning("2FA required but not provided for user: {Username}", username);
+            throw new UnauthorizedAccessException("Invalid username or password");
+        }
+
+        // Now validate credentials
         var sql = @"
             SELECT
                 u.u_id,
@@ -42,21 +78,21 @@ public class AuthenticationService : IAuthenticationService
             FROM [User] u
             WHERE u.u_username = @username
               AND u.u_password = @password
-              AND u.u_active = 1
-              AND (@require2fa = 0 OR u.u_2fa = 1)";
+              AND u.u_active = 1";
 
         var parameters = new Dictionary<string, object>
         {
             { "@username", username },
-            { "@password", password },
-            { "@require2fa", require2fa ? 1 : 0 }
+            { "@password", password }
         };
+
+        _logger.LogInformation("Validating password for user: {Username}, checking password match in database", username);
 
         var result = await _dataService.ExecuteQueryAsync(sql, parameters);
 
         if (result.Rows.Count != 1)
         {
-            _logger.LogWarning("Authentication failed for user: {Username}", username);
+            _logger.LogWarning("Password validation failed for user: {Username}. Expected 1 row, got {RowCount}", username, result.Rows.Count);
             throw new UnauthorizedAccessException("Invalid username or password");
         }
 
@@ -90,13 +126,23 @@ public class AuthenticationService : IAuthenticationService
         var seedWeek = _configuration.GetValue<int>("Authentication:SeedWeek");
         var weekOfYear = GetWeekOfYear(DateTime.Now);
 
+        _logger.LogInformation("2FA Code Calculation: SeedLogin={SeedLogin}, SeedWeek={SeedWeek}, WeekOfYear={WeekOfYear}", 
+            seedLogin, seedWeek, weekOfYear);
+
         var calculation = Math.Ceiling((double)seedLogin / (seedWeek * weekOfYear));
         var result = calculation.ToString();
 
+        _logger.LogInformation("2FA Code Calculation: {SeedLogin} / ({SeedWeek} * {WeekOfYear}) = {Calculation}, Result: {Result}", 
+            seedLogin, seedWeek, weekOfYear, calculation, result);
+
         // Return last 3 digits
-        return result.Length >= 3
+        var code = result.Length >= 3
             ? result.Substring(result.Length - 3)
             : result.PadLeft(3, '0');
+        
+        _logger.LogInformation("2FA Code: {Code}", code);
+        
+        return code;
     }
 
     public async Task<List<string>> GetUserPermissionsAsync(string username)
@@ -131,12 +177,15 @@ public class AuthenticationService : IAuthenticationService
 
     private int GetWeekOfYear(DateTime date)
     {
-        var culture = CultureInfo.CurrentCulture;
+        // Use ISO 8601 week date system for consistent 2FA calculations
+        // This ensures the same week number regardless of system culture/locale
+        var culture = new CultureInfo("en-US");
         var calendar = culture.Calendar;
-        var calendarWeekRule = culture.DateTimeFormat.CalendarWeekRule;
-        var firstDayOfWeek = culture.DateTimeFormat.FirstDayOfWeek;
+        // ISO 8601: Week starts on Monday, first week contains first Thursday
+        var isoRule = CalendarWeekRule.FirstFourDayWeek;
+        var monday = DayOfWeek.Monday;
 
-        return calendar.GetWeekOfYear(date, calendarWeekRule, firstDayOfWeek);
+        return calendar.GetWeekOfYear(date, isoRule, monday);
     }
 
     private string DetermineAccessLevel(List<string> functions)

@@ -50,12 +50,32 @@ public class AuthenticationController : BaseController
 
             if (password.Length >= 3 && int.TryParse(password.Substring(password.Length - 3), out int providedCode))
             {
+                // Last 3 characters are digits, so treat as 2FA attempt
                 var expectedCode = _authenticationService.CalculateSecureCode();
                 if (providedCode.ToString() == expectedCode)
                 {
+                    // Valid 2FA code - strip it from password
                     password = password.Substring(0, password.Length - 3);
                     require2fa = true;
                     _logger.LogInformation("2FA code validated for user: {Username}", request.Username);
+                }
+                else
+                {
+                    // Invalid 2FA code - reject immediately
+                    _logger.LogWarning("Invalid 2FA code provided for user: {Username}. Provided: {ProvidedCode}, Expected: {ExpectedCode}", 
+                        request.Username, providedCode, expectedCode);
+                    stopwatch.Stop();
+                    _ = LogAuditErrorAsync("Login Failed - Invalid 2FA Code", 
+                        new Exception($"Username: {request.Username}, Provided Code: {providedCode}, Expected Code: {expectedCode}"));
+                    
+                    return Unauthorized(new ApiResponse<LoginResponse>
+                    {
+                        Success = false,
+                        Message = "Invalid security code",
+                        Data = null,
+                        Count = 0,
+                        Timestamp = DateTime.UtcNow
+                    });
                 }
             }
 
