@@ -44,13 +44,25 @@ public class AuthenticationController : BaseController
             // Fire-and-forget audit logging (don't block login response)
             _ = LogAuditAsync("Login Attempt", $"Username: {request.Username}");
 
-            // Handle 2FA: Check if password ends with 3 digits
+            // First, check if user requires 2FA
+            var userCheckSql = @"SELECT u_2fa FROM [User] WHERE u_username = @username";
+            var userCheckParams = new Dictionary<string, object> { { "@username", request.Username } };
+            var dataService = HttpContext.RequestServices.GetRequiredService<IDataService>();
+            var userCheckResult = await dataService.ExecuteQueryAsync(userCheckSql, userCheckParams);
+            
+            var userRequires2fa = false;
+            if (userCheckResult.Rows.Count > 0)
+            {
+                userRequires2fa = Convert.ToInt32(userCheckResult.Rows[0]["u_2fa"]) == 1;
+            }
+
+            // Handle 2FA: Only process 3-digit code if user requires 2FA
             var password = request.Password;
             var require2fa = false;
 
-            if (password.Length >= 3 && int.TryParse(password.Substring(password.Length - 3), out int providedCode))
+            if (userRequires2fa && password.Length >= 3 && int.TryParse(password.Substring(password.Length - 3), out int providedCode))
             {
-                // Last 3 characters are digits, so treat as 2FA attempt
+                // User requires 2FA and password ends with 3 digits
                 var expectedCode = _authenticationService.CalculateSecureCode();
                 if (providedCode.ToString() == expectedCode)
                 {
