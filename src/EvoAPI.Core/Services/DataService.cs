@@ -3506,185 +3506,264 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                -- Ultra-Optimized Version with Temp Tables
-                DECLARE @CutoffDate DATETIME = DATEADD(DAY, -730, GETDATE());
-                DECLARE @FutureDate DATETIME = DATEADD(DAY, 180, GETDATE());
+            -- Ultra-Optimized Version with Temp Tables
+            DECLARE @CutoffDate DATETIME = DATEADD(DAY, -730, GETDATE());
+            DECLARE @FutureDate DATETIME = DATEADD(DAY, 180, GETDATE());
 
-                -- Create temp tables with proper filtering
-                IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
-                IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
-                IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
+            -- Residential config
+            DECLARE @ResidentialZoneLabel VARCHAR(50) = 'Residential';
+            DECLARE @ResidentialAdminUID INT = 45;
+            DECLARE @ResidentialCallCenterName VARCHAR(50) = 'Residential';
 
-                -- First, get the base set of work orders we care about
-                SELECT DISTINCT wo.wo_id
-                INTO #BaseData
+            -- Create temp tables with proper filtering
+            IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
+            IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
+            IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
+
+            -- Base set: ALL qualifying work orders
+            SELECT DISTINCT wo.wo_id
+            INTO #BaseData
+            FROM servicerequest sr WITH (NOLOCK)
+            INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+            INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+            INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+            WHERE sr.s_id NOT IN (9, 6)
+            AND c.c_name NOT IN ('Metro Pipe Program')
+            AND (wo.wo_startdatetime BETWEEN @CutoffDate AND @FutureDate OR wo.wo_startdatetime IS NULL);
+
+            CREATE CLUSTERED INDEX IX_BaseData ON #BaseData(wo_id);
+
+            -- Get latest notes only for relevant work orders
+            SELECT won.wo_id, MAX(won.won_insertdatetime) as latest_note_datetime
+            INTO #WorkOrderNotes
+            FROM WorkOrderNote won WITH (NOLOCK)
+            WHERE won.wo_id IN (SELECT wo_id FROM #BaseData)
+            GROUP BY won.wo_id;
+
+            CREATE CLUSTERED INDEX IX_WON ON #WorkOrderNotes(wo_id);
+
+            -- Get latest status changes only for relevant work orders  
+            SELECT ssc.wo_id, MAX(ssc.ssc_insertdatetime) as latest_status_datetime
+            INTO #StatusChanges
+            FROM StatusSecondaryChange ssc WITH (NOLOCK)
+            WHERE ssc.wo_id IN (SELECT wo_id FROM #BaseData)
+            GROUP BY ssc.wo_id;
+
+            CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
+
+            -- Main query using pre-filtered data
+            WITH ranked_results AS (
+                -- Original zone-based results
+                SELECT sr.sr_id, 
+                    sr.sr_insertdatetime, 
+                    sr.sr_totaldue,
+                    sr.sr_requestnumber,
+                    sr.sr_datenextstep,
+                    sr.sr_actionablenote,
+                    sr.sr_escalated,
+                    wo.wo_startdatetime,
+                    z.z_number + '-' + z.z_acronym AS zone, 
+                    cc.cc_name,
+                    c.c_name,
+                    p.p_priority,
+                    ss.ss_statussecondary,
+                    t.t_trade,
+                    CASE 
+                        WHEN won.latest_note_datetime IS NULL THEN NULL
+                        ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
+                    END as hours_since_last_note,
+                    ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
+                    cc.cc_attack as AttackCallCenter,
+                    p.p_attack as AttackPriority, 
+                    ss.ss_attack as AttackStatusSecondary,
+                    ISNULL((
+                        SELECT TOP 1 aps_attack
+                        FROM AttackPointStatus WITH (NOLOCK)
+                        WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
+                        ORDER BY aps_daysinstatus DESC, aps_id DESC
+                    ), 0) as AttackDaysInStatus,
+                    ISNULL((
+                        SELECT TOP 1 
+                            CASE 
+                                WHEN won.latest_note_datetime IS NULL THEN apn_attack
+                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
+                                    CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
+                                ELSE apn_attack
+                            END
+                        FROM AttackPointNote WITH (NOLOCK)
+                        WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
+                        OR (won.latest_note_datetime IS NOT NULL 
+                            AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
+                            AND apn_id > 1)
+                        ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
+                    ), 0) as AttackHoursSinceLastNote,
+                    ISNULL((
+                        SELECT TOP 1 apad_attack
+                        FROM AttackPointActionableDate WITH (NOLOCK)
+                        WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
+                        OR (sr.sr_datenextstep IS NOT NULL 
+                            AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
+                            AND apad_id > 1)
+                        ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
+                    ), 0) as AttackActionableDate,
+                    admin_user.u_id as admin_u_id,
+                    admin_user.u_firstname as admin_firstname,
+                    admin_user.u_lastname as admin_lastname,
+                    CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated,
+                    0 as is_residential
                 FROM servicerequest sr WITH (NOLOCK)
                 INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+                INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id
                 INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
                 INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
+                CROSS APPLY (
+                    SELECT TOP 1 xwou.u_id 
+                    FROM xrefWorkOrderUser xwou WITH (NOLOCK)
+                    WHERE xwou.wo_id = wo.wo_id
+                    ORDER BY xwou.xwou_id ASC
+                ) pt
+                INNER JOIN [user] u WITH (NOLOCK) ON pt.u_id = u.u_id
+                INNER JOIN zone z WITH (NOLOCK) ON u.z_id = z.z_id
+                INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
+                INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
+                INNER JOIN xrefadminzonestatussecondary xazss WITH (NOLOCK) ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
+                INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
+                LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
+                LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
                 WHERE sr.s_id NOT IN (9, 6)
                 AND c.c_name NOT IN ('Metro Pipe Program')
-                AND (wo.wo_startdatetime BETWEEN @CutoffDate AND @FutureDate OR wo.wo_startdatetime IS NULL);
 
-                CREATE CLUSTERED INDEX IX_BaseData ON #BaseData(wo_id);
+                UNION ALL
 
-                -- Get latest notes only for relevant work orders
-                SELECT won.wo_id, MAX(won.won_insertdatetime) as latest_note_datetime
-                INTO #WorkOrderNotes
-                FROM WorkOrderNote won WITH (NOLOCK)
-                WHERE won.wo_id IN (SELECT wo_id FROM #BaseData)
-                GROUP BY won.wo_id;
+                -- Residential results (hardcoded admin & zone label)
+                SELECT sr.sr_id, 
+                    sr.sr_insertdatetime, 
+                    sr.sr_totaldue,
+                    sr.sr_requestnumber,
+                    sr.sr_datenextstep,
+                    sr.sr_actionablenote,
+                    sr.sr_escalated,
+                    wo.wo_startdatetime,
+                    @ResidentialZoneLabel AS zone, 
+                    cc.cc_name,
+                    c.c_name,
+                    p.p_priority,
+                    ss.ss_statussecondary,
+                    t.t_trade,
+                    CASE 
+                        WHEN won.latest_note_datetime IS NULL THEN NULL
+                        ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
+                    END as hours_since_last_note,
+                    ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
+                    cc.cc_attack as AttackCallCenter,
+                    p.p_attack as AttackPriority, 
+                    ss.ss_attack as AttackStatusSecondary,
+                    ISNULL((
+                        SELECT TOP 1 aps_attack
+                        FROM AttackPointStatus WITH (NOLOCK)
+                        WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
+                        ORDER BY aps_daysinstatus DESC, aps_id DESC
+                    ), 0) as AttackDaysInStatus,
+                    ISNULL((
+                        SELECT TOP 1 
+                            CASE 
+                                WHEN won.latest_note_datetime IS NULL THEN apn_attack
+                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
+                                    CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
+                                ELSE apn_attack
+                            END
+                        FROM AttackPointNote WITH (NOLOCK)
+                        WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
+                        OR (won.latest_note_datetime IS NOT NULL 
+                            AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
+                            AND apn_id > 1)
+                        ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
+                    ), 0) as AttackHoursSinceLastNote,
+                    ISNULL((
+                        SELECT TOP 1 apad_attack
+                        FROM AttackPointActionableDate WITH (NOLOCK)
+                        WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
+                        OR (sr.sr_datenextstep IS NOT NULL 
+                            AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
+                            AND apad_id > 1)
+                        ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
+                    ), 0) as AttackActionableDate,
+                    res_admin.u_id as admin_u_id,
+                    res_admin.u_firstname as admin_firstname,
+                    res_admin.u_lastname as admin_lastname,
+                    CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated,
+                    1 as is_residential
+                FROM servicerequest sr WITH (NOLOCK)
+                INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+                INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id
+                INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+                INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
+                INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
+                INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
+                INNER JOIN [user] res_admin WITH (NOLOCK) ON res_admin.u_id = @ResidentialAdminUID
+                LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
+                LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
+                WHERE sr.s_id NOT IN (9, 6)
+                AND c.c_name NOT IN ('Metro Pipe Program')
+                AND cc.cc_name = @ResidentialCallCenterName
+                AND ss.ss_id IN (SELECT DISTINCT ss_id FROM xrefadminzonestatussecondary WITH (NOLOCK))
+            ),
+            final_with_attack_points AS (
+                SELECT *,
+                    (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
+                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
+                    CASE 
+                        WHEN is_escalated = 1 THEN NULL
+                        WHEN cc_name = 'Administrative' THEN NULL
+                        ELSE ROW_NUMBER() OVER (
+                            PARTITION BY admin_u_id, CASE WHEN is_residential = 1 THEN zone ELSE '' END
+                            ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
+                                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
+                        )
+                    END as rn_non_escalated
+                FROM ranked_results
+            )
+            SELECT sr_id, 
+                sr_insertdatetime, 
+                sr_totaldue,
+                sr_requestnumber,
+                sr_datenextstep,
+                sr_actionablenote,
+                sr_escalated,
+                wo_startdatetime,
+                zone, 
+                admin_u_id,
+                admin_firstname,
+                admin_lastname,
+                cc_name,
+                c_name,
+                p_priority,
+                ss_statussecondary,
+                t_trade, 
+                hours_since_last_note,
+                days_in_current_status,
+                AttackCallCenter,
+                AttackPriority, 
+                AttackStatusSecondary,
+                AttackHoursSinceLastNote,
+                AttackDaysInStatus,
+                AttackActionableDate,
+                AttackPoints,
+                is_escalated,
+                is_residential
+            FROM final_with_attack_points
+            WHERE ((rn_non_escalated <= @TopCount) OR (is_escalated = 1))
+            AND NOT (is_residential = 0 AND cc_name = @ResidentialCallCenterName)
+            ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
 
-                CREATE CLUSTERED INDEX IX_WON ON #WorkOrderNotes(wo_id);
-
-                -- Get latest status changes only for relevant work orders  
-                SELECT ssc.wo_id, MAX(ssc.ssc_insertdatetime) as latest_status_datetime
-                INTO #StatusChanges
-                FROM StatusSecondaryChange ssc WITH (NOLOCK)
-                WHERE ssc.wo_id IN (SELECT wo_id FROM #BaseData)
-                GROUP BY ssc.wo_id;
-
-                CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
-
-                -- Main query using pre-filtered data
-                WITH ranked_results AS (
-                    SELECT sr.sr_id, 
-                        sr.sr_insertdatetime, 
-                        sr.sr_totaldue,
-                        sr.sr_requestnumber,
-                        sr.sr_datenextstep,
-                        sr.sr_actionablenote,
-                        sr.sr_escalated,
-                        wo.wo_startdatetime,
-                        z.z_number + '-' + z.z_acronym zone, 
-                        cc.cc_name,
-                        c.c_name,
-                        p.p_priority,
-                        ss.ss_statussecondary,
-                        t.t_trade,
-                        CASE 
-                            WHEN won.latest_note_datetime IS NULL THEN NULL
-                            ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
-                        END as hours_since_last_note,
-                        ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
-                        cc.cc_attack as AttackCallCenter,
-                        p.p_attack as AttackPriority, 
-                        ss.ss_attack as AttackStatusSecondary,
-                        -- Inline attack point calculations
-                        ISNULL((
-                            SELECT TOP 1 aps_attack
-                            FROM AttackPointStatus WITH (NOLOCK)
-                            WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
-                            ORDER BY aps_daysinstatus DESC, aps_id DESC
-                        ), 0) as AttackDaysInStatus,
-                        ISNULL((
-                            SELECT TOP 1 
-                                CASE 
-                                    WHEN won.latest_note_datetime IS NULL THEN apn_attack
-                                    WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
-                                        CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
-                                    ELSE apn_attack
-                                END
-                            FROM AttackPointNote WITH (NOLOCK)
-                            WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
-                            OR (won.latest_note_datetime IS NOT NULL 
-                                AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
-                                AND apn_id > 1)
-                            ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
-                        ), 0) as AttackHoursSinceLastNote,
-                        ISNULL((
-                            SELECT TOP 1 apad_attack
-                            FROM AttackPointActionableDate WITH (NOLOCK)
-                            WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
-                            OR (sr.sr_datenextstep IS NOT NULL 
-                                AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
-                                AND apad_id > 1)
-                            ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
-                        ), 0) as AttackActionableDate,
-                        admin_user.u_id as admin_u_id,
-                        admin_user.u_firstname as admin_firstname,
-                        admin_user.u_lastname as admin_lastname,
-                        CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated
-                    FROM servicerequest sr WITH (NOLOCK)
-                    INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
-                    INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id 
-                    INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
-                    INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
-                    INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
-                    
-                    -- Updated: Join through WorkOrder to xrefWorkOrderUser to get Technician's Zone
-                    CROSS APPLY (
-                        SELECT TOP 1 xwou.u_id 
-                        FROM xrefWorkOrderUser xwou WITH (NOLOCK)
-                        WHERE xwou.wo_id = wo.wo_id
-                        ORDER BY xwou.xwou_id ASC
-                    ) pt
-                    INNER JOIN [user] u WITH (NOLOCK) ON pt.u_id = u.u_id
-                    INNER JOIN zone z WITH (NOLOCK) ON u.z_id = z.z_id
-
-                    INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
-                    INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
-                    LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
-                    
-                    -- Admin lookup based on the tech's z_id
-                    INNER JOIN xrefadminzonestatussecondary xazss WITH (NOLOCK) ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
-                    INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
-                    
-                    LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
-                    LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
-                    WHERE sr.s_id NOT IN (9, 6)
-                    AND c.c_name NOT IN ('Metro Pipe Program')
-                ),
-                final_with_attack_points AS (
-                    SELECT *,
-                        (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
-                        AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
-                        CASE 
-                            WHEN is_escalated = 1 THEN NULL
-                            WHEN cc_name = 'Administrative' THEN NULL
-                            ELSE ROW_NUMBER() OVER (
-                                PARTITION BY admin_u_id
-                                ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
-                                        AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
-                            )
-                        END as rn_non_escalated
-                    FROM ranked_results
-                )
-                SELECT sr_id, 
-                    sr_insertdatetime, 
-                    sr_totaldue,
-                    sr_requestnumber,
-                    sr_datenextstep,
-                    sr_actionablenote,
-                    sr_escalated,
-                    wo_startdatetime,
-                    zone, 
-                    admin_u_id,
-                    admin_firstname,
-                    admin_lastname,
-                    cc_name,
-                    c_name,
-                    p_priority,
-                    ss_statussecondary,
-                    t_trade, 
-                    hours_since_last_note,
-                    days_in_current_status,
-                    AttackCallCenter,
-                    AttackPriority, 
-                    AttackStatusSecondary,
-                    AttackHoursSinceLastNote,
-                    AttackDaysInStatus,
-                    AttackActionableDate,
-                    AttackPoints,
-                    is_escalated
-                FROM final_with_attack_points
-                WHERE (rn_non_escalated <= @TopCount) OR (is_escalated = 1)
-                ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
-
-                -- Clean up
-                DROP TABLE #BaseData;
-                DROP TABLE #WorkOrderNotes;
-                DROP TABLE #StatusChanges;
+            -- Clean up
+            DROP TABLE #BaseData;
+            DROP TABLE #WorkOrderNotes;
+            DROP TABLE #StatusChanges;
             ";
 
             
