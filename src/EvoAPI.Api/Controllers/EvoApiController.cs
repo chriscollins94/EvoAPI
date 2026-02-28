@@ -7180,6 +7180,298 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("companies/{xcccId:int}/checklists/detail")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklistsWithQuestions(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists with questions for company xcccId {XcccId}", xcccId);
+            
+            var checklists = await _dataService.GetCompanyChecklistsWithQuestionsAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyChecklistsWithQuestions", $"Retrieved {checklists.Count} checklists with questions", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklists.Count} checklists with questions",
+                Data = checklists,
+                Count = checklists.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyChecklistsWithQuestions", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklists with questions"
+            });
+        }
+    }
+
+    [HttpGet("checklist-types")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CheckListTypeDto>>>> GetCheckListTypes()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var types = await _dataService.GetCheckListTypesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCheckListTypes", $"Retrieved {types.Count} checklist types", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListTypeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {types.Count} checklist types",
+                Data = types,
+                Count = types.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCheckListTypes", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListTypeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklist types"
+            });
+        }
+    }
+
+    [HttpGet("checklist-answer-types")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CheckListAnswerTypeDto>>>> GetCheckListAnswerTypes()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var types = await _dataService.GetCheckListAnswerTypesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCheckListAnswerTypes", $"Retrieved {types.Count} checklist answer types", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListAnswerTypeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {types.Count} checklist answer types",
+                Data = types,
+                Count = types.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCheckListAnswerTypes", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListAnswerTypeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklist answer types"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/checklists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CheckListDto>>> CreateCheckList(int xcccId, [FromBody] CreateCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating checklist '{Name}' for xcccId {XcccId}", request.ClName, xcccId);
+            
+            var checklist = await _dataService.CreateCheckListAsync(xcccId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateCheckList", $"Created checklist '{request.ClName}' for xcccId {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListDto>
+            {
+                Success = true,
+                Message = "Checklist created successfully",
+                Data = checklist,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCheckList", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the checklist"
+            });
+        }
+    }
+
+    [HttpPut("checklists/{clId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CheckListDto>>> UpdateCheckList(int clId, [FromBody] UpdateCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating checklist {ClId}", clId);
+            
+            var checklist = await _dataService.UpdateCheckListAsync(clId, request);
+            
+            if (checklist == null)
+            {
+                return NotFound(new ApiResponse<CheckListDto>
+                {
+                    Success = false,
+                    Message = $"Checklist {clId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateCheckList", $"Updated checklist {clId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListDto>
+            {
+                Success = true,
+                Message = "Checklist updated successfully",
+                Data = checklist,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCheckList", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the checklist"
+            });
+        }
+    }
+
+    [HttpPost("checklists/{clId:int}/questions")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> CreateCheckListQuestion(int clId, [FromBody] CreateCheckListQuestionRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating question for checklist {ClId}", clId);
+            
+            var question = await _dataService.CreateCheckListQuestionAsync(clId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateCheckListQuestion", $"Created question for checklist {clId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListQuestionDto>
+            {
+                Success = true,
+                Message = "Question created successfully",
+                Data = question,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCheckListQuestion", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListQuestionDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the question"
+            });
+        }
+    }
+
+    [HttpPut("checklist-questions/{clqId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> UpdateCheckListQuestion(int clqId, [FromBody] UpdateCheckListQuestionRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating question {ClqId}", clqId);
+            
+            var question = await _dataService.UpdateCheckListQuestionAsync(clqId, request);
+            
+            if (question == null)
+            {
+                return NotFound(new ApiResponse<CheckListQuestionDto>
+                {
+                    Success = false,
+                    Message = $"Question {clqId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateCheckListQuestion", $"Updated question {clqId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListQuestionDto>
+            {
+                Success = true,
+                Message = "Question updated successfully",
+                Data = question,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCheckListQuestion", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListQuestionDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the question"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/checklists/clone")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> CloneCheckLists(int xcccId, [FromBody] CloneCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Cloning checklists from xcccId {Source} to {Target}", xcccId, request.TargetXcccId);
+            
+            await _dataService.CloneCheckListsAsync(xcccId, request.TargetXcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CloneCheckLists", $"Cloned checklists from xcccId {xcccId} to {request.TargetXcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Checklists cloned successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CloneCheckLists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while cloning checklists"
+            });
+        }
+    }
+
     [HttpPost("companies/{xcccId:int}/trades")]
     [EvoAuthorize]
     public async Task<ActionResult<ApiResponse<LaborRateDto>>> CreateCompanyTrade(int xcccId, [FromBody] CreateLaborRateRequest request)

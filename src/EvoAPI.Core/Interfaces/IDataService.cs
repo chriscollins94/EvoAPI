@@ -190,6 +190,16 @@ public interface IDataService
     Task<List<int>> GetTradeChecklistsAsync(int lrId);
     Task UpdateTradeChecklistsAsync(int lrId, List<int> checklistIds);
     
+    // Company Checklist/Rulebook Management methods
+    Task<List<CheckListDto>> GetCompanyChecklistsWithQuestionsAsync(int xcccId);
+    Task<List<CheckListTypeDto>> GetCheckListTypesAsync();
+    Task<List<CheckListAnswerTypeDto>> GetCheckListAnswerTypesAsync();
+    Task<CheckListDto> CreateCheckListAsync(int xcccId, CreateCheckListRequest request);
+    Task<CheckListDto?> UpdateCheckListAsync(int clId, UpdateCheckListRequest request);
+    Task<CheckListQuestionDto> CreateCheckListQuestionAsync(int clId, CreateCheckListQuestionRequest request);
+    Task<CheckListQuestionDto?> UpdateCheckListQuestionAsync(int clqId, UpdateCheckListQuestionRequest request);
+    Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId);
+
     // Contact management
     Task<List<ContactDto>> GetCompanyContactsAsync(int cId);
     Task<List<ContactTitleDto>> GetContactTitlesAsync();

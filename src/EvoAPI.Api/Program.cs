@@ -34,7 +34,10 @@ logger.LogInformation("DB_PASSWORD from config: {HasPassword}", !string.IsNullOr
 
 // Replace password placeholder with actual password from secrets/environment
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-logger.LogInformation("Original ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+logger.LogInformation("Original ConnectionString: {ConnectionString}", 
+    connectionString != null 
+        ? System.Text.RegularExpressions.Regex.Replace(connectionString, @"Password=[^;]*", "Password=******") 
+        : "null");
 
 if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PASSWORD}"))
 {
@@ -116,7 +119,10 @@ logger.LogInformation("Final EvoWS Base URL status: {Status}",
         ? $"CONFIGURED - {finalEvoWSUrl}" 
         : "NOT CONFIGURED");
 
-logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+logger.LogInformation("Final ConnectionString: {ConnectionString}", 
+    connectionString != null 
+        ? System.Text.RegularExpressions.Regex.Replace(connectionString, @"Password=[^;]*", "Password=******") 
+        : "null");
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
 // Configure Kestrel for HTTPS in local development environments

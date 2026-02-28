@@ -9857,14 +9857,17 @@ FROM DailyTechSummary;
         {
             const string sql = @"
                 SELECT 
-                    cl_id,
-                    xccc_id,
-                    cl_name,
-                    cl_publicforquote,
-                    cl_publicforinvoice
-                FROM dbo.CheckList
-                WHERE xccc_id = @xcccId
-                ORDER BY cl_name";
+                    cl.cl_id,
+                    cl.xccc_id,
+                    cl.clt_id,
+                    cl.cl_name,
+                    cl.cl_publicforquote,
+                    cl.cl_publicforinvoice,
+                    clt.clt_type
+                FROM dbo.CheckList cl
+                LEFT JOIN dbo.CheckListType clt ON cl.clt_id = clt.clt_id
+                WHERE cl.xccc_id = @xcccId
+                ORDER BY cl.cl_name";
 
             var parameters = new Dictionary<string, object>
             {
@@ -9880,9 +9883,11 @@ FROM DailyTechSummary;
                 {
                     ClId = ConvertToInt(row["cl_id"]),
                     XcccId = ConvertToInt(row["xccc_id"]),
+                    CltId = ConvertToInt(row["clt_id"]),
                     ClName = row["cl_name"]?.ToString() ?? string.Empty,
                     ClPublicForQuote = ConvertToBool(row["cl_publicforquote"]),
-                    ClPublicForInvoice = ConvertToBool(row["cl_publicforinvoice"])
+                    ClPublicForInvoice = ConvertToBool(row["cl_publicforinvoice"]),
+                    CltType = row["clt_type"]?.ToString()
                 });
             }
 
@@ -9911,6 +9916,576 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error retrieving checklists for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListDto>> GetCompanyChecklistsWithQuestionsAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // First get all checklists
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            
+            // Then get all questions for all checklists in one query
+            const string questionsSql = @"
+                SELECT 
+                    clq.clq_id,
+                    clq.cl_id,
+                    clq.clat_id,
+                    clq.clq_question,
+                    clq.clq_order,
+                    clq.clq_required,
+                    clq.clq_answervalues,
+                    clat.clat_type
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                INNER JOIN dbo.CheckList cl ON clq.cl_id = cl.cl_id
+                WHERE cl.xccc_id = @xcccId
+                ORDER BY clq.cl_id, clq.clq_order";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(questionsSql, parameters);
+            
+            var questionsMap = new Dictionary<int, List<CheckListQuestionDto>>();
+            foreach (DataRow row in dt.Rows)
+            {
+                var clId = ConvertToInt(row["cl_id"]);
+                if (!questionsMap.ContainsKey(clId))
+                {
+                    questionsMap[clId] = new List<CheckListQuestionDto>();
+                }
+                questionsMap[clId].Add(new CheckListQuestionDto
+                {
+                    ClqId = ConvertToInt(row["clq_id"]),
+                    ClId = clId,
+                    ClatId = ConvertToInt(row["clat_id"]),
+                    ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                    ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                    ClqRequired = ConvertToBool(row["clq_required"]),
+                    ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                    ClatType = row["clat_type"]?.ToString()
+                });
+            }
+
+            // Attach questions to checklists
+            foreach (var cl in checklists)
+            {
+                cl.Questions = questionsMap.ContainsKey(cl.ClId) ? questionsMap[cl.ClId] : new List<CheckListQuestionDto>();
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklistsWithQuestions",
+                Detail = $"Retrieved {checklists.Count} checklists with questions for xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return checklists;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklistsWithQuestions",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists with questions for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListTypeDto>> GetCheckListTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"SELECT clt_id, clt_type FROM dbo.CheckListType ORDER BY clt_type";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CheckListTypeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListTypeDto
+                {
+                    CltId = ConvertToInt(row["clt_id"]),
+                    CltType = row["clt_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListTypes",
+                Detail = $"Retrieved {result.Count} checklist types",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListTypes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklist types");
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListAnswerTypeDto>> GetCheckListAnswerTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"SELECT clat_id, clat_type FROM dbo.CheckListAnswerType ORDER BY clat_type";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CheckListAnswerTypeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListAnswerTypeDto
+                {
+                    ClatId = ConvertToInt(row["clat_id"]),
+                    ClatType = row["clat_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListAnswerTypes",
+                Detail = $"Retrieved {result.Count} checklist answer types",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListAnswerTypes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklist answer types");
+            throw;
+        }
+    }
+
+    public async Task<CheckListDto> CreateCheckListAsync(int xcccId, CreateCheckListRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.CheckList (xccc_id, clt_id, cl_name, cl_publicforquote, cl_publicforinvoice, cl_insertdatetime)
+                VALUES (@xcccId, @cltId, @clName, @clPublicForQuote, @clPublicForInvoice, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int clId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                command.Parameters.Add("@cltId", SqlDbType.Int).Value = request.CltId;
+                command.Parameters.Add("@clName", SqlDbType.VarChar, 50).Value = request.ClName;
+                command.Parameters.Add("@clPublicForQuote", SqlDbType.Bit).Value = request.ClPublicForQuote;
+                command.Parameters.Add("@clPublicForInvoice", SqlDbType.Bit).Value = request.ClPublicForInvoice;
+
+                await connection.OpenAsync();
+                clId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the created checklist
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            var newChecklist = checklists.FirstOrDefault(c => c.ClId == clId);
+
+            if (newChecklist == null)
+            {
+                throw new Exception("Failed to retrieve newly created checklist");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckList",
+                Detail = $"Created checklist '{request.ClName}' with ID {clId} for xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newChecklist;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckList",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating checklist for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListDto?> UpdateCheckListAsync(int clId, UpdateCheckListRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.CheckList
+                SET cl_name = @clName,
+                    clt_id = @cltId,
+                    cl_publicforquote = @clPublicForQuote,
+                    cl_publicforinvoice = @clPublicForInvoice,
+                    cl_modifieddatetime = GETDATE()
+                WHERE cl_id = @clId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@clId"] = clId,
+                ["@clName"] = request.ClName,
+                ["@cltId"] = request.CltId,
+                ["@clPublicForQuote"] = request.ClPublicForQuote,
+                ["@clPublicForInvoice"] = request.ClPublicForInvoice
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Get xccc_id to reload
+            const string getXcccSql = "SELECT xccc_id FROM dbo.CheckList WHERE cl_id = @clId";
+            var xcccParams = new Dictionary<string, object> { ["@clId"] = clId };
+            var xcccDt = await ExecuteQueryAsync(getXcccSql, xcccParams);
+            
+            if (xcccDt.Rows.Count == 0) return null;
+            
+            var xcccId = ConvertToInt(xcccDt.Rows[0]["xccc_id"]);
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            var updatedChecklist = checklists.FirstOrDefault(c => c.ClId == clId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckList",
+                Detail = $"Updated checklist {clId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedChecklist;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckList",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating checklist {ClId}", clId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListQuestionDto> CreateCheckListQuestionAsync(int clId, CreateCheckListQuestionRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.CheckListQuestion (cl_id, clat_id, clq_question, clq_order, clq_required, clq_answervalues, clq_insertdatetime)
+                VALUES (@clId, @clatId, @clqQuestion, @clqOrder, @clqRequired, @clqAnswerValues, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int clqId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@clId", SqlDbType.Int).Value = clId;
+                command.Parameters.Add("@clatId", SqlDbType.Int).Value = request.ClatId;
+                command.Parameters.Add("@clqQuestion", SqlDbType.VarChar, 800).Value = request.ClqQuestion;
+                command.Parameters.Add("@clqOrder", SqlDbType.Int).Value = (object?)request.ClqOrder ?? DBNull.Value;
+                command.Parameters.Add("@clqRequired", SqlDbType.Bit).Value = request.ClqRequired;
+                command.Parameters.Add("@clqAnswerValues", SqlDbType.VarChar, 8000).Value = (object?)request.ClqAnswerValues ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                clqId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the created question
+            const string getQuestionSql = @"
+                SELECT 
+                    clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
+                    clq.clq_order, clq.clq_required, clq.clq_answervalues,
+                    clat.clat_type
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                WHERE clq.clq_id = @clqId";
+
+            var qParams = new Dictionary<string, object> { ["@clqId"] = clqId };
+            var dt = await ExecuteQueryAsync(getQuestionSql, qParams);
+            
+            if (dt.Rows.Count == 0)
+            {
+                throw new Exception("Failed to retrieve newly created question");
+            }
+
+            var row = dt.Rows[0];
+            var question = new CheckListQuestionDto
+            {
+                ClqId = ConvertToInt(row["clq_id"]),
+                ClId = ConvertToInt(row["cl_id"]),
+                ClatId = ConvertToInt(row["clat_id"]),
+                ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                ClqRequired = ConvertToBool(row["clq_required"]),
+                ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                ClatType = row["clat_type"]?.ToString()
+            };
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckListQuestion",
+                Detail = $"Created question {clqId} for checklist {clId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return question;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckListQuestion",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating question for checklist {ClId}", clId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListQuestionDto?> UpdateCheckListQuestionAsync(int clqId, UpdateCheckListQuestionRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.CheckListQuestion
+                SET clat_id = @clatId,
+                    clq_question = @clqQuestion,
+                    clq_order = @clqOrder,
+                    clq_required = @clqRequired,
+                    clq_answervalues = @clqAnswerValues,
+                    clq_modifieddatetime = GETDATE()
+                WHERE clq_id = @clqId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@clqId"] = clqId,
+                ["@clatId"] = request.ClatId,
+                ["@clqQuestion"] = request.ClqQuestion,
+                ["@clqOrder"] = (object?)request.ClqOrder ?? DBNull.Value,
+                ["@clqRequired"] = request.ClqRequired,
+                ["@clqAnswerValues"] = (object?)request.ClqAnswerValues ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated question
+            const string getQuestionSql = @"
+                SELECT 
+                    clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
+                    clq.clq_order, clq.clq_required, clq.clq_answervalues,
+                    clat.clat_type
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                WHERE clq.clq_id = @clqId";
+
+            var qParams = new Dictionary<string, object> { ["@clqId"] = clqId };
+            var dt = await ExecuteQueryAsync(getQuestionSql, qParams);
+            
+            if (dt.Rows.Count == 0) return null;
+
+            var row = dt.Rows[0];
+            var question = new CheckListQuestionDto
+            {
+                ClqId = ConvertToInt(row["clq_id"]),
+                ClId = ConvertToInt(row["cl_id"]),
+                ClatId = ConvertToInt(row["clat_id"]),
+                ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                ClqRequired = ConvertToBool(row["clq_required"]),
+                ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                ClatType = row["clat_type"]?.ToString()
+            };
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckListQuestion",
+                Detail = $"Updated question {clqId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return question;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckListQuestion",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating question {ClqId}", clqId);
+            throw;
+        }
+    }
+
+    public async Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            // Get source checklists with questions
+            var sourceChecklists = await GetCompanyChecklistsWithQuestionsAsync(sourceXcccId);
+            
+            foreach (var checklist in sourceChecklists)
+            {
+                // Create the checklist in the target company
+                var createRequest = new CreateCheckListRequest
+                {
+                    CltId = checklist.CltId,
+                    ClName = checklist.ClName,
+                    ClPublicForQuote = checklist.ClPublicForQuote,
+                    ClPublicForInvoice = checklist.ClPublicForInvoice
+                };
+
+                var newChecklist = await CreateCheckListAsync(targetXcccId, createRequest);
+
+                // Clone all questions
+                if (checklist.Questions != null)
+                {
+                    foreach (var question in checklist.Questions)
+                    {
+                        var questionRequest = new CreateCheckListQuestionRequest
+                        {
+                            ClatId = question.ClatId,
+                            ClqQuestion = question.ClqQuestion,
+                            ClqOrder = question.ClqOrder,
+                            ClqRequired = question.ClqRequired,
+                            ClqAnswerValues = question.ClqAnswerValues
+                        };
+
+                        await CreateCheckListQuestionAsync(newChecklist.ClId, questionRequest);
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CloneCheckLists",
+                Detail = $"Cloned {sourceChecklists.Count} checklists from xcccId {sourceXcccId} to {targetXcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CloneCheckLists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error cloning checklists from xcccId {Source} to {Target}", sourceXcccId, targetXcccId);
             throw;
         }
     }

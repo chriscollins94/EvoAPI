@@ -45,9 +45,12 @@ public class CheckListDto
 {
     public int ClId { get; set; }
     public int XcccId { get; set; }
+    public int CltId { get; set; }
     public string ClName { get; set; } = string.Empty;
     public bool ClPublicForQuote { get; set; }
     public bool ClPublicForInvoice { get; set; }
+    public string? CltType { get; set; }
+    public List<CheckListQuestionDto>? Questions { get; set; }
 }
 
 public class CreateLaborRateRequest
