@@ -12810,5 +12810,754 @@ FROM DailyTechSummary;
     }
 
     #endregion
+
+    #region Time Off Requests
+
+    public async Task<DataTable> GetTimeOffRequestTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"SELECT tort_id, tort_type FROM TimeOffRequestType";
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestTypesAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestTypesAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequestTypes",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestTypeDetailsAsync(int tortId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tortd_id, tort_id, tortd_typedetail, tortd_workflowrequired, 
+                       tortd_admincancreate, 
+                       ISNULL(tortd_techcancreate, 1) as tortd_techcancreate,
+                       ISNULL(tortd_maxdaysoff, 30) as tortd_maxdaysoff
+                FROM TimeOffRequestTypeDetail
+                WHERE tort_id = @tort_id
+                AND tortd_active = 1";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@tort_id", tortId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestTypeDetailsAsync completed in {ElapsedMs}ms for tortId={TortId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, tortId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestTypeDetailsAsync for tortId={TortId}", tortId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequestTypeDetails",
+                Detail = $"Error for tortId={tortId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffBalanceAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u_id, u_username, u_firstname, u_lastname, u_email, 
+                       ISNULL(u_daysavailablepto, 0) as u_daysavailablepto, 
+                       ISNULL(u_daysavailablevacation, 0) as u_daysavailablevacation 
+                FROM [user] u 
+                WHERE u_id = @u_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@u_id", userId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffBalanceAsync completed in {ElapsedMs}ms for userId={UserId}",
+                stopwatch.ElapsedMilliseconds, userId);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffBalanceAsync for userId={UserId}", userId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffBalance",
+                Detail = $"Error for userId={userId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tor.tor_id, u.u_firstname, u.u_lastname, 
+                       ISNULL(u.u_daysavailablevacation, 0) as u_daysavailablevacation, 
+                       ISNULL(u.u_daysavailablepto, 0) as u_daysavailablepto,
+                       tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail, tortd.tortd_id,
+                       tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id, 
+                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) as z_id
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN timeoffrequeststatus tors ON tor.tors_id = tors.tors_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE u.u_id = @u_id
+                ORDER BY tors.tors_orderby, tor.tor_startdate DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@u_id", userId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestsAsync completed in {ElapsedMs}ms for userId={UserId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, userId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestsAsync for userId={UserId}", userId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequests",
+                Detail = $"Error for userId={userId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int?> InsertTimeOffRequestAsync(EvoAPI.Shared.DTOs.CreateTimeOffRequestDto request, int statusId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var note = request.Note ?? string.Empty;
+
+            const string sql = @"
+                INSERT INTO TimeOffRequest (tortd_id, u_id, u_id_admincreated, tors_id, tor_startdate, tor_enddate, tor_note) 
+                VALUES (@tortd_id, @u_id, @u_id_admincreated, @tors_id, @tor_startdate, @tor_enddate, @tor_note);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@tortd_id", request.TortdId },
+                { "@u_id", request.UserId },
+                { "@u_id_admincreated", request.UserIdAdmincreated },
+                { "@tors_id", statusId },
+                { "@tor_startdate", request.StartDate },
+                { "@tor_enddate", request.EndDate },
+                { "@tor_note", note }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+
+            if (result.Rows.Count > 0 && result.Rows[0][0] != DBNull.Value)
+            {
+                var newId = Convert.ToInt32(result.Rows[0][0]);
+                _logger.LogInformation("InsertTimeOffRequestAsync completed in {ElapsedMs}ms, new tor_id={TorId}",
+                    stopwatch.ElapsedMilliseconds, newId);
+                return newId;
+            }
+
+            _logger.LogWarning("InsertTimeOffRequestAsync completed but no ID returned");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequest",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> InsertTimeOffRequestDetailsAsync(int torId, List<EvoAPI.Shared.DTOs.CreateTimeOffRequestDetailDto> details)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            int totalHours = 0;
+
+            foreach (var detail in details)
+            {
+                const string sqlDetail = @"
+                    INSERT INTO TimeOffRequestDetail (tor_id, tord_date, tord_starthour, tord_endhour) 
+                    VALUES (@tor_id, @tord_date, @tord_starthour, @tord_endhour)";
+
+                var detailParams = new Dictionary<string, object>
+                {
+                    { "@tor_id", torId },
+                    { "@tord_date", detail.Date },
+                    { "@tord_starthour", detail.StartHour },
+                    { "@tord_endhour", detail.EndHour }
+                };
+
+                await ExecuteNonQueryAsync(sqlDetail, detailParams);
+                totalHours += detail.EndHour - detail.StartHour;
+            }
+
+            // Update total hours on the parent request
+            if (totalHours > 0)
+            {
+                const string sqlUpdate = @"UPDATE TimeOffRequest SET tor_totalhours = @totalHours WHERE tor_id = @tor_id";
+                var updateParams = new Dictionary<string, object>
+                {
+                    { "@totalHours", totalHours },
+                    { "@tor_id", torId }
+                };
+                await ExecuteNonQueryAsync(sqlUpdate, updateParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("InsertTimeOffRequestDetailsAsync completed in {ElapsedMs}ms for torId={TorId}, {Count} details, {TotalHours} total hours",
+                stopwatch.ElapsedMilliseconds, torId, details.Count, totalHours);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestDetailsAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequestDetails",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> CancelTimeOffRequestAsync(int torId, int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // Verify the request belongs to this user and is cancellable (not already cancelled/rejected)
+            const string verifySql = @"
+                SELECT tor_id, u_id, tors_id 
+                FROM TimeOffRequest 
+                WHERE tor_id = @tor_id";
+
+            var verifyParams = new Dictionary<string, object> { { "@tor_id", torId } };
+            var verifyResult = await ExecuteQueryAsync(verifySql, verifyParams);
+
+            if (verifyResult.Rows.Count == 0)
+                throw new InvalidOperationException("Time off request not found");
+
+            var row = verifyResult.Rows[0];
+            var requestUserId = Convert.ToInt32(row["u_id"]);
+            var currentStatus = Convert.ToInt32(row["tors_id"]);
+
+            if (requestUserId != userId)
+                throw new UnauthorizedAccessException("You can only cancel your own requests");
+
+            if (currentStatus == 5) // Already cancelled
+                throw new InvalidOperationException("Request is already cancelled");
+
+            if (currentStatus == 4) // Rejected
+                throw new InvalidOperationException("Cannot cancel a rejected request");
+
+            // Update status to 5 (Cancelled)
+            const string sql = @"
+                UPDATE TimeOffRequest 
+                SET tors_id = 5 
+                WHERE tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            await ExecuteNonQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            _logger.LogInformation("CancelTimeOffRequestAsync completed in {ElapsedMs}ms for torId={TorId}, userId={UserId}",
+                stopwatch.ElapsedMilliseconds, torId, userId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in CancelTimeOffRequestAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CancelTimeOffRequest",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetActiveEmployeesForTimeOffAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u.u_id, u.u_firstname, u.u_lastname, u.u_username
+                FROM [user] u
+                WHERE u.u_active = 1
+                ORDER BY u.u_lastname, u.u_firstname";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetActiveEmployeesForTimeOffAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetActiveEmployeesForTimeOffAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveEmployeesForTimeOff",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllTimeOffRequestsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tor.tor_id, u.u_firstname, u.u_lastname, u.u_daysavailablevacation, 
+                       u.u_daysavailablepto, tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail, 
+                       tortd.tortd_id, tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id, 
+                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) AS z_id, tor.tor_insertdatetime
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN timeoffrequeststatus tors ON tor.tors_id = tors.tors_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE tor.tor_startdate >= '2022-01-01'
+                AND tor.tor_enddate <= '2045-12-31'
+                ORDER BY tors.tors_orderby, tor.tor_startdate DESC";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetAllTimeOffRequestsAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetAllTimeOffRequestsAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTimeOffRequests",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestDetailAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tord_id, tor_id, tord_date, tord_starthour, tord_endhour
+                FROM timeoffrequestdetail
+                WHERE tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestDetailAsync completed in {ElapsedMs}ms for torId={TorId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, torId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestDetailAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateTimeOffRequestStatusAsync(int torId, int torsId, string noteReason)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // Step 1: Update the status and reviewer note
+            const string sqlUpdate = @"
+                UPDATE TimeOffRequest 
+                SET tors_id = @tors_id, tor_notereason = @tor_notereason
+                WHERE tor_id = @tor_id";
+
+            var updateParams = new Dictionary<string, object>
+            {
+                { "@tors_id", torsId },
+                { "@tor_notereason", noteReason ?? "" },
+                { "@tor_id", torId }
+            };
+            await ExecuteNonQueryAsync(sqlUpdate, updateParams);
+
+            // Step 2: If cancelling (status 5), update linked service request and remove WO assignments
+            if (torsId == 5)
+            {
+                const string sqlCancelSR = @"
+                    UPDATE servicerequest SET s_id = 6, ss_id = 25
+                    WHERE sr_id IN (SELECT sr_id FROM timeoffrequest WHERE tor_id = @tor_id)";
+                var cancelParams = new Dictionary<string, object> { { "@tor_id", torId } };
+                await ExecuteNonQueryAsync(sqlCancelSR, cancelParams);
+
+                const string sqlDeleteWOUsers = @"
+                    DELETE FROM xrefworkorderuser 
+                    WHERE wo_id IN (
+                        SELECT wo.wo_id FROM workorder wo
+                        INNER JOIN timeoffrequest tor ON tor.sr_id = wo.sr_id
+                        WHERE tor.tor_id = @tor_id
+                    )";
+                await ExecuteNonQueryAsync(sqlDeleteWOUsers, cancelParams);
+            }
+
+            // Step 3: If approving (status 1), update linked SR to invoiced
+            if (torsId == 1)
+            {
+                const string sqlApproveSR = @"
+                    UPDATE ServiceRequest SET s_id = 5 
+                    WHERE sr_id IN (SELECT sr_id FROM timeoffrequest WHERE tor_id = @tor_id)";
+                var approveParams = new Dictionary<string, object> { { "@tor_id", torId } };
+                await ExecuteNonQueryAsync(sqlApproveSR, approveParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("UpdateTimeOffRequestStatusAsync completed in {ElapsedMs}ms for torId={TorId}, newStatus={TorsId}",
+                stopwatch.ElapsedMilliseconds, torId, torsId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in UpdateTimeOffRequestStatusAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTimeOffRequestStatus",
+                Detail = $"Error for torId={torId}, torsId={torsId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteTimeOffRequestAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                DELETE FROM TimeOffRequestDetail WHERE tor_id = @tor_id;
+                DELETE FROM TimeOffRequest WHERE tor_id = @tor_id;";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            await ExecuteNonQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            _logger.LogInformation("DeleteTimeOffRequestAsync completed in {ElapsedMs}ms for torId={TorId}",
+                stopwatch.ElapsedMilliseconds, torId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in DeleteTimeOffRequestAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteTimeOffRequest",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> IsTimeOffWorkflowCurrentlyZFMReviewAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*) AS cnt
+                FROM timeoffrequest
+                WHERE tors_id = 2 AND tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["cnt"]) > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in IsTimeOffWorkflowCurrentlyZFMReviewAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<bool> IsTimeOffWorkflowAdminRequiredAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*) AS cnt
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE DATEDIFF(d, tor.tor_insertdatetime, tor.tor_startdate) < tortd.tortd_workflowadmindaythreshold
+                AND tortd.tortd_workflowrequired = 1
+                AND tor.tors_id = 2
+                AND tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["cnt"]) > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in IsTimeOffWorkflowAdminRequiredAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<int> InsertTimeOffRequestServiceRequestsAsync(int torId, int userId, int tortdId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var rnd = new Random();
+            string srRequestNumber = DateTime.UtcNow.ToString("yyyyMMdd") + "-" + rnd.Next(1000, 9999).ToString();
+
+            // Step 1: Create Service Request
+            const string sqlInsertSR = @"
+                DECLARE @xccc_id int 
+                DECLARE @l_id int 
+                DECLARE @t_id int 
+                DECLARE @sr_summary varchar(100)
+                DECLARE @sr_callnote varchar(8000)
+                DECLARE @tortd_id_local int 
+
+                SELECT @tortd_id_local = tortd_id FROM timeoffrequest WHERE tor_id = @tor_id
+                SELECT @xccc_id = xccc_id, @l_id = l_id, @t_id = t_id, @sr_summary = tortd_typedetail 
+                    FROM timeoffrequesttypedetail WHERE tortd_id = @tortd_id_local
+                SELECT @sr_callnote = tor_note FROM timeoffrequest WHERE tor_id = @tor_id
+
+                INSERT INTO ServiceRequest (xccc_id, l_id, t_id, s_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_callnote, sr_flatorhourly)
+                VALUES (@xccc_id, @l_id, @t_id, 5, 17, 1, 1, @sr_summary, @sr_requestnumber, @sr_callnote, 'hourly')
+
+                SELECT SCOPE_IDENTITY()";
+
+            var srParams = new Dictionary<string, object>
+            {
+                { "@tor_id", torId },
+                { "@sr_requestnumber", srRequestNumber }
+            };
+            var srResult = await ExecuteQueryAsync(sqlInsertSR, srParams);
+            int srId = Convert.ToInt32(srResult.Rows[0][0]);
+
+            // Step 2: Link TimeOffRequest to Service Request
+            const string sqlUpdateTor = "UPDATE TimeOffRequest SET sr_id = @sr_id WHERE tor_id = @tor_id";
+            var updateTorParams = new Dictionary<string, object>
+            {
+                { "@sr_id", srId },
+                { "@tor_id", torId }
+            };
+            await ExecuteNonQueryAsync(sqlUpdateTor, updateTorParams);
+
+            // Step 3: Get detail rows for creating work orders
+            var detailDt = await GetTimeOffRequestDetailAsync(torId);
+
+            // Step 4: Create work orders for each detail day
+            int i = 0;
+            foreach (System.Data.DataRow row in detailDt.Rows)
+            {
+                i++;
+                string woNumber = srRequestNumber + "-" + i.ToString();
+                var tordDate = Convert.ToDateTime(row["tord_date"]);
+                int startHour = Convert.ToInt32(row["tord_starthour"]);
+                int endHour = Convert.ToInt32(row["tord_endhour"]);
+
+                // Calculate start/end datetimes (UTC offset for Central Time)
+                DateTime startDateTime = tordDate.Date.AddHours(startHour + 5);
+                DateTime endDateTime = tordDate.Date.AddHours(endHour + 5);
+
+                // Full day override (8 hours)
+                if ((endHour - startHour) == 8)
+                {
+                    int offset = (int)(DateTime.UtcNow - TimeZoneInfo.ConvertTime(DateTime.Now, 
+                        TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time"))).TotalHours;
+                    startDateTime = tordDate.Date.AddHours(offset);
+                    endDateTime = tordDate.Date.AddHours(23).AddMinutes(59).AddSeconds(59).AddHours(offset);
+                }
+
+                const string sqlInsertWO = @"
+                    DECLARE @sr_summary varchar(100)
+                    SELECT @sr_summary = tortd_typedetail FROM timeoffrequesttypedetail WHERE tortd_id = @tortd_id
+
+                    INSERT INTO WORKORDER (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id, wot_id, wo_startdatetime, wo_enddatetime)
+                    VALUES (@sr_id, @wo_workordernumber, @sr_summary, 0, 17, 1, @wo_startdatetime, @wo_enddatetime)
+
+                    SELECT SCOPE_IDENTITY()";
+
+                var woParams = new Dictionary<string, object>
+                {
+                    { "@sr_id", srId },
+                    { "@tortd_id", tortdId },
+                    { "@wo_workordernumber", woNumber },
+                    { "@wo_startdatetime", startDateTime },
+                    { "@wo_enddatetime", endDateTime }
+                };
+                var woResult = await ExecuteQueryAsync(sqlInsertWO, woParams);
+                int woId = Convert.ToInt32(woResult.Rows[0][0]);
+
+                // Assign employee to work order
+                const string sqlAssign = "INSERT INTO xrefworkorderuser (wo_id, u_id) VALUES (@wo_id, @u_id)";
+                var assignParams = new Dictionary<string, object>
+                {
+                    { "@wo_id", woId },
+                    { "@u_id", userId }
+                };
+                await ExecuteNonQueryAsync(sqlAssign, assignParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("InsertTimeOffRequestServiceRequestsAsync completed in {ElapsedMs}ms for torId={TorId}, srId={SrId}, {WoCount} work orders created",
+                stopwatch.ElapsedMilliseconds, torId, srId, i);
+            return srId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestServiceRequestsAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequestServiceRequests",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetZonesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT z_id, z_number, u_id
+                FROM zone
+                ORDER BY z_number";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetZonesAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetZonesAsync");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetZFMByUserAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT zfm.* FROM [user] zfm
+                WHERE zfm.u_id IN (
+                    SELECT z.u_id FROM zone z
+                    INNER JOIN [user] u ON z.z_id = u.z_id
+                    WHERE u.u_id = @u_id
+                )";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetZFMByUserAsync for userId={UserId}", userId);
+            throw;
+        }
+    }
+
+    #endregion
 }
 

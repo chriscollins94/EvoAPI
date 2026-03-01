@@ -230,4 +230,23 @@ public interface IDataService
     Task<AddressDto> CreateCallCenterAddressAsync(int ccId, CreateAddressRequest request);
     Task<AddressDto?> UpdateCallCenterAddressAsync(int aId, UpdateAddressRequest request);
     Task<bool> DeleteCallCenterAddressXrefAsync(int ccId, int aId);
+
+    // Time Off Request methods
+    Task<DataTable> GetTimeOffRequestTypesAsync();
+    Task<DataTable> GetTimeOffRequestTypeDetailsAsync(int tortId);
+    Task<DataTable> GetTimeOffBalanceAsync(int userId);
+    Task<DataTable> GetTimeOffRequestsAsync(int userId);
+    Task<DataTable> GetAllTimeOffRequestsAsync();
+    Task<DataTable> GetTimeOffRequestDetailAsync(int torId);
+    Task<int?> InsertTimeOffRequestAsync(CreateTimeOffRequestDto request, int statusId);
+    Task<bool> InsertTimeOffRequestDetailsAsync(int torId, List<CreateTimeOffRequestDetailDto> details);
+    Task<bool> CancelTimeOffRequestAsync(int torId, int userId);
+    Task<bool> UpdateTimeOffRequestStatusAsync(int torId, int torsId, string noteReason);
+    Task<bool> DeleteTimeOffRequestAsync(int torId);
+    Task<bool> IsTimeOffWorkflowCurrentlyZFMReviewAsync(int torId);
+    Task<bool> IsTimeOffWorkflowAdminRequiredAsync(int torId);
+    Task<int> InsertTimeOffRequestServiceRequestsAsync(int torId, int userId, int tortdId);
+    Task<DataTable> GetZonesAsync();
+    Task<DataTable> GetZFMByUserAsync(int userId);
+    Task<DataTable> GetActiveEmployeesForTimeOffAsync();
 }
