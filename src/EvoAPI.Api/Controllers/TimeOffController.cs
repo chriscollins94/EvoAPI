@@ -14,15 +14,18 @@ public class TimeOffController : BaseController
     private readonly IDataService _dataService;
     private readonly IAuditService _auditService2;
     private readonly ILogger<TimeOffController> _logger;
+    private readonly ITimeOffEmailService _timeOffEmailService;
 
     public TimeOffController(
         IDataService dataService,
         IAuditService auditService,
-        ILogger<TimeOffController> logger)
+        ILogger<TimeOffController> logger,
+        ITimeOffEmailService timeOffEmailService)
     {
         _dataService = dataService;
         _auditService2 = auditService;
         _logger = logger;
+        _timeOffEmailService = timeOffEmailService;
         InitializeAuditService(auditService);
     }
 
@@ -260,9 +263,55 @@ public class TimeOffController : BaseController
                 request.UserIdAdmincreated = UserId;
             }
 
-            // Determine initial status - for Phase 1, use "Under Review (Admin)" status (3)
-            // In the legacy system, status depends on workflow rules. For now, set to under review.
-            int statusId = 3; // Under Review (Admin)
+            // ====================================================
+            // Status Routing Logic (matches legacy EvoWS behavior)
+            // ====================================================
+            int statusId;
+
+            // Get the type detail info to check workflow requirements
+            var typeDetails = await _dataService.GetTimeOffRequestTypeDetailsAsync(0);
+            var typeDetailRow = typeDetails.AsEnumerable()
+                .FirstOrDefault(r => Convert.ToInt32(r["tortd_id"]) == request.TortdId);
+            bool workflowRequired = typeDetailRow != null && Convert.ToBoolean(typeDetailRow["tortd_workflowrequired"]);
+
+            if (!workflowRequired)
+            {
+                // No workflow required → Auto-approve
+                statusId = 1;
+            }
+            else
+            {
+                // Check if user is in auto-approved list (system admins)
+                var autoApprovedList = await _dataService.GetConfigSettingValueAsync("Config", "UsersTimeOffAutoApproved");
+                var autoApprovedIds = ParseCommaSeparatedIds(autoApprovedList);
+
+                if (autoApprovedIds.Contains(request.UserId))
+                {
+                    // System admin → Auto-approve
+                    statusId = 1;
+                }
+                else
+                {
+                    // Check if user is a tech
+                    bool isTech = await _dataService.IsUserTechAsync(request.UserId);
+
+                    // Check if user is a ZFM
+                    var zfmList = await _dataService.GetConfigSettingValueAsync("Config", "UsersZFM");
+                    var zfmIds = ParseCommaSeparatedIds(zfmList);
+                    bool isZFM = zfmIds.Contains(request.UserId);
+
+                    if (!isTech || isZFM)
+                    {
+                        // Non-tech or ZFM → Admin review (status 3)
+                        statusId = 3;
+                    }
+                    else
+                    {
+                        // Tech → ZFM review (status 2)
+                        statusId = 2;
+                    }
+                }
+            }
 
             // Insert the main request
             var torId = await _dataService.InsertTimeOffRequestAsync(request, statusId);
@@ -281,8 +330,72 @@ public class TimeOffController : BaseController
                 await _dataService.InsertTimeOffRequestDetailsAsync(torId.Value, request.Details);
             }
 
+            // If auto-approved, create service requests/work orders
+            if (statusId == 1)
+            {
+                await _dataService.InsertTimeOffRequestServiceRequestsAsync(torId.Value, request.UserId, request.TortdId);
+            }
+
+            // ====================================================
+            // Email Notifications
+            // ====================================================
+
+            // Check for same-day request notification
+            bool isSameDay = request.StartDate.Date <= DateTime.Today;
+            if (isSameDay && statusId != 1)  // Don't send same-day for auto-approved
+            {
+                bool isTechForEmail = await _dataService.IsUserTechAsync(request.UserId);
+                _ = Task.Run(async () =>
+                {
+                    try { await _timeOffEmailService.SendSameDayNotificationAsync(torId.Value, request.UserId, request.TortdId, isTechForEmail); }
+                    catch (Exception ex) { _logger.LogError(ex, "Error sending same-day email for torId={TorId}", torId); }
+                });
+            }
+
+            // Send routing-specific email
+            if (statusId == 2)
+            {
+                // Tech request → notify ZFM
+                _ = Task.Run(async () =>
+                {
+                    try { await _timeOffEmailService.SendZFMReviewNotificationAsync(torId.Value, request.UserId); }
+                    catch (Exception ex) { _logger.LogError(ex, "Error sending ZFM review email for torId={TorId}", torId); }
+                });
+            }
+            else if (statusId == 3)
+            {
+                // Non-tech/ZFM → notify admin approvers
+                bool exceeding = false;
+                string? balanceType = null;
+
+                // Check if exceeding balance
+                var balanceDt = await _dataService.GetTimeOffBalanceAsync(request.UserId);
+                if (balanceDt.Rows.Count > 0)
+                {
+                    int totalHours = request.Details.Sum(d => d.EndHour - d.StartHour);
+                    if (request.TortdId == 1) // Vacation
+                    {
+                        var available = balanceDt.Rows[0]["u_daysavailablevacation"] != DBNull.Value
+                            ? Convert.ToInt32(balanceDt.Rows[0]["u_daysavailablevacation"]) : 0;
+                        if (available < totalHours) { exceeding = true; balanceType = "vacation"; }
+                    }
+                    else if (request.TortdId == 2) // PTO
+                    {
+                        var available = balanceDt.Rows[0]["u_daysavailablepto"] != DBNull.Value
+                            ? Convert.ToInt32(balanceDt.Rows[0]["u_daysavailablepto"]) : 0;
+                        if (available < totalHours) { exceeding = true; balanceType = "PTO"; }
+                    }
+                }
+
+                _ = Task.Run(async () =>
+                {
+                    try { await _timeOffEmailService.SendAdminEscalationNotificationAsync(torId.Value, request.UserId, exceeding, balanceType); }
+                    catch (Exception ex) { _logger.LogError(ex, "Error sending admin escalation email for torId={TorId}", torId); }
+                });
+            }
+
             stopwatch.Stop();
-            await LogAuditAsync("CreateTimeOffRequest", new { torId, userId = request.UserId, tortdId = request.TortdId }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            await LogAuditAsync("CreateTimeOffRequest", new { torId, userId = request.UserId, tortdId = request.TortdId, statusId }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
 
             return Ok(new ApiResponse<TimeOffRequestDto>
             {
@@ -304,6 +417,24 @@ public class TimeOffController : BaseController
                 Message = "Failed to create time off request"
             });
         }
+    }
+
+    /// <summary>
+    /// Parse comma-separated user ID string into a HashSet
+    /// </summary>
+    private static HashSet<int> ParseCommaSeparatedIds(string? commaSeparatedList)
+    {
+        var result = new HashSet<int>();
+        if (string.IsNullOrWhiteSpace(commaSeparatedList)) return result;
+
+        foreach (var part in commaSeparatedList.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(part.Trim(), out var id))
+            {
+                result.Add(id);
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -510,29 +641,7 @@ public class TimeOffController : BaseController
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            // Check if this is a ZFM reviewing (status 2) and needs admin escalation
-            bool isZFMReview = await _dataService.IsTimeOffWorkflowCurrentlyZFMReviewAsync(torId);
-
-            if (isZFMReview)
-            {
-                // ZFM is approving - check if admin escalation is needed
-                bool adminRequired = await _dataService.IsTimeOffWorkflowAdminRequiredAsync(torId);
-                if (adminRequired)
-                {
-                    // Escalate to admin review (status 3)
-                    await _dataService.UpdateTimeOffRequestStatusAsync(torId, 3, request.TorNotereason ?? "");
-                    stopwatch.Stop();
-                    await LogAuditAsync("ApproveRequest_EscalatedToAdmin", new { torId, userId = UserId }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
-
-                    return Ok(new ApiResponse<object>
-                    {
-                        Success = true,
-                        Message = "Request escalated to admin review"
-                    });
-                }
-            }
-
-            // Get the request info to find the user and type for SR/WO creation
+            // Get the request info first (needed for email and SR/WO creation)
             var allRequests = await _dataService.GetAllTimeOffRequestsAsync();
             var requestRow = allRequests.AsEnumerable().FirstOrDefault(r => Convert.ToInt32(r["tor_id"]) == torId);
             if (requestRow == null)
@@ -547,6 +656,44 @@ public class TimeOffController : BaseController
             int requestUserId = Convert.ToInt32(requestRow["u_id"]);
             int tortdId = Convert.ToInt32(requestRow["tortd_id"]);
 
+            // Check if this is a ZFM reviewing (status 2) and needs admin escalation
+            bool isZFMReview = await _dataService.IsTimeOffWorkflowCurrentlyZFMReviewAsync(torId);
+
+            if (isZFMReview)
+            {
+                // Check if balance is exceeded
+                bool exceedingBalance = await _dataService.IsTimeOffExceedingBalanceAsync(torId);
+                string? balanceType = null;
+                if (exceedingBalance)
+                {
+                    balanceType = await _dataService.GetTimeOffBalanceTypeAsync(torId);
+                }
+
+                // Check admin escalation needed (exceeding balance OR short-notice threshold)
+                bool adminRequired = await _dataService.IsTimeOffWorkflowAdminRequiredAsync(torId);
+
+                if (exceedingBalance || adminRequired)
+                {
+                    // Escalate to admin review (status 3)
+                    await _dataService.UpdateTimeOffRequestStatusAsync(torId, 3, request.TorNotereason ?? "");
+                    stopwatch.Stop();
+                    await LogAuditAsync("ApproveRequest_EscalatedToAdmin", new { torId, userId = UserId, exceedingBalance, balanceType }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+                    // Send admin escalation email
+                    _ = Task.Run(async () =>
+                    {
+                        try { await _timeOffEmailService.SendAdminEscalationNotificationAsync(torId, requestUserId, exceedingBalance, balanceType); }
+                        catch (Exception ex) { _logger.LogError(ex, "Error sending admin escalation email for torId={TorId}", torId); }
+                    });
+
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Request escalated to admin review"
+                    });
+                }
+            }
+
             // Create service request and work orders
             await _dataService.InsertTimeOffRequestServiceRequestsAsync(torId, requestUserId, tortdId);
 
@@ -555,6 +702,13 @@ public class TimeOffController : BaseController
 
             stopwatch.Stop();
             await LogAuditAsync("ApproveRequest", new { torId, userId = UserId, requestUserId }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            // Send approval notification email to the employee
+            _ = Task.Run(async () =>
+            {
+                try { await _timeOffEmailService.SendApprovalNotificationAsync(torId, requestUserId); }
+                catch (Exception ex) { _logger.LogError(ex, "Error sending approval email for torId={TorId}", torId); }
+            });
 
             return Ok(new ApiResponse<object>
             {
@@ -585,11 +739,30 @@ public class TimeOffController : BaseController
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            // Get the request info for the email notification
+            var allRequests = await _dataService.GetAllTimeOffRequestsAsync();
+            var requestRow = allRequests.AsEnumerable().FirstOrDefault(r => Convert.ToInt32(r["tor_id"]) == torId);
+            int requestUserId = 0;
+            if (requestRow != null)
+            {
+                requestUserId = Convert.ToInt32(requestRow["u_id"]);
+            }
+
             // Status 4 = Rejected
             await _dataService.UpdateTimeOffRequestStatusAsync(torId, 4, request.TorNotereason ?? "");
 
             stopwatch.Stop();
             await LogAuditAsync("RejectRequest", new { torId, userId = UserId, reason = request.TorNotereason }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            // Send rejection notification email to the employee
+            if (requestUserId > 0)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try { await _timeOffEmailService.SendRejectionNotificationAsync(torId, requestUserId, request.TorNotereason ?? ""); }
+                    catch (Exception ex) { _logger.LogError(ex, "Error sending rejection email for torId={TorId}", torId); }
+                });
+            }
 
             return Ok(new ApiResponse<object>
             {

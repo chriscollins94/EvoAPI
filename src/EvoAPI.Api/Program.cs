@@ -154,6 +154,10 @@ builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<ITimeTrackingService, TimeTrackingService>();
 
+// Register email services
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+builder.Services.AddScoped<ITimeOffEmailService, TimeOffEmailService>();
+
 // Register generic HttpClient for controllers (used by EvoApiController for file uploads)
 builder.Services.AddHttpClient();
 

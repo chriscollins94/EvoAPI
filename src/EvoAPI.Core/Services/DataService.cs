@@ -13597,6 +13597,145 @@ FROM DailyTechSummary;
         }
     }
 
+    /// <summary>
+    /// Get a config setting value by type and identifier
+    /// </summary>
+    public async Task<string?> GetConfigSettingValueAsync(string csType, string csIdentifier)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1 cs_value 
+                FROM ConfigSetting 
+                WHERE cs_type = @cs_type AND cs_identifier = @cs_identifier";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@cs_type", csType },
+                { "@cs_identifier", csIdentifier }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            if (result.Rows.Count > 0 && result.Rows[0]["cs_value"] != DBNull.Value)
+            {
+                return result.Rows[0]["cs_value"].ToString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting config setting {CsType}/{CsIdentifier}", csType, csIdentifier);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Check if a user has the TECH function role
+    /// </summary>
+    public async Task<bool> IsUserTechAsync(int userId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*)
+                FROM xrefUserRole xur
+                INNER JOIN xrefRoleFunction xrf ON xur.r_id = xrf.r_id
+                INNER JOIN [function] f ON xrf.f_id = f.f_id
+                WHERE f.f_functionidentifier = 'TECH'
+                AND xur.u_id = @u_id";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0][0]) >= 1;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking IsTech for userId={UserId}", userId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get user email info (email, firstname, lastname) for notification purposes
+    /// </summary>
+    public async Task<DataTable> GetUserEmailInfoAsync(int userId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT u_id, u_email, u_firstname, u_lastname
+                FROM [user]
+                WHERE u_id = @u_id";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            return await ExecuteQueryAsync(sql, parameters);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting user email info for userId={UserId}", userId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Check if a time off request is exceeding the user's available balance
+    /// </summary>
+    public async Task<bool> IsTimeOffExceedingBalanceAsync(int torId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    CASE 
+                        WHEN tortd.tortd_id = 1 AND ISNULL(u.u_daysavailablevacation, 0) < tor.tor_totalhours THEN 1
+                        WHEN tortd.tortd_id = 2 AND ISNULL(u.u_daysavailablepto, 0) < tor.tor_totalhours THEN 1
+                        ELSE 0
+                    END AS is_exceeding
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                WHERE tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["is_exceeding"]) == 1;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking balance exceeding for torId={TorId}", torId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get the balance type label for a time off request (Vacation or PTO)
+    /// </summary>
+    public async Task<string> GetTimeOffBalanceTypeAsync(int torId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT tortd.tortd_id
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            if (result.Rows.Count > 0)
+            {
+                var tortdId = Convert.ToInt32(result.Rows[0]["tortd_id"]);
+                return tortdId == 1 ? "vacation" : tortdId == 2 ? "PTO" : "time off";
+            }
+            return "time off";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting balance type for torId={TorId}", torId);
+            return "time off";
+        }
+    }
+
     #endregion
 }
 
