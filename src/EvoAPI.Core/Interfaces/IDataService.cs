@@ -249,4 +249,5 @@ public interface IDataService
     Task<DataTable> GetZonesAsync();
     Task<DataTable> GetZFMByUserAsync(int userId);
     Task<DataTable> GetActiveEmployeesForTimeOffAsync();
+    Task<DataTable> GetCalendarEventsAsync();
 }

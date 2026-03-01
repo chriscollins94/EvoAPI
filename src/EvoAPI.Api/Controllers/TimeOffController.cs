@@ -685,4 +685,59 @@ public class TimeOffController : BaseController
             });
         }
     }
+
+    /// <summary>
+    /// Get approved time off events for calendar display
+    /// </summary>
+    [HttpGet("calendar-events")]
+    public async Task<ActionResult<ApiResponse<List<TimeOffCalendarEventDto>>>> GetCalendarEvents()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var dt = await _dataService.GetCalendarEventsAsync();
+            var events = dt.AsEnumerable().Select(row =>
+            {
+                var tordDate = Convert.ToDateTime(row["tord_date"]).ToString("yyyy-MM-dd");
+                var startHour = Convert.ToInt32(row["tord_starthour"]);
+                var endHour = Convert.ToInt32(row["tord_endhour"]);
+                var firstName = row["u_firstname"]?.ToString() ?? "";
+                var lastName = row["u_lastname"]?.ToString() ?? "";
+                var typeDetail = row["tortd_typedetail"]?.ToString() ?? "";
+
+                return new TimeOffCalendarEventDto
+                {
+                    Title = $"{firstName} {lastName} - {typeDetail}",
+                    Start = $"{tordDate}T{startHour:D2}:00:00",
+                    End = $"{tordDate}T{endHour:D2}:00:00",
+                    UserId = Convert.ToInt32(row["u_id"]),
+                    ZoneId = row["z_id"] != DBNull.Value ? Convert.ToInt32(row["z_id"]) : 0,
+                    TypeDetail = typeDetail
+                };
+            }).ToList();
+
+            stopwatch.Stop();
+            await LogAuditAsync("GetCalendarEvents", new { count = events.Count }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<TimeOffCalendarEventDto>>
+            {
+                Success = true,
+                Message = "Calendar events retrieved successfully",
+                Data = events,
+                Count = events.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetCalendarEvents");
+            await LogAuditErrorAsync("GetCalendarEvents", ex);
+
+            return StatusCode(500, new ApiResponse<List<TimeOffCalendarEventDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve calendar events"
+            });
+        }
+    }
 }

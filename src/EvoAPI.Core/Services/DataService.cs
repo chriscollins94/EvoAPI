@@ -13558,6 +13558,45 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetCalendarEventsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u.u_firstname, u.u_lastname, tortd.tortd_typedetail,
+                       tord.tord_date, tord.tord_starthour, tord.tord_endhour,
+                       tor.u_id, ISNULL(u.z_id, 0) AS z_id
+                FROM timeoffrequest tor
+                INNER JOIN TimeOffRequestDetail tord ON tor.tor_id = tord.tor_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                INNER JOIN TimeOffRequestTypeDetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE tor.tors_id = 1
+                AND u.u_active = 1
+                ORDER BY tord.tord_date, u.u_lastname";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetCalendarEventsAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetCalendarEventsAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCalendarEvents",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
     #endregion
 }
 

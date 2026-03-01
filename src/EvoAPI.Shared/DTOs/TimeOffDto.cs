@@ -113,6 +113,19 @@ public class TimeOffActiveEmployeeDto
 }
 
 /// <summary>
+/// Calendar event for approved time off display
+/// </summary>
+public class TimeOffCalendarEventDto
+{
+    public string Title { get; set; } = string.Empty;
+    public string Start { get; set; } = string.Empty;
+    public string End { get; set; } = string.Empty;
+    public int UserId { get; set; }
+    public int ZoneId { get; set; }
+    public string TypeDetail { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Request to update a time off request (approve/reject)
 /// </summary>
 public class UpdateTimeOffRequestDto
