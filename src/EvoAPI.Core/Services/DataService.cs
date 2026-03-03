@@ -12852,7 +12852,7 @@ FROM DailyTechSummary;
                        ISNULL(tortd_techcancreate, 1) as tortd_techcancreate,
                        ISNULL(tortd_maxdaysoff, 30) as tortd_maxdaysoff
                 FROM TimeOffRequestTypeDetail
-                WHERE tort_id = @tort_id
+                WHERE (@tort_id = 0 OR tort_id = @tort_id)
                 AND tortd_active = 1";
 
             var parameters = new Dictionary<string, object>
