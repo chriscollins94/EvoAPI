@@ -885,7 +885,8 @@ public class TimeOffController : BaseController
                     End = $"{tordDate}T{endHour:D2}:00:00",
                     UserId = Convert.ToInt32(row["u_id"]),
                     ZoneId = row["z_id"] != DBNull.Value ? Convert.ToInt32(row["z_id"]) : 0,
-                    TypeDetail = typeDetail
+                    TypeDetail = typeDetail,
+                    IsAdmin = row["is_admin"] != DBNull.Value && Convert.ToInt32(row["is_admin"]) == 1
                 };
             }).ToList();
 

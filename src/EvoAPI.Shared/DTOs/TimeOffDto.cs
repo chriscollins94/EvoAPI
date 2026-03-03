@@ -123,6 +123,7 @@ public class TimeOffCalendarEventDto
     public int UserId { get; set; }
     public int ZoneId { get; set; }
     public string TypeDetail { get; set; } = string.Empty;
+    public bool IsAdmin { get; set; }
 }
 
 /// <summary>

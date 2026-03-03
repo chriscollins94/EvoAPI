@@ -13566,7 +13566,13 @@ FROM DailyTechSummary;
             const string sql = @"
                 SELECT u.u_firstname, u.u_lastname, tortd.tortd_typedetail,
                        tord.tord_date, tord.tord_starthour, tord.tord_endhour,
-                       tor.u_id, ISNULL(u.z_id, 0) AS z_id
+                       tor.u_id, ISNULL(u.z_id, 0) AS z_id,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM xrefUserRole xur
+                           INNER JOIN xrefRoleFunction xrf ON xur.r_id = xrf.r_id
+                           INNER JOIN [function] f ON xrf.f_id = f.f_id
+                           WHERE f.f_functionidentifier = 'ADMIN' AND xur.u_id = tor.u_id
+                       ) THEN 1 ELSE 0 END AS is_admin
                 FROM timeoffrequest tor
                 INNER JOIN TimeOffRequestDetail tord ON tor.tor_id = tord.tor_id
                 INNER JOIN [user] u ON tor.u_id = u.u_id
