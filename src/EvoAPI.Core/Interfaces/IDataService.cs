@@ -27,6 +27,13 @@ public interface IDataService
     Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
     Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);
     Task<DataTable> GetAttackPointsAsync(int topCount = 15);
+
+    // Backlog methods
+    Task<DataTable> GetBacklogItemsAsync(bool includeInactive = false);
+    Task<DataTable> GetBacklogItemByIdAsync(int backlogItemId);
+    Task<int?> CreateBacklogItemAsync(CreateBacklogItemRequest request, int userId, string username);
+    Task<bool> UpdateBacklogItemAsync(int backlogItemId, UpdateBacklogItemRequest request, int userId, string username);
+    Task<bool> DeleteBacklogItemAsync(int backlogItemId, int userId, string username);
     
     // Status Assignment methods
     Task<DataTable> GetAllZonesAsync();

@@ -226,6 +226,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireClaim("accesslevel", "ADMIN"));
+    options.AddPolicy("AttackPointsOnly", policy => policy.RequireClaim("function", "Admin - Attack Points"));
     options.AddPolicy("UserAdminOnly", policy => 
     {
         policy.RequireClaim("accesslevel", "ADMIN");

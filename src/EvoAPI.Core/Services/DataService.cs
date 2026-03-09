@@ -3033,6 +3033,482 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetBacklogItemsAsync(bool includeInactive = false)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var sql = $@"
+                {GetBacklogSelectSql()}
+                WHERE (@includeInactive = 1 OR bi.bi_active = 1)
+                ORDER BY
+                    CASE bi.bi_priority
+                        WHEN 'Critical' THEN 1
+                        WHEN 'High' THEN 2
+                        WHEN 'Medium' THEN 3
+                        WHEN 'Low' THEN 4
+                        ELSE 5
+                    END,
+                    bi.bi_date DESC,
+                    bi.bi_id DESC;";
+
+            var result = await ExecuteQueryAsync(sql, new Dictionary<string, object>
+            {
+                { "@includeInactive", includeInactive ? 1 : 0 }
+            });
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItems",
+                Detail = $"Retrieved backlog items. IncludeInactive: {includeInactive}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItems",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to retrieve backlog items");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetBacklogItemByIdAsync(int backlogItemId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var sql = $@"
+                {GetBacklogSelectSql()}
+                WHERE bi.bi_id = @backlogItemId;";
+
+            var result = await ExecuteQueryAsync(sql, new Dictionary<string, object>
+            {
+                { "@backlogItemId", backlogItemId }
+            });
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItemById",
+                Detail = $"Retrieved backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItemById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to retrieve backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateBacklogItemAsync(CreateBacklogItemRequest request, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var history = AppendHistoryEntry(null, username, new[] { "Item created." });
+
+            const string sql = @"
+                INSERT INTO backlogitem
+                (
+                    bi_code,
+                    bi_title,
+                    bi_source,
+                    bi_author,
+                    bi_date,
+                    bi_category,
+                    bi_type,
+                    bi_priority,
+                    bi_status,
+                    bi_effort,
+                    bi_desc,
+                    bi_notes,
+                    bi_detail_markdown,
+                    bi_history,
+                    bi_active,
+                    bi_u_id_createdby,
+                    bi_u_id_lastupdatedby,
+                    bi_insertdatetime,
+                    bi_lastupdated
+                )
+                VALUES
+                (
+                    @Code,
+                    @Title,
+                    @Source,
+                    @Author,
+                    @Date,
+                    @Category,
+                    @Type,
+                    @Priority,
+                    @Status,
+                    @Effort,
+                    @Desc,
+                    @Notes,
+                    @DetailMarkdown,
+                    @History,
+                    @Active,
+                    @CreatedByUserId,
+                    @LastUpdatedByUserId,
+                    GETUTCDATE(),
+                    GETUTCDATE()
+                );
+
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Title", request.Title.Trim());
+            command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
+            command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
+            command.Parameters.AddWithValue("@Date", ToDbDateValue(request.Date));
+            command.Parameters.AddWithValue("@Category", ToDbValue(request.Category));
+            command.Parameters.AddWithValue("@Type", string.IsNullOrWhiteSpace(request.Type) ? "Feature" : request.Type.Trim());
+            command.Parameters.AddWithValue("@Priority", string.IsNullOrWhiteSpace(request.Priority) ? "Medium" : request.Priority.Trim());
+            command.Parameters.AddWithValue("@Status", string.IsNullOrWhiteSpace(request.Status) ? "New" : request.Status.Trim());
+            command.Parameters.AddWithValue("@Effort", ToDbValue(request.Effort));
+            command.Parameters.AddWithValue("@Desc", ToDbValue(request.Desc));
+            command.Parameters.AddWithValue("@Notes", ToDbValue(request.Notes));
+            command.Parameters.AddWithValue("@DetailMarkdown", ToDbValue(request.DetailMarkdown));
+            command.Parameters.AddWithValue("@History", history);
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@CreatedByUserId", userId > 0 ? userId : DBNull.Value);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateBacklogItem",
+                Detail = $"Created backlog item '{request.Code} - {request.Title}'",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to create backlog item {Code} - {Title}", request.Code, request.Title);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateBacklogItemAsync(int backlogItemId, UpdateBacklogItemRequest request, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var existingData = await GetBacklogItemByIdAsync(backlogItemId);
+            if (existingData.Rows.Count == 0)
+            {
+                return false;
+            }
+
+            var row = existingData.Rows[0];
+            var changes = new List<string>();
+
+            AddChange(changes, "Code", row["code"]?.ToString(), request.Code);
+            AddChange(changes, "Title", row["title"]?.ToString(), request.Title);
+            AddChange(changes, "Source", row["source"]?.ToString(), request.Source);
+            AddChange(changes, "Author", row["author"]?.ToString(), request.Author);
+            AddChange(changes, "Date", row["date"]?.ToString(), request.Date);
+            AddChange(changes, "Category", row["category"]?.ToString(), request.Category);
+            AddChange(changes, "Type", row["type"]?.ToString(), request.Type);
+            AddChange(changes, "Priority", row["priority"]?.ToString(), request.Priority);
+            AddChange(changes, "Status", row["status"]?.ToString(), request.Status);
+            AddChange(changes, "Effort", row["effort"]?.ToString(), request.Effort);
+            AddChange(changes, "Summary", row["desc"]?.ToString(), request.Desc);
+            AddChange(changes, "Notes", row["notes"]?.ToString(), request.Notes);
+            AddChange(changes, "Detail", row["detailMarkdown"]?.ToString(), request.DetailMarkdown);
+
+            var existingActive = row["active"] != DBNull.Value && (row["active"]?.ToString() == "True" || row["active"]?.ToString() == "1");
+            if (existingActive != request.Active)
+            {
+                changes.Add($"Active changed: {existingActive} -> {request.Active}");
+            }
+
+            var history = row["history"] == DBNull.Value ? null : row["history"]?.ToString();
+            if (changes.Count > 0)
+            {
+                history = AppendHistoryEntry(history, username, changes);
+            }
+
+            const string sql = @"
+                UPDATE backlogitem
+                SET
+                    bi_code = @Code,
+                    bi_title = @Title,
+                    bi_source = @Source,
+                    bi_author = @Author,
+                    bi_date = @Date,
+                    bi_category = @Category,
+                    bi_type = @Type,
+                    bi_priority = @Priority,
+                    bi_status = @Status,
+                    bi_effort = @Effort,
+                    bi_desc = @Desc,
+                    bi_notes = @Notes,
+                    bi_detail_markdown = @DetailMarkdown,
+                    bi_history = @History,
+                    bi_active = @Active,
+                    bi_u_id_lastupdatedby = @LastUpdatedByUserId,
+                    bi_lastupdated = GETUTCDATE()
+                WHERE bi_id = @BacklogItemId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@BacklogItemId", backlogItemId);
+            command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Title", request.Title.Trim());
+            command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
+            command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
+            command.Parameters.AddWithValue("@Date", ToDbDateValue(request.Date));
+            command.Parameters.AddWithValue("@Category", ToDbValue(request.Category));
+            command.Parameters.AddWithValue("@Type", string.IsNullOrWhiteSpace(request.Type) ? "Feature" : request.Type.Trim());
+            command.Parameters.AddWithValue("@Priority", string.IsNullOrWhiteSpace(request.Priority) ? "Medium" : request.Priority.Trim());
+            command.Parameters.AddWithValue("@Status", string.IsNullOrWhiteSpace(request.Status) ? "New" : request.Status.Trim());
+            command.Parameters.AddWithValue("@Effort", ToDbValue(request.Effort));
+            command.Parameters.AddWithValue("@Desc", ToDbValue(request.Desc));
+            command.Parameters.AddWithValue("@Notes", ToDbValue(request.Notes));
+            command.Parameters.AddWithValue("@DetailMarkdown", ToDbValue(request.DetailMarkdown));
+            command.Parameters.AddWithValue("@History", ToDbValue(history));
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateBacklogItem",
+                Detail = $"Updated backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to update backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteBacklogItemAsync(int backlogItemId, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var existingData = await GetBacklogItemByIdAsync(backlogItemId);
+            if (existingData.Rows.Count == 0)
+            {
+                return false;
+            }
+
+            var row = existingData.Rows[0];
+            var history = AppendHistoryEntry(row["history"] == DBNull.Value ? null : row["history"]?.ToString(), username, new[] { "Item archived." });
+
+            const string sql = @"
+                UPDATE backlogitem
+                SET
+                    bi_active = 0,
+                    bi_history = @History,
+                    bi_u_id_lastupdatedby = @LastUpdatedByUserId,
+                    bi_lastupdated = GETUTCDATE()
+                WHERE bi_id = @BacklogItemId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@BacklogItemId", backlogItemId);
+            command.Parameters.AddWithValue("@History", history);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteBacklogItem",
+                Detail = $"Archived backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to archive backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    private static string GetBacklogSelectSql()
+    {
+        return @"
+            SELECT
+                bi.bi_id AS backlogItemId,
+                bi.bi_code AS code,
+                bi.bi_title AS title,
+                bi.bi_source AS source,
+                bi.bi_author AS author,
+                CASE WHEN bi.bi_date IS NULL THEN NULL ELSE CONVERT(VARCHAR(10), bi.bi_date, 23) END AS [date],
+                bi.bi_category AS category,
+                bi.bi_type AS [type],
+                bi.bi_priority AS priority,
+                bi.bi_status AS status,
+                bi.bi_effort AS effort,
+                bi.bi_desc AS [desc],
+                bi.bi_notes AS notes,
+                bi.bi_detail_markdown AS detailMarkdown,
+                bi.bi_history AS history,
+                bi.bi_active AS active,
+                CONVERT(VARCHAR(16), bi.bi_insertdatetime, 120) AS insertDateTime,
+                CASE WHEN bi.bi_lastupdated IS NULL THEN NULL ELSE CONVERT(VARCHAR(16), bi.bi_lastupdated, 120) END AS lastUpdated,
+                bi.bi_u_id_lastupdatedby AS lastUpdatedByUserId
+            FROM backlogitem bi";
+    }
+
+    private static object ToDbValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
+    }
+
+    private static object ToDbDateValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DBNull.Value;
+        }
+
+        return DateTime.TryParse(value, out var parsedDate)
+            ? parsedDate.Date
+            : DBNull.Value;
+    }
+
+    private static string AppendHistoryEntry(string? existingHistory, string username, IEnumerable<string> lines)
+    {
+        var historyLines = lines.Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+        if (historyLines.Count == 0)
+        {
+            return existingHistory ?? string.Empty;
+        }
+
+        var entry = $"## {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC - {username}\n{string.Join("\n", historyLines.Select(line => $"- {line.Trim()}"))}";
+
+        if (string.IsNullOrWhiteSpace(existingHistory))
+        {
+            return entry;
+        }
+
+        return $"{existingHistory.Trim()}\n\n{entry}";
+    }
+
+    private static void AddChange(List<string> changes, string fieldName, string? oldValue, string? newValue)
+    {
+        var existingValue = string.IsNullOrWhiteSpace(oldValue) ? "(empty)" : oldValue.Trim();
+        var updatedValue = string.IsNullOrWhiteSpace(newValue) ? "(empty)" : newValue.Trim();
+
+        if (!string.Equals(existingValue, updatedValue, StringComparison.Ordinal))
+        {
+            changes.Add($"{fieldName} changed: {existingValue} -> {updatedValue}");
+        }
+    }
+
     #endregion
 
     public async Task<DataTable> ExecuteQueryAsync(string sql, Dictionary<string, object>? parameters = null)
