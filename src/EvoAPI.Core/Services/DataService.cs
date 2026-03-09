@@ -146,6 +146,7 @@ public class DataService : IDataService
                     WHERE 
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
+                        AND c.c_name NOT IN ('Metro Pipe Program 2')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
                 SELECT
