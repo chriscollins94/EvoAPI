@@ -3149,6 +3149,7 @@ public class DataService : IDataService
                 INSERT INTO backlogitem
                 (
                     bi_code,
+                    bi_version,
                     bi_title,
                     bi_source,
                     bi_author,
@@ -3171,6 +3172,7 @@ public class DataService : IDataService
                 VALUES
                 (
                     @Code,
+                    @Version,
                     @Title,
                     @Source,
                     @Author,
@@ -3197,6 +3199,7 @@ public class DataService : IDataService
             using var command = new SqlCommand(sql, connection);
 
             command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Version", ToDbValue(request.Version));
             command.Parameters.AddWithValue("@Title", request.Title.Trim());
             command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
             command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
@@ -3268,6 +3271,7 @@ public class DataService : IDataService
             var changes = new List<string>();
 
             AddChange(changes, "Code", row["code"]?.ToString(), request.Code);
+            AddChange(changes, "Version", row["version"]?.ToString(), request.Version);
             AddChange(changes, "Title", row["title"]?.ToString(), request.Title);
             AddChange(changes, "Source", row["source"]?.ToString(), request.Source);
             AddChange(changes, "Author", row["author"]?.ToString(), request.Author);
@@ -3297,6 +3301,7 @@ public class DataService : IDataService
                 UPDATE backlogitem
                 SET
                     bi_code = @Code,
+                    bi_version = @Version,
                     bi_title = @Title,
                     bi_source = @Source,
                     bi_author = @Author,
@@ -3320,6 +3325,7 @@ public class DataService : IDataService
 
             command.Parameters.AddWithValue("@BacklogItemId", backlogItemId);
             command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Version", ToDbValue(request.Version));
             command.Parameters.AddWithValue("@Title", request.Title.Trim());
             command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
             command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
@@ -3443,6 +3449,7 @@ public class DataService : IDataService
             SELECT
                 bi.bi_id AS backlogItemId,
                 bi.bi_code AS code,
+                bi.bi_version AS version,
                 bi.bi_title AS title,
                 bi.bi_source AS source,
                 bi.bi_author AS author,

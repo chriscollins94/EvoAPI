@@ -4,6 +4,7 @@ public class BacklogItemDto
 {
     public int BacklogItemId { get; set; }
     public string Code { get; set; } = string.Empty;
+    public string? Version { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Source { get; set; }
     public string? Author { get; set; }
@@ -26,6 +27,7 @@ public class BacklogItemDto
 public class CreateBacklogItemRequest
 {
     public string Code { get; set; } = string.Empty;
+    public string? Version { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Source { get; set; }
     public string? Author { get; set; }

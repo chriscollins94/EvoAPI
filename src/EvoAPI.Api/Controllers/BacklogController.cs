@@ -262,6 +262,7 @@ public class BacklogController : BaseController
             {
                 BacklogItemId = ConvertToInt(row["backlogItemId"]),
                 Code = row["code"]?.ToString() ?? string.Empty,
+                Version = NullIfEmpty(row["version"]?.ToString()),
                 Title = row["title"]?.ToString() ?? string.Empty,
                 Source = NullIfEmpty(row["source"]?.ToString()),
                 Author = NullIfEmpty(row["author"]?.ToString()),
