@@ -4418,13 +4418,17 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetReceiptsDashboardAsync()
+    public async Task<DataTable> GetReceiptsDashboardAsync(int? days = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
-            var sql = @"
+            var dateFilter = (days.HasValue && days.Value > 0)
+                ? $"AND att.att_insertdatetime >= DATEADD(day, -{days.Value}, GETDATE())"
+                : string.Empty;
+
+            var sql = $@"
 
                 SELECT 
                     cc.cc_name,
@@ -4460,6 +4464,7 @@ FROM DailyTechSummary;
                 LEFT JOIN company supplier with(nolock) on att.c_id = supplier.c_id
                 LEFT JOIN callcenter cc with(nolock) on xccc.cc_id = cc.cc_id
                 WHERE att_receipt = 1
+                {dateFilter}
                 ORDER BY att_id desc
 ";
 

@@ -73,13 +73,13 @@ public class ReportsController : BaseController
 
     [HttpGet("receipts")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport()
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport([FromQuery] int? days = 365)
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetReceiptsDashboardAsync();
+            var dataTable = await _dataService.GetReceiptsDashboardAsync(days);
             var reportData = ConvertDataTableToReceiptsReport(dataTable);
             
             stopwatch.Stop();
