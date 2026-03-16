@@ -141,3 +141,30 @@ public class UpdateCompanyPriorityRequest
     public decimal ArrivalTimeInHours { get; set; }
 }
 
+public class PortalInfoCallCenterDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? PortalName { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalCredentials { get; set; }
+}
+
+public class PortalInfoCompanyDto
+{
+    public int XcccId { get; set; }
+    public int CompanyId { get; set; }
+    public int CallCenterId { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+    public string CallCenterName { get; set; } = string.Empty;
+    public string? PortalName { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalCredentials { get; set; }
+}
+
+public class PortalInfoReportDto
+{
+    public List<PortalInfoCallCenterDto> CallCenters { get; set; } = new();
+    public List<PortalInfoCompanyDto> Companies { get; set; } = new();
+}
+

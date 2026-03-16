@@ -1098,5 +1098,41 @@ public class ReportsController : BaseController
     }
 
     #endregion
+
+    #region Portal Info
+
+    [HttpGet("portal-info")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<PortalInfoReportDto>>> GetPortalInfoReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var data = await _dataService.GetPortalInfoReportAsync();
+            stopwatch.Stop();
+
+            await LogAuditAsync("GetPortalInfoReport", null, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<PortalInfoReportDto>
+            {
+                Success = true,
+                Message = "Portal info report retrieved successfully",
+                Data = data
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetPortalInfoReport", ex);
+
+            return StatusCode(500, new ApiResponse<PortalInfoReportDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve portal info report"
+            });
+        }
+    }
+
+    #endregion
 }
 

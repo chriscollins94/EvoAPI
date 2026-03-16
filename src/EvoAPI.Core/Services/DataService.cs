@@ -14232,5 +14232,80 @@ FROM DailyTechSummary;
     }
 
     #endregion
+
+    #region Portal Info Report
+
+    public async Task<PortalInfoReportDto> GetPortalInfoReportAsync()
+    {
+        var result = new PortalInfoReportDto();
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+            throw new InvalidOperationException("No connection string found");
+
+        using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        // Call Centers with at least one portal field populated
+        const string callCenterSql = @"
+            SELECT cc_id, cc_name, cc_portalname, cc_portalurl, cc_portalcredentials
+            FROM CallCenter
+            WHERE (cc_portalname IS NOT NULL AND LTRIM(RTRIM(cc_portalname)) <> '')
+               OR (cc_portalurl IS NOT NULL AND LTRIM(RTRIM(cc_portalurl)) <> '')
+               OR (cc_portalcredentials IS NOT NULL AND LTRIM(RTRIM(cc_portalcredentials)) <> '')
+            ORDER BY cc_name";
+
+        using (var cmd = new SqlCommand(callCenterSql, connection))
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                result.CallCenters.Add(new PortalInfoCallCenterDto
+                {
+                    Id = Convert.ToInt32(reader["cc_id"]),
+                    Name = reader["cc_name"]?.ToString() ?? string.Empty,
+                    PortalName = reader["cc_portalname"] == DBNull.Value ? null : reader["cc_portalname"].ToString(),
+                    PortalUrl = reader["cc_portalurl"] == DBNull.Value ? null : reader["cc_portalurl"].ToString(),
+                    PortalCredentials = reader["cc_portalcredentials"] == DBNull.Value ? null : reader["cc_portalcredentials"].ToString()
+                });
+            }
+        }
+
+        // Companies with at least one portal field populated
+        const string companySql = @"
+            SELECT xccc.xccc_id, xccc.c_id, xccc.cc_id,
+                   c.c_name, cc.cc_name AS call_center_name,
+                   c.c_portalname, c.c_portalurl, c.c_portalcredentials
+            FROM xrefCompanyCallCenter xccc
+            INNER JOIN Company c ON xccc.c_id = c.c_id
+            INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
+            WHERE (c.c_portalname IS NOT NULL AND LTRIM(RTRIM(c.c_portalname)) <> '')
+               OR (c.c_portalurl IS NOT NULL AND LTRIM(RTRIM(c.c_portalurl)) <> '')
+               OR (c.c_portalcredentials IS NOT NULL AND LTRIM(RTRIM(c.c_portalcredentials)) <> '')
+            ORDER BY cc.cc_name, c.c_name";
+
+        using (var cmd = new SqlCommand(companySql, connection))
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                result.Companies.Add(new PortalInfoCompanyDto
+                {
+                    XcccId = Convert.ToInt32(reader["xccc_id"]),
+                    CompanyId = Convert.ToInt32(reader["c_id"]),
+                    CallCenterId = Convert.ToInt32(reader["cc_id"]),
+                    CompanyName = reader["c_name"]?.ToString() ?? string.Empty,
+                    CallCenterName = reader["call_center_name"]?.ToString() ?? string.Empty,
+                    PortalName = reader["c_portalname"] == DBNull.Value ? null : reader["c_portalname"].ToString(),
+                    PortalUrl = reader["c_portalurl"] == DBNull.Value ? null : reader["c_portalurl"].ToString(),
+                    PortalCredentials = reader["c_portalcredentials"] == DBNull.Value ? null : reader["c_portalcredentials"].ToString()
+                });
+            }
+        }
+
+        return result;
+    }
+
+    #endregion
 }
 

@@ -262,4 +262,7 @@ public interface IDataService
     Task<DataTable> GetUserEmailInfoAsync(int userId);
     Task<bool> IsTimeOffExceedingBalanceAsync(int torId);
     Task<string> GetTimeOffBalanceTypeAsync(int torId);
+
+    // Portal Info Report
+    Task<PortalInfoReportDto> GetPortalInfoReportAsync();
 }
