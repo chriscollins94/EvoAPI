@@ -3688,7 +3688,7 @@ public class EvoApiController : BaseController
                 Number = row["Number"]?.ToString() ?? string.Empty,
                 Description = row["Description"]?.ToString(),
                 Acronym = row["Acronym"]?.ToString(),
-                UserId = Convert.ToInt32(row["UserId"])
+                UserId = row["UserId"] != DBNull.Value ? Convert.ToInt32(row["UserId"]) : 0
             };
 
             zones.Add(zone);
