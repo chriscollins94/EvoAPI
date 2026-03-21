@@ -1081,6 +1081,17 @@ public class ReportsController : BaseController
         return 0m;
     }
 
+    private static decimal? ConvertToNullableDecimal(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+
+        if (decimal.TryParse(value.ToString(), out var result))
+            return result;
+
+        return null;
+    }
+
     private static DateTime? ConvertToDateTime(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -1099,12 +1110,99 @@ public class ReportsController : BaseController
 
     #endregion
 
+    #region Service Request Report
+
+    [HttpGet("service-request")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ServiceRequestReportDto>>>> GetServiceRequestReport(
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var start = startDate ?? new DateTime(DateTime.Now.Year, 1, 1);
+            var end = endDate ?? new DateTime(DateTime.Now.Year + 1, 1, 1);
+
+            var dataTable = await _dataService.GetServiceRequestReportAsync(start, end);
+            var reportData = ConvertDataTableToServiceRequestReport(dataTable);
+
+            stopwatch.Stop();
+            await LogAuditAsync("GetServiceRequestReport", $"Retrieved {reportData.Count} records ({start:yyyy-MM-dd} to {end:yyyy-MM-dd})", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<ServiceRequestReportDto>>
+            {
+                Success = true,
+                Message = "Service request report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetServiceRequestReport", ex);
+
+            return StatusCode(500, new ApiResponse<List<ServiceRequestReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve service request report data"
+            });
+        }
+    }
+
+    private static List<ServiceRequestReportDto> ConvertDataTableToServiceRequestReport(DataTable dataTable)
+    {
+        var result = new List<ServiceRequestReportDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ServiceRequestReportDto
+            {
+                CallCenter = CleanString(row["Call Center"]),
+                CallCenterPortalName = CleanString(row["cc_portalname"]),
+                CallCenterPortalUrl = CleanString(row["cc_portalurl"]),
+                CallCenterPortalCredentials = CleanString(row["cc_portalcredentials"]),
+                Company = CleanString(row["Company"]),
+                CompanyPortalName = CleanString(row["c_portalname"]),
+                CompanyPortalUrl = CleanString(row["c_portalurl"]),
+                CompanyPortalCredentials = CleanString(row["c_portalcredentials"]),
+                ParentTrade = CleanString(row["Parent Trade"]),
+                Trade = CleanString(row["Trade"]),
+                ServiceRequestNumber = CleanString(row["Service Request #"]),
+                Created = ConvertToDateTime(row["Created"]),
+                PrimaryTech = CleanString(row["Primary Tech"]),
+                AdditionalTechs = CleanString(row["Additional Techs"]),
+                PrimaryWoStart = ConvertToDateTime(row["Primary WO Start"]),
+                PrimaryWoEnd = ConvertToDateTime(row["Primary WO End"]),
+                InvoiceNumber = CleanString(row["Invoice Number"]),
+                Status = CleanString(row["Status"]),
+                TotalDue = ConvertToNullableDecimal(row["Total Due"]),
+                SummaryOfWorkCompleted = CleanString(row["Summary of Work Completed"]),
+                Location = CleanString(row["l_location"]),
+                Address1 = CleanString(row["a_address1"]),
+                City = CleanString(row["a_city"]),
+                State = CleanString(row["a_state"]),
+                Zip = CleanString(row["a_zip"]),
+                NoteCreatedBy = CleanString(row["Note Created By"]),
+                NoteCreated = ConvertToDateTime(row["Note Created"]),
+                MostRecentNote = CleanString(row["Most Recent Note"]),
+                ServiceItemCount = ConvertToInt(row["Service Item Count"]),
+                ServiceItems = CleanString(row["Service Items"])
+            });
+        }
+
+        return result;
+    }
+
+    #endregion
+
     #region Portal Info
 
     [HttpGet("portal-info")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<PortalInfoReportDto>>> GetPortalInfoReport()
-    {
+    public async Task<ActionResult<ApiResponse<PortalInfoReportDto>>> GetPortalInfoReport()    {
         var stopwatch = Stopwatch.StartNew();
         try
         {

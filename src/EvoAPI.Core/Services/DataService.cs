@@ -4499,6 +4499,122 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetServiceRequestReportAsync(DateTime startDate, DateTime endDate)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+select 
+       cc.cc_name 'Call Center', cc.cc_portalname, cc.cc_portalurl, cc.cc_portalcredentials
+       , c.c_name Company, c.c_portalname, c.c_portalurl, c.c_portalcredentials
+       , t_parent.t_trade 'Parent Trade', t.t_trade Trade,
+       sr.sr_requestnumber 'Service Request #', sr.sr_insertdatetime Created,
+
+       u.u_firstname + ' ' + u.u_lastname 'Primary Tech',
+       ISNULL((
+           select STRING_AGG(u2.u_firstname + ' ' + u2.u_lastname, ', ') 
+           from workorder wo2 with(nolock)
+           join xrefworkorderuser xwou2 with(nolock) on xwou2.wo_id = wo2.wo_id
+           join [user] u2 with(nolock) on u2.u_id = xwou2.u_id
+           where wo2.sr_id = sr.sr_id
+             and u2.u_id <> xwou.u_id
+       ), '') 'Additional Techs',
+
+       wo.wo_startdatetime 'Primary WO Start', wo.wo_enddatetime 'Primary WO End',
+       sr.sr_quickbooks_docnumber 'Invoice Number', s.s_status 'Status', sr.sr_totaldue 'Total Due',
+       REPLACE(REPLACE(sr.sr_summaryworkcompleted, CHAR(13), ''), CHAR(10), '') 'Summary of Work Completed',
+       l.l_location, a.a_address1, a.a_city, a.a_state, a.a_zip,
+       wonote.won_user 'Note Created By', wonote.won_insertdatetime 'Note Created',
+       REPLACE(REPLACE(REPLACE(wonote.won_note, CHAR(13), ''), CHAR(10), ''), char(9), '') 'Most Recent Note',
+
+       ISNULL((
+           select COUNT(distinct xwosi.si_id)
+           from workorder wo2 with(nolock)
+           join xrefworkorderserviceitem xwosi with(nolock) on xwosi.wo_id = wo2.wo_id
+           where wo2.sr_id = sr.sr_id
+       ), 0) 'Service Item Count',
+
+       ISNULL((
+           select STRING_AGG(si.si_name, ' | ')
+           from (
+               select distinct xwosi.si_id
+               from workorder wo2 with(nolock)
+               join xrefworkorderserviceitem xwosi with(nolock) on xwosi.wo_id = wo2.wo_id
+               where wo2.sr_id = sr.sr_id
+           ) si_distinct
+           join serviceitem si with(nolock) on si.si_id = si_distinct.si_id
+       ), '') 'Service Items'
+
+from status s, trade t, trade t_parent, servicerequest sr with(nolock),
+     xrefcompanycallcenter xccc, location l with(nolock), callcenter cc, company c,
+     address a with(nolock), xrefworkorderuser xwou with(nolock), [user] u with(nolock), workorder wo with(nolock)
+
+left join (
+    select max(won_id) as maxid, wo_id 
+    from workordernote 
+    where won_user <> 'System Generated' 
+    group by wo_id
+) as won on wo.wo_id = won.wo_id
+left join workordernote wonote with(nolock) on wonote.won_id = won.maxid
+
+where 1=1
+and sr.sr_insertdatetime >= @startDate
+and sr.sr_insertdatetime < @endDate
+and sr.t_id = t.t_id
+and sr.s_id = s.s_id
+and sr.wo_id_primary = wo.wo_id
+and wo.sr_id = sr.sr_id
+and sr.xccc_id = xccc.xccc_id
+and xccc.cc_id = cc.cc_id
+and xccc.c_id = c.c_id
+and sr.l_id = l.l_id
+and l.a_id = a.a_id
+and wo.wo_id = xwou.wo_id
+and u.u_id = xwou.u_id
+and t.t_id_parent = t_parent.t_id
+
+order by sr.sr_insertdatetime
+";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@startDate", startDate },
+                { "@endDate", endDate }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetServiceRequestReport",
+                Detail = $"Retrieved {result.Rows.Count} service request records ({startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetServiceRequestReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service request report data");
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetTechReceiptsDashboardAsync(int userId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
