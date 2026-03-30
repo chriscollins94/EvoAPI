@@ -10302,7 +10302,8 @@ order by sr.sr_insertdatetime
                     lr.lr_markup,
                     lr.lr_note,
                     lr.lr_insertdatetime,
-                    lr.lr_modifieddatetime
+                    lr.lr_modifieddatetime,
+                    t.t_active
                 FROM dbo.LaborRate lr
                 INNER JOIN dbo.Trade t ON lr.t_id = t.t_id
                 LEFT JOIN dbo.Trade tp ON t.t_id_parent = tp.t_id
@@ -10344,6 +10345,7 @@ order by sr.sr_insertdatetime
                     LrTripCharge = ConvertToNullableDecimal(row["lr_tripcharge"]),
                     LrMarkup = ConvertToNullableInt(row["lr_markup"]),
                     LrNote = row["lr_note"]?.ToString(),
+                    TActive = ConvertToBool(row["t_active"]),
                     LrInsertDateTime = ConvertToDateTime(row["lr_insertdatetime"]),
                     LrModifiedDateTime = ConvertToNullableDateTime(row["lr_modifieddatetime"])
                 });
@@ -10468,6 +10470,7 @@ order by sr.sr_insertdatetime
                     cl.cl_name,
                     cl.cl_publicforquote,
                     cl.cl_publicforinvoice,
+                    cl.cl_active,
                     clt.clt_type
                 FROM dbo.CheckList cl
                 LEFT JOIN dbo.CheckListType clt ON cl.clt_id = clt.clt_id
@@ -10492,6 +10495,7 @@ order by sr.sr_insertdatetime
                     ClName = row["cl_name"]?.ToString() ?? string.Empty,
                     ClPublicForQuote = ConvertToBool(row["cl_publicforquote"]),
                     ClPublicForInvoice = ConvertToBool(row["cl_publicforinvoice"]),
+                    ClActive = ConvertToBool(row["cl_active"]),
                     CltType = row["clt_type"]?.ToString()
                 });
             }
@@ -10724,8 +10728,8 @@ order by sr.sr_insertdatetime
         try
         {
             const string sql = @"
-                INSERT INTO dbo.CheckList (xccc_id, clt_id, cl_name, cl_publicforquote, cl_publicforinvoice, cl_insertdatetime)
-                VALUES (@xcccId, @cltId, @clName, @clPublicForQuote, @clPublicForInvoice, GETDATE());
+                INSERT INTO dbo.CheckList (xccc_id, clt_id, cl_name, cl_publicforquote, cl_publicforinvoice, cl_active, cl_insertdatetime)
+                VALUES (@xcccId, @cltId, @clName, @clPublicForQuote, @clPublicForInvoice, @clActive, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
             int clId;
@@ -10737,6 +10741,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@clName", SqlDbType.VarChar, 50).Value = request.ClName;
                 command.Parameters.Add("@clPublicForQuote", SqlDbType.Bit).Value = request.ClPublicForQuote;
                 command.Parameters.Add("@clPublicForInvoice", SqlDbType.Bit).Value = request.ClPublicForInvoice;
+                command.Parameters.Add("@clActive", SqlDbType.Bit).Value = request.ClActive;
 
                 await connection.OpenAsync();
                 clId = (int)await command.ExecuteScalarAsync();
@@ -10792,6 +10797,7 @@ order by sr.sr_insertdatetime
                     clt_id = @cltId,
                     cl_publicforquote = @clPublicForQuote,
                     cl_publicforinvoice = @clPublicForInvoice,
+                    cl_active = @clActive,
                     cl_modifieddatetime = GETDATE()
                 WHERE cl_id = @clId";
 
@@ -10801,7 +10807,8 @@ order by sr.sr_insertdatetime
                 ["@clName"] = request.ClName,
                 ["@cltId"] = request.CltId,
                 ["@clPublicForQuote"] = request.ClPublicForQuote,
-                ["@clPublicForInvoice"] = request.ClPublicForInvoice
+                ["@clPublicForInvoice"] = request.ClPublicForInvoice,
+                ["@clActive"] = request.ClActive
             };
 
             await ExecuteQueryAsync(sql, parameters);
@@ -11044,7 +11051,8 @@ order by sr.sr_insertdatetime
                     CltId = checklist.CltId,
                     ClName = checklist.ClName,
                     ClPublicForQuote = checklist.ClPublicForQuote,
-                    ClPublicForInvoice = checklist.ClPublicForInvoice
+                    ClPublicForInvoice = checklist.ClPublicForInvoice,
+                    ClActive = checklist.ClActive
                 };
 
                 var newChecklist = await CreateCheckListAsync(targetXcccId, createRequest);

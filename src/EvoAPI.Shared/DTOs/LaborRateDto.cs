@@ -25,6 +25,7 @@ public class LaborRateDto
     public decimal? LrTripCharge { get; set; }
     public int? LrMarkup { get; set; }
     public string? LrNote { get; set; }
+    public bool TActive { get; set; }
     public DateTime LrInsertDateTime { get; set; }
     public DateTime? LrModifiedDateTime { get; set; }
 }
@@ -49,6 +50,7 @@ public class CheckListDto
     public string ClName { get; set; } = string.Empty;
     public bool ClPublicForQuote { get; set; }
     public bool ClPublicForInvoice { get; set; }
+    public bool ClActive { get; set; }
     public string? CltType { get; set; }
     public List<CheckListQuestionDto>? Questions { get; set; }
 }

@@ -30,6 +30,7 @@ public class CreateCheckListRequest
     public string ClName { get; set; } = string.Empty;
     public bool ClPublicForQuote { get; set; }
     public bool ClPublicForInvoice { get; set; }
+    public bool ClActive { get; set; } = true;
 }
 
 public class UpdateCheckListRequest
@@ -38,6 +39,7 @@ public class UpdateCheckListRequest
     public string ClName { get; set; } = string.Empty;
     public bool ClPublicForQuote { get; set; }
     public bool ClPublicForInvoice { get; set; }
+    public bool ClActive { get; set; }
 }
 
 public class CreateCheckListQuestionRequest
