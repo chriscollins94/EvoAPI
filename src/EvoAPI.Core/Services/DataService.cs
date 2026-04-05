@@ -10548,7 +10548,9 @@ order by sr.sr_insertdatetime
                     clq.clq_order,
                     clq.clq_required,
                     clq.clq_answervalues,
-                    clat.clat_type
+                    clat.clat_type,
+                    clq.clq_skip_answer,
+                    clq.clq_skip_to_order
                 FROM dbo.CheckListQuestion clq
                 INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
                 INNER JOIN dbo.CheckList cl ON clq.cl_id = cl.cl_id
@@ -10579,7 +10581,9 @@ order by sr.sr_insertdatetime
                     ClqOrder = ConvertToNullableInt(row["clq_order"]),
                     ClqRequired = ConvertToBool(row["clq_required"]),
                     ClqAnswerValues = row["clq_answervalues"]?.ToString(),
-                    ClatType = row["clat_type"]?.ToString()
+                    ClatType = row["clat_type"]?.ToString(),
+                    ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                    ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
                 });
             }
 
@@ -10865,8 +10869,8 @@ order by sr.sr_insertdatetime
         try
         {
             const string sql = @"
-                INSERT INTO dbo.CheckListQuestion (cl_id, clat_id, clq_question, clq_order, clq_required, clq_answervalues, clq_insertdatetime)
-                VALUES (@clId, @clatId, @clqQuestion, @clqOrder, @clqRequired, @clqAnswerValues, GETDATE());
+                INSERT INTO dbo.CheckListQuestion (cl_id, clat_id, clq_question, clq_order, clq_required, clq_answervalues, clq_skip_answer, clq_skip_to_order, clq_insertdatetime)
+                VALUES (@clId, @clatId, @clqQuestion, @clqOrder, @clqRequired, @clqAnswerValues, @clqSkipAnswer, @clqSkipToOrder, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
             int clqId;
@@ -10879,6 +10883,8 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@clqOrder", SqlDbType.Int).Value = (object?)request.ClqOrder ?? DBNull.Value;
                 command.Parameters.Add("@clqRequired", SqlDbType.Bit).Value = request.ClqRequired;
                 command.Parameters.Add("@clqAnswerValues", SqlDbType.VarChar, 8000).Value = (object?)request.ClqAnswerValues ?? DBNull.Value;
+                command.Parameters.Add("@clqSkipAnswer", SqlDbType.NVarChar, 500).Value = (object?)request.ClqSkipAnswer ?? DBNull.Value;
+                command.Parameters.Add("@clqSkipToOrder", SqlDbType.Int).Value = (object?)request.ClqSkipToOrder ?? DBNull.Value;
 
                 await connection.OpenAsync();
                 clqId = (int)await command.ExecuteScalarAsync();
@@ -10886,10 +10892,10 @@ order by sr.sr_insertdatetime
 
             // Retrieve the created question
             const string getQuestionSql = @"
-                SELECT 
+                SELECT
                     clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
                     clq.clq_order, clq.clq_required, clq.clq_answervalues,
-                    clat.clat_type
+                    clat.clat_type, clq.clq_skip_answer, clq.clq_skip_to_order
                 FROM dbo.CheckListQuestion clq
                 INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
                 WHERE clq.clq_id = @clqId";
@@ -10912,7 +10918,9 @@ order by sr.sr_insertdatetime
                 ClqOrder = ConvertToNullableInt(row["clq_order"]),
                 ClqRequired = ConvertToBool(row["clq_required"]),
                 ClqAnswerValues = row["clq_answervalues"]?.ToString(),
-                ClatType = row["clat_type"]?.ToString()
+                ClatType = row["clat_type"]?.ToString(),
+                ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
             };
 
             stopwatch.Stop();
@@ -10957,6 +10965,8 @@ order by sr.sr_insertdatetime
                     clq_order = @clqOrder,
                     clq_required = @clqRequired,
                     clq_answervalues = @clqAnswerValues,
+                    clq_skip_answer = @clqSkipAnswer,
+                    clq_skip_to_order = @clqSkipToOrder,
                     clq_modifieddatetime = GETDATE()
                 WHERE clq_id = @clqId";
 
@@ -10967,24 +10977,26 @@ order by sr.sr_insertdatetime
                 ["@clqQuestion"] = request.ClqQuestion,
                 ["@clqOrder"] = (object?)request.ClqOrder ?? DBNull.Value,
                 ["@clqRequired"] = request.ClqRequired,
-                ["@clqAnswerValues"] = (object?)request.ClqAnswerValues ?? DBNull.Value
+                ["@clqAnswerValues"] = (object?)request.ClqAnswerValues ?? DBNull.Value,
+                ["@clqSkipAnswer"] = (object?)request.ClqSkipAnswer ?? DBNull.Value,
+                ["@clqSkipToOrder"] = (object?)request.ClqSkipToOrder ?? DBNull.Value
             };
 
             await ExecuteQueryAsync(sql, parameters);
 
             // Retrieve the updated question
             const string getQuestionSql = @"
-                SELECT 
+                SELECT
                     clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
                     clq.clq_order, clq.clq_required, clq.clq_answervalues,
-                    clat.clat_type
+                    clat.clat_type, clq.clq_skip_answer, clq.clq_skip_to_order
                 FROM dbo.CheckListQuestion clq
                 INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
                 WHERE clq.clq_id = @clqId";
 
             var qParams = new Dictionary<string, object> { ["@clqId"] = clqId };
             var dt = await ExecuteQueryAsync(getQuestionSql, qParams);
-            
+
             if (dt.Rows.Count == 0) return null;
 
             var row = dt.Rows[0];
@@ -10997,7 +11009,9 @@ order by sr.sr_insertdatetime
                 ClqOrder = ConvertToNullableInt(row["clq_order"]),
                 ClqRequired = ConvertToBool(row["clq_required"]),
                 ClqAnswerValues = row["clq_answervalues"]?.ToString(),
-                ClatType = row["clat_type"]?.ToString()
+                ClatType = row["clat_type"]?.ToString(),
+                ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
             };
 
             stopwatch.Stop();
@@ -11068,7 +11082,9 @@ order by sr.sr_insertdatetime
                             ClqQuestion = question.ClqQuestion,
                             ClqOrder = question.ClqOrder,
                             ClqRequired = question.ClqRequired,
-                            ClqAnswerValues = question.ClqAnswerValues
+                            ClqAnswerValues = question.ClqAnswerValues,
+                            ClqSkipAnswer = question.ClqSkipAnswer,
+                            ClqSkipToOrder = question.ClqSkipToOrder
                         };
 
                         await CreateCheckListQuestionAsync(newChecklist.ClId, questionRequest);

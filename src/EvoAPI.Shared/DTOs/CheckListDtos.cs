@@ -10,6 +10,8 @@ public class CheckListQuestionDto
     public bool ClqRequired { get; set; }
     public string? ClqAnswerValues { get; set; }
     public string? ClatType { get; set; }
+    public string? ClqSkipAnswer { get; set; }
+    public int? ClqSkipToOrder { get; set; }
 }
 
 public class CheckListTypeDto
@@ -49,6 +51,8 @@ public class CreateCheckListQuestionRequest
     public int? ClqOrder { get; set; }
     public bool ClqRequired { get; set; }
     public string? ClqAnswerValues { get; set; }
+    public string? ClqSkipAnswer { get; set; }
+    public int? ClqSkipToOrder { get; set; }
 }
 
 public class UpdateCheckListQuestionRequest
@@ -58,6 +62,8 @@ public class UpdateCheckListQuestionRequest
     public int? ClqOrder { get; set; }
     public bool ClqRequired { get; set; }
     public string? ClqAnswerValues { get; set; }
+    public string? ClqSkipAnswer { get; set; }
+    public int? ClqSkipToOrder { get; set; }
 }
 
 public class CloneCheckListRequest
