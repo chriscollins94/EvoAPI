@@ -1,7 +1,7 @@
 taskkill /F /IM dotnet.exe
 
 ## RUN DEV
-cd "c:\users\chris\source\repos\evoapi"; $env:ASPNETCORE_ENVIRONMENT="Test"; dotnet run --project src/EvoAPI.Api
+cd "c:\users\chris\source\repos\evoapi"; $env:ASPNETCORE_ENVIRONMENT="Test"; $env:ASPNETCORE_Kestrel__Certificates__Default__Path="$env:USERPROFILE\localhost.pfx"; $env:ASPNETCORE_Kestrel__Certificates__Default__Password="dev"; dotnet run --project src/EvoAPI.Api
 
 # Publishing
 ## Test Environment

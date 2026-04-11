@@ -225,6 +225,77 @@ public class AuthenticationController : BaseController
         }
     }
 
+    [HttpPost("changepassword")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<object>>> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            _ = LogAuditAsync("Password Change Attempt", $"UserId: {UserId}");
+
+            await _authenticationService.ChangePasswordAsync(UserId, request.CurrentPassword, request.NewPassword);
+
+            // Clear auth cookies so the client is forced to log in again with the new password
+            // and receive a fresh JWT containing the updated passwordchanged claim.
+            ClearAuthenticationCookies();
+
+            stopwatch.Stop();
+            _ = LogAuditAsync("Password Change Success", $"UserId: {UserId}");
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Password changed successfully",
+                Data = null,
+                Count = 0,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            stopwatch.Stop();
+            _ = LogAuditErrorAsync("Password Change Failed", new Exception($"UserId: {UserId}, Error: {ex.Message}"));
+
+            return Unauthorized(new ApiResponse<object>
+            {
+                Success = false,
+                Message = ex.Message,
+                Data = null,
+                Count = 0,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            stopwatch.Stop();
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = ex.Message,
+                Data = null,
+                Count = 0,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Password change error for user id: {UserId}", UserId);
+            _ = LogAuditErrorAsync("Password Change Error", ex);
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while changing the password",
+                Data = null,
+                Count = 0,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
     [HttpPost("logout")]
     [Authorize]
     public async Task<ActionResult<ApiResponse<object>>> Logout([FromBody] LoginRequest? request)

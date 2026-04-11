@@ -18,4 +18,10 @@ public interface IAuthenticationService
     /// Retrieves user permissions and functions from the database
     /// </summary>
     Task<List<string>> GetUserPermissionsAsync(string username);
+
+    /// <summary>
+    /// Changes a user's password after verifying their current password.
+    /// On success, updates u_password and bumps u_passwordchanged to NOW.
+    /// </summary>
+    Task ChangePasswordAsync(int userId, string currentPassword, string newPassword);
 }

@@ -119,6 +119,59 @@ public class AuthenticationService : IAuthenticationService
         };
     }
 
+    public async Task ChangePasswordAsync(int userId, string currentPassword, string newPassword)
+    {
+        _logger.LogInformation("Password change requested for user id: {UserId}", userId);
+
+        // Verify the current password belongs to this user (and the account is active).
+        var verifySql = @"
+            SELECT u_id
+            FROM [User]
+            WHERE u_id = @userId
+              AND u_password = @currentPassword
+              AND u_active = 1";
+
+        var verifyParams = new Dictionary<string, object>
+        {
+            { "@userId", userId },
+            { "@currentPassword", currentPassword }
+        };
+
+        var verifyResult = await _dataService.ExecuteQueryAsync(verifySql, verifyParams);
+        if (verifyResult.Rows.Count != 1)
+        {
+            _logger.LogWarning("Password change failed for user id {UserId}: current password did not match", userId);
+            throw new UnauthorizedAccessException("Current password is incorrect");
+        }
+
+        if (string.Equals(currentPassword, newPassword, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("New password cannot be the same as the current password");
+        }
+
+        var updateSql = @"
+            UPDATE [User]
+            SET u_password = @newPassword,
+                u_passwordchanged = GETDATE(),
+                u_modifieddatetime = GETDATE()
+            WHERE u_id = @userId";
+
+        var updateParams = new Dictionary<string, object>
+        {
+            { "@userId", userId },
+            { "@newPassword", newPassword }
+        };
+
+        var rowsAffected = await _dataService.ExecuteNonQueryAsync(updateSql, updateParams);
+        if (rowsAffected != 1)
+        {
+            _logger.LogError("Password change for user id {UserId} affected {RowsAffected} rows (expected 1)", userId, rowsAffected);
+            throw new InvalidOperationException("Password update failed");
+        }
+
+        _logger.LogInformation("Password changed successfully for user id: {UserId}", userId);
+    }
+
     public string CalculateSecureCode()
     {
         // Get seed values from appsettings.json
