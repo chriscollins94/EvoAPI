@@ -29,7 +29,8 @@ public class WorkOrderDto
     public DateTime? Escalated { get; set; }
     public bool ScheduleLock { get; set; }
     public string ActionableNote { get; set; } = string.Empty;
-   
+    public string InvoiceNumber { get; set; } = string.Empty;
+
 }
 
 public class ActiveServiceRequestDto

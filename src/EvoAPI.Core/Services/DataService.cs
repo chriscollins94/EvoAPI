@@ -122,6 +122,7 @@ public class DataService : IDataService
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
+                        ISNULL(CAST(sr.sr_quickbooks_docnumber AS varchar(20)), '') AS InvoiceNumber,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -143,7 +144,7 @@ public class DataService : IDataService
                     LEFT JOIN role r ON r.r_id = xur.r_id
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
-                    WHERE 
+                    WHERE
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
                         AND c.c_name NOT IN ('Metro Pipe Program 2')
@@ -176,7 +177,8 @@ public class DataService : IDataService
                     CreatedBy,
                     Escalated,
                     ScheduleLock,
-                    ActionableNote
+                    ActionableNote,
+                    InvoiceNumber
                 FROM RankedOrders
                 ORDER BY sr_id desc;";
 
@@ -2270,20 +2272,22 @@ public class DataService : IDataService
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
                     u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id,
-                    uc_id_shirt, uc_id_jacket, upw_id, upl_id
+                    uc_id_shirt, uc_id_jacket, upw_id, upl_id,
+                    u_licensenumber, u_licensestate, u_licenseexpiration
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
                     @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId,
-                    @ShirtSizeId, @JacketSizeId, @PantsWaistId, @PantsLengthId
+                    @ShirtSizeId, @JacketSizeId, @PantsWaistId, @PantsLengthId,
+                    @LicenseNumber, @LicenseState, @LicenseExpiration
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
-            
+
             using var command = new SqlCommand(userSql, connection);
             command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Username", request.Username);
@@ -2303,6 +2307,13 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ShirtSizeId", request.ShirtSizeId.HasValue && request.ShirtSizeId.Value > 0 ? (object)request.ShirtSizeId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? (object)request.JacketSizeId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@PantsWaistId", request.PantsWaistId.HasValue && request.PantsWaistId.Value > 0 ? (object)request.PantsWaistId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@PantsLengthId", request.PantsLengthId.HasValue && request.PantsLengthId.Value > 0 ? (object)request.PantsLengthId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseNumber", request.LicenseNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseState", request.LicenseState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseExpiration", request.LicenseExpiration.HasValue ? (object)request.LicenseExpiration.Value : DBNull.Value);
 
             var userId = (int)await command.ExecuteScalarAsync();
 
@@ -11043,7 +11054,7 @@ order by sr.sr_insertdatetime
         }
     }
 
-    public async Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId)
+    public async Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId, List<int>? checklistIds = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -11051,11 +11062,17 @@ order by sr.sr_insertdatetime
         {
             throw new InvalidOperationException("No connection string found");
         }
-        
+
         try
         {
             // Get source checklists with questions
             var sourceChecklists = await GetCompanyChecklistsWithQuestionsAsync(sourceXcccId);
+
+            if (checklistIds != null && checklistIds.Count > 0)
+            {
+                var idSet = new HashSet<int>(checklistIds);
+                sourceChecklists = sourceChecklists.Where(cl => idSet.Contains(cl.ClId)).ToList();
+            }
             
             foreach (var checklist in sourceChecklists)
             {

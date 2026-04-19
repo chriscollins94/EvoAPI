@@ -3438,7 +3438,8 @@ public class EvoApiController : BaseController
                 CreatedBy = CleanString(row["CreatedBy"]),
                 Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
                 ScheduleLock = row["ScheduleLock"] != DBNull.Value && Convert.ToBoolean(row["ScheduleLock"]),
-                ActionableNote = CleanString(row["ActionableNote"])
+                ActionableNote = CleanString(row["ActionableNote"]),
+                InvoiceNumber = dataTable.Columns.Contains("InvoiceNumber") ? CleanString(row["InvoiceNumber"]) : string.Empty
             };
 
             workOrders.Add(workOrder);
@@ -7448,7 +7449,7 @@ public class EvoApiController : BaseController
         {
             _logger.LogInformation("Cloning checklists from xcccId {Source} to {Target}", xcccId, request.TargetXcccId);
             
-            await _dataService.CloneCheckListsAsync(xcccId, request.TargetXcccId);
+            await _dataService.CloneCheckListsAsync(xcccId, request.TargetXcccId, request.ChecklistIds);
             
             stopwatch.Stop();
             await LogOperationAsync("CloneCheckLists", $"Cloned checklists from xcccId {xcccId} to {request.TargetXcccId}", stopwatch.Elapsed);

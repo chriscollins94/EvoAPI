@@ -206,7 +206,7 @@ public interface IDataService
     Task<CheckListDto?> UpdateCheckListAsync(int clId, UpdateCheckListRequest request);
     Task<CheckListQuestionDto> CreateCheckListQuestionAsync(int clId, CreateCheckListQuestionRequest request);
     Task<CheckListQuestionDto?> UpdateCheckListQuestionAsync(int clqId, UpdateCheckListQuestionRequest request);
-    Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId);
+    Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId, List<int>? checklistIds = null);
 
     // Contact management
     Task<List<ContactDto>> GetCompanyContactsAsync(int cId);

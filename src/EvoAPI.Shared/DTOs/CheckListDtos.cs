@@ -69,4 +69,5 @@ public class UpdateCheckListQuestionRequest
 public class CloneCheckListRequest
 {
     public int TargetXcccId { get; set; }
+    public List<int>? ChecklistIds { get; set; }
 }
