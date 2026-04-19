@@ -187,6 +187,22 @@ builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
 // Register Fleetmatics background service for daily sync
 builder.Services.AddHostedService<FleetmaticsSyncService>();
 
+// Register NTE notification service (background loop + ACS SMS/Email).
+// Config (thresholds, ACS creds, message templates) lives in ConfigSetting -
+// edit there to retune without redeploying.
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteQueryRepository,
+    EvoAPI.Infrastructure.Repositories.NteQueryRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INotificationLogRepository,
+    EvoAPI.Infrastructure.Repositories.NotificationLogRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteSpendCalculator,
+    EvoAPI.Infrastructure.Services.StubNteSpendCalculator>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.ISmsService,
+    EvoAPI.Infrastructure.Services.AcsSmsService>();
+builder.Services.AddScoped<EvoAPI.Infrastructure.Services.AcsEmailService>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteNotificationService,
+    EvoAPI.Infrastructure.Services.NteNotificationService>();
+builder.Services.AddHostedService<EvoAPI.Infrastructure.Services.NteNotificationBackgroundService>();
+
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
 // builder.Services.AddHostedService<TimeTrackingSyncService>();
