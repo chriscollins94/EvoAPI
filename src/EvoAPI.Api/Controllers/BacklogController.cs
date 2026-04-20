@@ -10,7 +10,7 @@ namespace EvoAPI.Api.Controllers;
 
 [ApiController]
 [Route("EvoApi/backlog")]
-[AttackPointsOnly]
+[EvoAuthorize]
 public class BacklogController : BaseController
 {
     private readonly IDataService _dataService;
@@ -100,6 +100,7 @@ public class BacklogController : BaseController
     }
 
     [HttpPost]
+    [AttackPointsOnly]
     public async Task<ActionResult<ApiResponse<int>>> CreateBacklogItem([FromBody] CreateBacklogItemRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -151,6 +152,7 @@ public class BacklogController : BaseController
     }
 
     [HttpPut("{id:int}")]
+    [AttackPointsOnly]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateBacklogItem(int id, [FromBody] UpdateBacklogItemRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -211,6 +213,7 @@ public class BacklogController : BaseController
     }
 
     [HttpDelete("{id:int}")]
+    [AttackPointsOnly]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteBacklogItem(int id)
     {
         var stopwatch = Stopwatch.StartNew();

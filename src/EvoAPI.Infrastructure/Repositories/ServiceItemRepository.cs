@@ -337,6 +337,7 @@ namespace EvoAPI.Infrastructure.Repositories
                     sr.sr_datedue AS DateDue,
                     c.c_name AS CompanyName,
                     l.l_location AS LocationName,
+                    t.t_trade AS Trade,
                     u.u_firstname + ' ' + u.u_lastname AS Tech,
                     SUM(xwosi.xwosi_quantity) AS TotalQuantity,
                     AVG(xwosi.xwosi_basecost) AS AverageCost,
@@ -349,6 +350,7 @@ namespace EvoAPI.Infrastructure.Repositories
                 LEFT JOIN dbo.xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
                 LEFT JOIN dbo.company c ON xccc.c_id = c.c_id
                 LEFT JOIN dbo.location l ON sr.l_id = l.l_id
+                LEFT JOIN dbo.trade t ON sr.t_id = t.t_id
                 LEFT JOIN dbo.status s ON sr.s_id = s.s_id
                 LEFT JOIN dbo.xrefWorkOrderUser xwou ON wo.wo_id = xwou.wo_id
                 LEFT JOIN dbo.[user] u ON xwou.u_id = u.u_id
@@ -365,7 +367,7 @@ namespace EvoAPI.Infrastructure.Repositories
             }
 
             sql += @"
-                GROUP BY 
+                GROUP BY
                     sr.sr_id,
                     sr.sr_requestnumber,
                     sr.sr_summary,
@@ -373,6 +375,7 @@ namespace EvoAPI.Infrastructure.Repositories
                     sr.sr_datedue,
                     c.c_name,
                     l.l_location,
+                    t.t_trade,
                     u.u_firstname,
                     u.u_lastname,
                     s.s_status,
