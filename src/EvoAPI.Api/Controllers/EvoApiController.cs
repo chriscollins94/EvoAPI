@@ -8720,6 +8720,337 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpGet("reports/status-change-history")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetStatusChangeHistory(
+        [FromQuery] string? fromDate = null,
+        [FromQuery] string? toDate = null,
+        [FromQuery] string? statusIds = null,
+        [FromQuery] string? srRequestNumber = null,
+        [FromQuery] int? tradeId = null,
+        [FromQuery] string? mode = "primary",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            bool isSecondary = string.Equals(mode, "secondary", StringComparison.OrdinalIgnoreCase);
+            _logger.LogInformation("Getting status change history report. Mode: {Mode}, FromDate: {FromDate}, ToDate: {ToDate}, StatusIds: {StatusIds}, Page: {Page}", mode, fromDate, toDate, statusIds, page);
+
+            var statusIdList = new List<int>();
+            if (!string.IsNullOrWhiteSpace(statusIds))
+            {
+                foreach (var part in statusIds.Split(','))
+                {
+                    if (int.TryParse(part.Trim(), out var id)) statusIdList.Add(id);
+                }
+            }
+
+            DateTime startDate = DateTime.Now.AddDays(-30);
+            DateTime endDate = DateTime.Now;
+
+            if (!string.IsNullOrEmpty(fromDate) && DateTime.TryParse(fromDate, out var parsedFromDate))
+            {
+                startDate = parsedFromDate;
+            }
+
+            if (!string.IsNullOrEmpty(toDate) && DateTime.TryParse(toDate, out var parsedToDate))
+            {
+                endDate = parsedToDate.AddDays(1).AddSeconds(-1);
+            }
+            else
+            {
+                endDate = endDate.AddDays(1).AddSeconds(-1);
+            }
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500;
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            // Mode-dependent column fragments used in the SQL below.
+            string pkCol        = isSecondary ? "ssc.ssc_id" : "sc.sc_id";
+            string dateCol      = isSecondary ? "ssc.ssc_insertdatetime" : "sc.sc_insertdatetime";
+            string minutesCol   = isSecondary ? "ssc.ssc_minutesinpriorstatus" : "sc.sc_minutesinpriorstatus";
+            string priorIdCol   = isSecondary ? "ssc.ss_id_prior" : "sc.s_id_prior";
+            string newIdCol     = isSecondary ? "ssc.ss_id_new"   : "sc.s_id_new";
+            string priorNameCol = isSecondary ? "sprior.ss_statussecondary" : "sprior.s_status";
+            string newNameCol   = isSecondary ? "snew.ss_statussecondary"   : "snew.s_status";
+
+            string fromJoins;
+            if (isSecondary)
+            {
+                fromJoins = @"
+                FROM StatusSecondaryChange ssc WITH (NOLOCK)
+                LEFT JOIN statussecondary sprior WITH (NOLOCK) ON ssc.ss_id_prior = sprior.ss_id
+                LEFT JOIN statussecondary snew   WITH (NOLOCK) ON ssc.ss_id_new   = snew.ss_id
+                LEFT JOIN status sparent      WITH (NOLOCK) ON snew.s_id = sparent.s_id
+                LEFT JOIN status spriorparent WITH (NOLOCK) ON sprior.s_id = spriorparent.s_id
+                LEFT JOIN workorder wo WITH (NOLOCK) ON ssc.wo_id = wo.wo_id
+                LEFT JOIN servicerequest sr WITH (NOLOCK) ON wo.sr_id = sr.sr_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id";
+            }
+            else
+            {
+                fromJoins = @"
+                FROM StatusChange sc WITH (NOLOCK)
+                LEFT JOIN status sprior WITH (NOLOCK) ON sc.s_id_prior = sprior.s_id
+                LEFT JOIN status snew   WITH (NOLOCK) ON sc.s_id_new   = snew.s_id
+                LEFT JOIN servicerequest sr WITH (NOLOCK) ON sc.sr_id = sr.sr_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id";
+            }
+
+            // Summary/options share this WHERE (no status filter so summary keeps the full funnel).
+            string sharedWhereNoStatus = $@"
+                WHERE {dateCol} >= @StartDate
+                  AND {dateCol} <= @EndDate
+                  AND (@SrRequestNumber IS NULL OR @SrRequestNumber = ''
+                       OR sr.sr_requestnumber LIKE '%' + @SrRequestNumber + '%')
+                  AND (@TradeId IS NULL OR sr.t_id = @TradeId)";
+
+            // Detail count/page apply the status filter on top (either prior OR new side).
+            string statusClause = string.Empty;
+            if (statusIdList.Count > 0)
+            {
+                var paramNames = statusIdList.Select((_, i) => $"@StatusId{i}").ToList();
+                var joined = string.Join(",", paramNames);
+                statusClause = $" AND ({newIdCol} IN ({joined}) OR {priorIdCol} IN ({joined}))";
+            }
+            string detailWhere = sharedWhereNoStatus + statusClause;
+
+            void AddStatusIdParams(SqlCommand cmd)
+            {
+                for (int i = 0; i < statusIdList.Count; i++)
+                {
+                    cmd.Parameters.AddWithValue($"@StatusId{i}", statusIdList[i]);
+                }
+            }
+
+            int totalUniqueSrs = 0;
+            var summary = new List<dynamic>();
+            var statusOptions = new List<dynamic>();
+            int totalRecords = 0;
+            var records = new List<dynamic>();
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // 1) Total unique SRs (summary denominator — at SR level in either mode)
+                string totalSql = "SELECT COUNT(DISTINCT sr.sr_id) " + fromJoins + sharedWhereNoStatus;
+                using (var cmd = new SqlCommand(totalSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    var result = await cmd.ExecuteScalarAsync();
+                    totalUniqueSrs = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
+                }
+
+                // 2) Summary grouped by new status
+                string summaryIdCol   = isSecondary ? "snew.ss_id" : "snew.s_id";
+                string summaryNameCol = isSecondary ? "snew.ss_statussecondary" : "snew.s_status";
+                string summarySql = $@"
+                    SELECT {summaryIdCol} AS SIdNew,
+                           {summaryNameCol} AS StatusNew,
+                           COUNT(DISTINCT sr.sr_id) AS UniqueSrCount,
+                           COUNT(*) AS TransitionCount,
+                           CAST(COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT sr.sr_id), 0) AS DECIMAL(18,2)) AS AvgTransitionsPerSr
+                    {fromJoins} {sharedWhereNoStatus}
+                    GROUP BY {summaryIdCol}, {summaryNameCol}
+                    ORDER BY COUNT(DISTINCT sr.sr_id) DESC";
+                using (var cmd = new SqlCommand(summarySql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        int uniqueSr = reader["UniqueSrCount"] != DBNull.Value ? Convert.ToInt32(reader["UniqueSrCount"]) : 0;
+                        decimal percent = totalUniqueSrs > 0
+                            ? Math.Round((decimal)uniqueSr * 100m / totalUniqueSrs, 2)
+                            : 0m;
+                        summary.Add(new
+                        {
+                            sIdNew = reader["SIdNew"] != DBNull.Value ? Convert.ToInt32(reader["SIdNew"]) : (int?)null,
+                            statusNew = reader["StatusNew"]?.ToString() ?? string.Empty,
+                            uniqueSrCount = uniqueSr,
+                            percentOfSrs = percent,
+                            transitionCount = reader["TransitionCount"] != DBNull.Value ? Convert.ToInt32(reader["TransitionCount"]) : 0,
+                            avgTransitionsPerSr = reader["AvgTransitionsPerSr"] != DBNull.Value ? Convert.ToDecimal(reader["AvgTransitionsPerSr"]) : 0m
+                        });
+                    }
+                }
+
+                // 3) Status options for the pill row (secondary mode includes color + parent primary)
+                string optionsSql;
+                if (isSecondary)
+                {
+                    optionsSql = $@"
+                        SELECT DISTINCT snew.ss_id AS SId, snew.ss_statussecondary AS Status,
+                               snew.ss_color AS Color, sparent.s_id AS ParentSId, sparent.s_status AS ParentStatus
+                        {fromJoins} {sharedWhereNoStatus}
+                        AND snew.ss_id IS NOT NULL
+                        ORDER BY sparent.s_status, snew.ss_statussecondary";
+                }
+                else
+                {
+                    optionsSql = $@"
+                        SELECT DISTINCT snew.s_id AS SId, snew.s_status AS Status
+                        {fromJoins} {sharedWhereNoStatus}
+                        AND snew.s_id IS NOT NULL
+                        ORDER BY snew.s_status";
+                }
+                using (var cmd = new SqlCommand(optionsSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (isSecondary)
+                        {
+                            statusOptions.Add(new
+                            {
+                                sId = Convert.ToInt32(reader["SId"]),
+                                status = reader["Status"]?.ToString() ?? string.Empty,
+                                color = reader["Color"]?.ToString() ?? string.Empty,
+                                parentSId = reader["ParentSId"] != DBNull.Value ? Convert.ToInt32(reader["ParentSId"]) : (int?)null,
+                                parentStatus = reader["ParentStatus"]?.ToString() ?? string.Empty
+                            });
+                        }
+                        else
+                        {
+                            statusOptions.Add(new
+                            {
+                                sId = Convert.ToInt32(reader["SId"]),
+                                status = reader["Status"]?.ToString() ?? string.Empty
+                            });
+                        }
+                    }
+                }
+
+                // 4) Detail count
+                string countSql = "SELECT COUNT(*) " + fromJoins + detailWhere;
+                using (var cmd = new SqlCommand(countSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    AddStatusIdParams(cmd);
+                    var result = await cmd.ExecuteScalarAsync();
+                    totalRecords = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
+                }
+
+                // 5) Detail page
+                string dataSql = $@"
+                    SELECT
+                        {pkCol} AS ChangeId,
+                        {(isSecondary ? "ssc.wo_id" : "CAST(NULL AS int)")} AS WoId,
+                        {(isSecondary ? "wo.wo_workordernumber" : "CAST(NULL AS varchar(50))")} AS WoNumber,
+                        sr.sr_id AS SrId,
+                        sr.sr_requestnumber AS SrRequestNumber,
+                        t.t_trade AS Trade,
+                        {priorNameCol} AS StatusPrior,
+                        {newNameCol} AS StatusNew,
+                        {(isSecondary ? "spriorparent.s_status" : "CAST(NULL AS varchar(50))")} AS StatusPriorParent,
+                        {(isSecondary ? "sparent.s_status"      : "CAST(NULL AS varchar(50))")} AS StatusNewParent,
+                        {minutesCol} AS MinutesInPriorStatus,
+                        CAST({minutesCol} / 60.0   AS DECIMAL(18,2)) AS HoursInPriorStatus,
+                        CAST({minutesCol} / 1440.0 AS DECIMAL(18,2)) AS DaysInPriorStatus,
+                        {dateCol} AS ChangeDateTime
+                    {fromJoins} {detailWhere}
+                    ORDER BY {pkCol} DESC
+                    OFFSET @Offset ROWS
+                    FETCH NEXT @PageSize ROWS ONLY";
+                using (var cmd = new SqlCommand(dataSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    AddStatusIdParams(cmd);
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        records.Add(new
+                        {
+                            changeId = Convert.ToInt32(reader["ChangeId"]),
+                            woId = reader["WoId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["WoId"]),
+                            woNumber = reader["WoNumber"] == DBNull.Value ? null : reader["WoNumber"]?.ToString(),
+                            srId = reader["SrId"] != DBNull.Value ? Convert.ToInt32(reader["SrId"]) : (int?)null,
+                            srRequestNumber = reader["SrRequestNumber"]?.ToString() ?? string.Empty,
+                            trade = reader["Trade"]?.ToString() ?? string.Empty,
+                            statusPrior = reader["StatusPrior"] == DBNull.Value ? null : reader["StatusPrior"]?.ToString(),
+                            statusNew = reader["StatusNew"]?.ToString() ?? string.Empty,
+                            statusPriorParent = reader["StatusPriorParent"] == DBNull.Value ? null : reader["StatusPriorParent"]?.ToString(),
+                            statusNewParent = reader["StatusNewParent"] == DBNull.Value ? null : reader["StatusNewParent"]?.ToString(),
+                            minutesInPriorStatus = reader["MinutesInPriorStatus"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["MinutesInPriorStatus"]),
+                            hoursInPriorStatus = reader["HoursInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["HoursInPriorStatus"]),
+                            daysInPriorStatus = reader["DaysInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["DaysInPriorStatus"]),
+                            changeDateTime = reader["ChangeDateTime"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["ChangeDateTime"])
+                        });
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} status change records",
+                Data = new
+                {
+                    mode = isSecondary ? "secondary" : "primary",
+                    records = records,
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    },
+                    summary = summary,
+                    totalUniqueSrs = totalUniqueSrs,
+                    statusOptions = statusOptions
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving status change history report");
+
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the status change history",
+                Count = 0
+            });
+        }
+    }
+
     [HttpPost("employees/{id:int}/attachments")]
     [EvoAuthorize]
     public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> CreateEmployeeAttachment(int id)
