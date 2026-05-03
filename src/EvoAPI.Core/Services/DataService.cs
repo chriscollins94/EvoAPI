@@ -14464,5 +14464,72 @@ order by sr.sr_insertdatetime
     }
 
     #endregion
+
+    #region QuickBooks Troubleshooting
+
+    public async Task<QuickBooksServiceRequestRow?> GetServiceRequestQbInfoByRequestNumberAsync(string requestNumber)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    sr_id,
+                    sr_requestnumber,
+                    sr_quickbooks_docnumber,
+                    sr_quickbooks_synctoken
+                FROM servicerequest
+                WHERE sr_requestnumber = @sr_requestnumber";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@sr_requestnumber", requestNumber }
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            if (dt.Rows.Count == 0) return null;
+
+            var row = dt.Rows[0];
+            return new QuickBooksServiceRequestRow
+            {
+                sr_id = Convert.ToInt32(row["sr_id"]),
+                sr_requestnumber = row["sr_requestnumber"]?.ToString() ?? string.Empty,
+                sr_quickbooks_docnumber = row["sr_quickbooks_docnumber"] == DBNull.Value ? null : row["sr_quickbooks_docnumber"].ToString(),
+                sr_quickbooks_synctoken = row["sr_quickbooks_synctoken"] == DBNull.Value ? null : row["sr_quickbooks_synctoken"].ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading SR QB info for request number {RequestNumber}", requestNumber);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceRequestSyncTokenAsync(int srId, string syncToken)
+    {
+        try
+        {
+            const string sql = @"
+                UPDATE servicerequest
+                SET sr_quickbooks_synctoken = @sr_quickbooks_synctoken,
+                    sr_modifieddatetime = GETDATE()
+                WHERE sr_id = @sr_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@sr_quickbooks_synctoken", syncToken },
+                { "@sr_id", srId }
+            };
+
+            var rows = await ExecuteNonQueryAsync(sql, parameters);
+            return rows > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating sr_quickbooks_synctoken for sr_id {SrId}", srId);
+            throw;
+        }
+    }
+
+    #endregion
 }
 

@@ -259,6 +259,8 @@ public interface IDataService
     Task<DataTable> GetActiveEmployeesForTimeOffAsync();
     Task<DataTable> GetCalendarEventsAsync();
     Task<string?> GetConfigSettingValueAsync(string csType, string csIdentifier);
+    Task<QuickBooksServiceRequestRow?> GetServiceRequestQbInfoByRequestNumberAsync(string requestNumber);
+    Task<bool> UpdateServiceRequestSyncTokenAsync(int srId, string syncToken);
     Task<bool> IsUserTechAsync(int userId);
     Task<DataTable> GetUserEmailInfoAsync(int userId);
     Task<bool> IsTimeOffExceedingBalanceAsync(int torId);

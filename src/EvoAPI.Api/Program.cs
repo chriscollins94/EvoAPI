@@ -187,6 +187,13 @@ builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
 // Register Fleetmatics background service for daily sync
 builder.Services.AddHostedService<FleetmaticsSyncService>();
 
+// Register HttpClient and QuickBooks troubleshooting service
+builder.Services.AddHttpClient<IQuickBooksService, QuickBooksService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-QuickBooksClient/1.0");
+});
+
 // Register NTE notification service (background loop + ACS SMS/Email).
 // Config (thresholds, ACS creds, message templates) lives in ConfigSetting -
 // edit there to retune without redeploying.
