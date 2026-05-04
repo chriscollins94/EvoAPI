@@ -117,7 +117,7 @@ public class DataService : IDataService
                         a.a_city              AS City,
                         a.a_state             AS State,
                         a.a_zip               AS Zip,
-                        z.z_number            AS Zone,
+                        z.z_acronym           AS Zone,
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
@@ -250,7 +250,7 @@ public class DataService : IDataService
                         a.a_city              AS City,
                         a.a_state             AS State,
                         a.a_zip               AS Zip,
-                        z.z_number            AS Zone,
+                        z.z_acronym           AS Zone,
                             u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
@@ -12498,8 +12498,8 @@ order by sr.sr_insertdatetime
             // First create/get the address
             int aId;
             const string createAddressSql = @"
-                INSERT INTO address (a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_insertdatetime)
-                VALUES (@address1, @address2, @city, @state, @zip, @latitude, @longitude, GETDATE());
+                INSERT INTO address (at_id, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_insertdatetime)
+                VALUES (3, @address1, @address2, @city, @state, @zip, @latitude, @longitude, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int);";
 
             using (var connection = new SqlConnection(connectionString))
@@ -12608,7 +12608,8 @@ order by sr.sr_insertdatetime
             // Update address
             const string updateAddressSql = @"
                 UPDATE address
-                SET a_address1 = @address1,
+                SET at_id = 3,
+                    a_address1 = @address1,
                     a_address2 = @address2,
                     a_city = @city,
                     a_state = @state,
