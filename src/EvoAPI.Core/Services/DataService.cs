@@ -12498,13 +12498,14 @@ order by sr.sr_insertdatetime
             // First create/get the address
             int aId;
             const string createAddressSql = @"
-                INSERT INTO address (at_id, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_insertdatetime)
-                VALUES (3, @address1, @address2, @city, @state, @zip, @latitude, @longitude, GETDATE());
+                INSERT INTO address (at_id, a_description, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_insertdatetime)
+                VALUES (3, @description, @address1, @address2, @city, @state, @zip, @latitude, @longitude, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int);";
 
             using (var connection = new SqlConnection(connectionString))
             using (var command = new SqlCommand(createAddressSql, connection))
             {
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.LLocation ?? DBNull.Value;
                 command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
                 command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
                 command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
@@ -12609,6 +12610,7 @@ order by sr.sr_insertdatetime
             const string updateAddressSql = @"
                 UPDATE address
                 SET at_id = 3,
+                    a_description = @description,
                     a_address1 = @address1,
                     a_address2 = @address2,
                     a_city = @city,
@@ -12623,6 +12625,7 @@ order by sr.sr_insertdatetime
             using (var command = new SqlCommand(updateAddressSql, connection))
             {
                 command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.LLocation ?? DBNull.Value;
                 command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
                 command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
                 command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
