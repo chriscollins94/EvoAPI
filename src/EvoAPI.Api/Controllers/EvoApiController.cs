@@ -8720,6 +8720,328 @@ public class EvoApiController : BaseController
         }
     }
 
+    // ============================================================
+    // Service Request Activity Report
+    //   - search-sr: prefix lookup on sr_requestnumber so the UI can show a picker
+    //   - sr-activity: paged ServiceRequestActivity rows for a given sr_id with action/entity/user filters
+    // ============================================================
+
+    [HttpGet("reports/sr-activity/search-sr")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> SearchServiceRequestForActivity(
+        [FromQuery] string? q = null,
+        [FromQuery] int limit = 25)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                return Ok(new ApiResponse<dynamic>
+                {
+                    Success = true,
+                    Message = "Empty query",
+                    Data = new { records = new List<dynamic>() },
+                    Count = 0
+                });
+            }
+
+            if (limit < 1) limit = 25;
+            if (limit > 100) limit = 100;
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            var records = new List<dynamic>();
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Contains match so "8444" finds "20260513-8444". Prefix matches still
+                // hit the index well enough at typical SR volumes; if performance becomes
+                // an issue, switch to prefix-only and add a full-text or trailing-substring
+                // strategy.
+                const string sql = @"
+                    SELECT TOP (@Limit)
+                        sr.sr_id,
+                        sr.sr_requestnumber,
+                        sr.sr_summary,
+                        sr.sr_insertdatetime
+                    FROM ServiceRequest sr
+                    WHERE sr.sr_requestnumber LIKE '%' + @Q + '%'
+                    ORDER BY sr.sr_insertdatetime DESC;";
+
+                using (var cmd = new SqlCommand(sql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@Q", q.Trim());
+                    cmd.Parameters.AddWithValue("@Limit", limit);
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                sr_id = reader["sr_id"],
+                                sr_requestnumber = reader["sr_requestnumber"]?.ToString() ?? string.Empty,
+                                sr_summary = reader["sr_summary"]?.ToString() ?? string.Empty,
+                                sr_insertdatetime = reader["sr_insertdatetime"]
+                            });
+                        }
+                    }
+                }
+            }
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Found {records.Count} matching service request(s)",
+                Data = new { records = records },
+                Count = records.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching service requests for activity report");
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while searching service requests",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/sr-activity")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetServiceRequestActivity(
+        [FromQuery] int srId,
+        [FromQuery] string? actions = null,    // comma-separated: "I,U,D"
+        [FromQuery] string? entities = null,   // comma-separated entity_name values
+        [FromQuery] string? users = null,      // comma-separated app_user values
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            if (srId <= 0)
+            {
+                return BadRequest(new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "srId is required",
+                    Count = 0
+                });
+            }
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 100;
+            if (pageSize > 500) pageSize = 500;
+
+            // Three-state filter semantics per dimension:
+            //   - param NULL (not present in query string) → no filter applied (show all)
+            //   - param present (incl. empty "") → apply explicit filter
+            //   - empty csv → STRING_SPLIT returns row with '' → matches nothing → 0 rows
+            // We normalize via SplitCsv so " I , U " becomes "I,U".
+            string? actionsCsv = actions == null ? null : string.Join(",", SplitCsv(actions));
+            string? entitiesCsv = entities == null ? null : string.Join(",", SplitCsv(entities));
+            string? usersCsv = users == null ? null : string.Join(",", SplitCsv(users));
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            // Build dynamic IN-clauses. STRING_SPLIT is available on SQL Server 2016+.
+            // Use NULL/empty sentinel to skip a filter.
+            string filterClause =
+                @" AND (@ActionsCsv IS NULL OR action IN (SELECT value FROM STRING_SPLIT(@ActionsCsv, ',')))" +
+                @" AND (@EntitiesCsv IS NULL OR entity_name IN (SELECT value FROM STRING_SPLIT(@EntitiesCsv, ',')))" +
+                @" AND (@UsersCsv IS NULL OR ISNULL(app_user, N'(none)') IN (SELECT value FROM STRING_SPLIT(@UsersCsv, ',')))";
+
+            var records = new List<dynamic>();
+            int totalRecords = 0;
+            List<dynamic> entityOptions = new List<dynamic>();
+            List<dynamic> userOptions = new List<dynamic>();
+            List<dynamic> actionOptions = new List<dynamic>();
+            string? srRequestNumber = null;
+            string? srSummary = null;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Look up the SR request number + summary for the response header
+                using (var srCmd = new SqlCommand("SELECT sr_requestnumber, sr_summary FROM ServiceRequest WHERE sr_id = @SrId", connection))
+                {
+                    srCmd.Parameters.AddWithValue("@SrId", srId);
+                    using (var reader = await srCmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            srRequestNumber = reader["sr_requestnumber"]?.ToString();
+                            srSummary = reader["sr_summary"]?.ToString();
+                        }
+                    }
+                }
+
+                // Count total filtered rows
+                string countSql = @"
+                    SELECT COUNT(*)
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + filterClause;
+
+                using (var countCmd = new SqlCommand(countSql, connection))
+                {
+                    countCmd.Parameters.AddWithValue("@SrId", srId);
+                    countCmd.Parameters.AddWithValue("@ActionsCsv", (object?)actionsCsv ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@EntitiesCsv", (object?)entitiesCsv ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@UsersCsv", (object?)usersCsv ?? DBNull.Value);
+                    var countResult = await countCmd.ExecuteScalarAsync();
+                    totalRecords = countResult != null ? Convert.ToInt32(countResult) : 0;
+                }
+
+                // Paged records
+                string dataSql = @"
+                    SELECT
+                        sra_id, sra_insertdatetime, sr_id, entity_name, entity_id, action,
+                        old_values, new_values, app_user, app_user_id, app_source, sql_login, host_name
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + filterClause + @"
+                    ORDER BY sra_insertdatetime DESC, sra_id DESC
+                    OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+                using (var dataCmd = new SqlCommand(dataSql, connection))
+                {
+                    dataCmd.Parameters.AddWithValue("@SrId", srId);
+                    dataCmd.Parameters.AddWithValue("@ActionsCsv", (object?)actionsCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@EntitiesCsv", (object?)entitiesCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@UsersCsv", (object?)usersCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    dataCmd.Parameters.AddWithValue("@PageSize", pageSize);
+                    using (var reader = await dataCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                sra_id = reader["sra_id"],
+                                sra_insertdatetime = reader["sra_insertdatetime"],
+                                sr_id = reader["sr_id"] == DBNull.Value ? null : (int?)Convert.ToInt32(reader["sr_id"]),
+                                entity_name = reader["entity_name"]?.ToString() ?? string.Empty,
+                                entity_id = reader["entity_id"] == DBNull.Value ? null : (long?)Convert.ToInt64(reader["entity_id"]),
+                                action = reader["action"]?.ToString() ?? string.Empty,
+                                old_values = reader["old_values"] == DBNull.Value ? null : reader["old_values"]?.ToString(),
+                                new_values = reader["new_values"] == DBNull.Value ? null : reader["new_values"]?.ToString(),
+                                app_user = reader["app_user"]?.ToString(),
+                                app_user_id = reader["app_user_id"] == DBNull.Value ? null : (int?)Convert.ToInt32(reader["app_user_id"]),
+                                app_source = reader["app_source"]?.ToString(),
+                                sql_login = reader["sql_login"]?.ToString(),
+                                host_name = reader["host_name"]?.ToString()
+                            });
+                        }
+                    }
+                }
+
+                // Filter option lists (unfiltered counts for this SR — so the sidebar shows everything available)
+                const string optionsSql = @"
+                    SELECT 'entity' AS kind, entity_name AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId
+                    GROUP BY entity_name
+                    UNION ALL
+                    SELECT 'user' AS kind, ISNULL(app_user, N'(none)') AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId
+                    GROUP BY ISNULL(app_user, N'(none)')
+                    UNION ALL
+                    SELECT 'action' AS kind, action AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId
+                    GROUP BY action;";
+
+                using (var optCmd = new SqlCommand(optionsSql, connection))
+                {
+                    optCmd.Parameters.AddWithValue("@SrId", srId);
+                    using (var reader = await optCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            var kind = reader["kind"]?.ToString();
+                            var item = new
+                            {
+                                value = reader["value"]?.ToString() ?? string.Empty,
+                                count = Convert.ToInt32(reader["n"])
+                            };
+                            if (kind == "entity") entityOptions.Add(item);
+                            else if (kind == "user") userOptions.Add(item);
+                            else if (kind == "action") actionOptions.Add(item);
+                        }
+                    }
+                }
+            }
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} activity record(s)",
+                Data = new
+                {
+                    sr_id = srId,
+                    sr_requestnumber = srRequestNumber,
+                    sr_summary = srSummary,
+                    records = records,
+                    options = new
+                    {
+                        actions = actionOptions,
+                        entities = entityOptions,
+                        users = userOptions
+                    },
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    }
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving service request activity report");
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the service request activity",
+                Count = 0
+            });
+        }
+    }
+
+    private static List<string> SplitCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return new List<string>();
+        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                  .Select(s => s.Trim())
+                  .Where(s => s.Length > 0)
+                  .ToList();
+    }
+
     [HttpGet("reports/status-change-history")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<dynamic>>> GetStatusChangeHistory(
