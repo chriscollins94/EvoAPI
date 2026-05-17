@@ -5070,6 +5070,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/detail/{xcccId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CompanyDetailDto>>> GetCompanyDetail(int xcccId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5113,6 +5114,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("companies/detail")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyGeneralInfo([FromBody] UpdateCompanyGeneralInfoRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5129,6 +5131,17 @@ public class EvoApiController : BaseController
                 });
             }
 
+            if (string.IsNullOrWhiteSpace(request?.CompanyName))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Company Name is required"
+                });
+            }
+
+            request.CompanyName = request.CompanyName.Trim();
+
             // Get the current values before update for critical audit logging
             var currentCompany = await _dataService.GetCompanyDetailAsync(request.XcccId);
             
@@ -5141,6 +5154,7 @@ public class EvoApiController : BaseController
                 // Log critical audit with change details
                 var oldValues = new Dictionary<string, object?>
                 {
+                    { "CompanyName", currentCompany?.CompanyName },
                     { "TripCharge", currentCompany?.TripCharge },
                     { "BillableRuleId", currentCompany?.BillableRuleId },
                     { "TermsId", currentCompany?.TermsId },
@@ -5160,6 +5174,7 @@ public class EvoApiController : BaseController
                 
                 var newValues = new Dictionary<string, object?>
                 {
+                    { "CompanyName", request.CompanyName },
                     { "TripCharge", request.TripCharge },
                     { "BillableRuleId", request.BillableRuleId },
                     { "TermsId", request.TermsId },
@@ -5217,7 +5232,218 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpPost("companies")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CreateCompanyResponse>>> CreateCompany([FromBody] CreateCompanyRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request?.CompanyName))
+            {
+                return BadRequest(new ApiResponse<CreateCompanyResponse>
+                {
+                    Success = false,
+                    Message = "Company Name is required"
+                });
+            }
+
+            var name = request.CompanyName.Trim();
+            var newCId = await _dataService.CreateCompanyAsync(name);
+            stopwatch.Stop();
+
+            if (newCId == null)
+            {
+                return StatusCode(500, new ApiResponse<CreateCompanyResponse>
+                {
+                    Success = false,
+                    Message = "Failed to create company"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Created - {name} (c_id: {newCId})",
+                new Dictionary<string, object?>(),
+                new Dictionary<string, object?> { { "CompanyName", name }, { "Active", true } },
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("CreateCompany", $"Created company '{name}' (c_id {newCId})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<CreateCompanyResponse>
+            {
+                Success = true,
+                Message = "Company created successfully",
+                Count = 1,
+                Data = new CreateCompanyResponse { CId = newCId.Value, CompanyName = name }
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating company");
+            await LogErrorAsync("CreateCompany", ex, stopwatch.Elapsed);
+
+            return StatusCode(500, new ApiResponse<CreateCompanyResponse>
+            {
+                Success = false,
+                Message = "Failed to create company"
+            });
+        }
+    }
+
+    [HttpGet("companies/with-call-centers")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CompanyWithCallCentersDto>>>> GetCompaniesWithCallCenters()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var companies = await _dataService.GetCompaniesWithCallCentersAsync();
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompaniesWithCallCenters", $"Returned {companies.Count} companies", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<CompanyWithCallCentersDto>>
+            {
+                Success = true,
+                Data = companies,
+                Count = companies.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting companies with call centers");
+            await LogErrorAsync("GetCompaniesWithCallCenters", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<List<CompanyWithCallCentersDto>>
+            {
+                Success = false,
+                Message = "Failed to load companies"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/call-centers/{ccId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<AssignCompanyCallCenterResponse>>> AssignCompanyToCallCenter(int cId, int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            if (cId <= 0 || ccId <= 0)
+            {
+                return BadRequest(new ApiResponse<AssignCompanyCallCenterResponse>
+                {
+                    Success = false,
+                    Message = "Invalid company or call center ID"
+                });
+            }
+
+            var newXcccId = await _dataService.AssignCompanyToCallCenterAsync(cId, ccId);
+            stopwatch.Stop();
+
+            if (newXcccId == null)
+            {
+                return StatusCode(500, new ApiResponse<AssignCompanyCallCenterResponse>
+                {
+                    Success = false,
+                    Message = "Failed to assign company to call center"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Pairing Created - c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})",
+                new Dictionary<string, object?>(),
+                new Dictionary<string, object?> { { "CId", cId }, { "CcId", ccId }, { "XcccId", newXcccId } },
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("AssignCompanyToCallCenter", $"Assigned c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<AssignCompanyCallCenterResponse>
+            {
+                Success = true,
+                Message = "Company assigned to call center",
+                Count = 1,
+                Data = new AssignCompanyCallCenterResponse { XcccId = newXcccId.Value, CId = cId, CcId = ccId }
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning c_id {CId} to cc_id {CcId}", cId, ccId);
+            await LogErrorAsync("AssignCompanyToCallCenter", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<AssignCompanyCallCenterResponse>
+            {
+                Success = false,
+                Message = "Failed to assign company to call center"
+            });
+        }
+    }
+
+    [HttpDelete("companies/call-center-pairings/{xcccId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> UnassignCompanyFromCallCenter(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            if (xcccId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid pairing ID"
+                });
+            }
+
+            var (success, errorMessage, cId, ccId, companyName, callCenterName) = await _dataService.UnassignCompanyFromCallCenterAsync(xcccId);
+            stopwatch.Stop();
+
+            if (!success)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = errorMessage ?? "Failed to unassign pairing"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Pairing Removed - {companyName} from {callCenterName} (xccc_id {xcccId})",
+                new Dictionary<string, object?> { { "XcccId", xcccId }, { "CId", cId }, { "CcId", ccId }, { "CompanyName", companyName }, { "CallCenterName", callCenterName } },
+                new Dictionary<string, object?>(),
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("UnassignCompanyFromCallCenter", $"Unassigned xccc_id {xcccId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Pairing removed",
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error unassigning xccc_id {XcccId}", xcccId);
+            await LogErrorAsync("UnassignCompanyFromCallCenter", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to unassign pairing"
+            });
+        }
+    }
+
     [HttpPost("materials-markup")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<int>>> CreateMaterialsMarkup([FromBody] CreateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5320,6 +5546,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("materials-markup")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateMaterialsMarkup([FromBody] UpdateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5440,6 +5667,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpDelete("materials-markup/{mmId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> DeleteMaterialsMarkup(int mmId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5502,6 +5730,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("materials-markup/reset/{xcccId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> ResetMaterialsMarkupToDefault(int xcccId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5557,7 +5786,7 @@ public class EvoApiController : BaseController
 
     // Company Priority endpoints
     [HttpGet("company-priorities/{companyId}")]
-    [AdminOnly]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CompanyPriorityDto>>>> GetCompanyPriorities(int companyId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5601,7 +5830,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("company-priorities")]
-    [AdminOnly]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyPriority([FromBody] UpdateCompanyPriorityRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -7077,7 +7306,7 @@ public class EvoApiController : BaseController
     #region Company Trades Management
 
     [HttpGet("companies/{xcccId:int}/trades")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<LaborRateDto>>>> GetCompanyTrades(int xcccId)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7112,7 +7341,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/{xcccId:int}/available-trades")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CompanyTradeDto>>>> GetAvailableTrades(int xcccId)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7147,7 +7376,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/{xcccId:int}/checklists")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklists(int xcccId)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7182,7 +7411,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/{xcccId:int}/checklists/detail")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklistsWithQuestions(int xcccId)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7217,7 +7446,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("checklist-types")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CheckListTypeDto>>>> GetCheckListTypes()
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7250,7 +7479,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("checklist-answer-types")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<CheckListAnswerTypeDto>>>> GetCheckListAnswerTypes()
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7283,7 +7512,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("companies/{xcccId:int}/checklists")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CheckListDto>>> CreateCheckList(int xcccId, [FromBody] CreateCheckListRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7318,7 +7547,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("checklists/{clId:int}")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CheckListDto>>> UpdateCheckList(int clId, [FromBody] UpdateCheckListRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7362,7 +7591,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("checklists/{clId:int}/questions")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> CreateCheckListQuestion(int clId, [FromBody] CreateCheckListQuestionRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7397,7 +7626,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("checklist-questions/{clqId:int}")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> UpdateCheckListQuestion(int clqId, [FromBody] UpdateCheckListQuestionRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7441,7 +7670,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("companies/{xcccId:int}/checklists/clone")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> CloneCheckLists(int xcccId, [FromBody] CloneCheckListRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7474,7 +7703,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("companies/{xcccId:int}/trades")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<LaborRateDto>>> CreateCompanyTrade(int xcccId, [FromBody] CreateLaborRateRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7542,7 +7771,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("companies/{xcccId:int}/trades/{lrId:int}")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<LaborRateDto>>> UpdateCompanyTrade(int xcccId, int lrId, [FromBody] UpdateLaborRateRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7647,7 +7876,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<List<int>>>> GetTradeChecklists(int xcccId, int lrId)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -7682,7 +7911,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
-    [EvoAuthorize]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateTradeChecklists(int xcccId, int lrId, [FromBody] List<int> checklistIds)
     {
         var stopwatch = Stopwatch.StartNew();

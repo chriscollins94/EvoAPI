@@ -137,6 +137,10 @@ public interface IDataService
     Task<List<CompanyListDto>> GetCallCenterCompaniesAsync(int callCenterId);
     Task<CompanyDetailDto?> GetCompanyDetailAsync(int xcccId);
     Task<bool> UpdateCompanyGeneralInfoAsync(UpdateCompanyGeneralInfoRequest request);
+    Task<int?> CreateCompanyAsync(string companyName);
+    Task<List<CompanyWithCallCentersDto>> GetCompaniesWithCallCentersAsync();
+    Task<int?> AssignCompanyToCallCenterAsync(int cId, int ccId);
+    Task<(bool Success, string? ErrorMessage, int CId, int CcId, string CompanyName, string CallCenterName)> UnassignCompanyFromCallCenterAsync(int xcccId);
     Task<int?> CreateMaterialsMarkupAsync(CreateMaterialsMarkupRequest request);
     Task<UpdateMaterialsMarkupRequest> GetMaterialsMarkupByIdAsync(int mmId);
     Task<(UpdateMaterialsMarkupRequest? MarkupData, string? CompanyName)> GetMaterialsMarkupWithCompanyByIdAsync(int mmId);

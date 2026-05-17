@@ -7779,6 +7779,7 @@ order by sr.sr_insertdatetime
                     xccc.xccc_firmquote,
                     xccc.xccc_invoicedateshow,
                     xccc.xccc_ivrrequestnumber,
+                    xccc.xccc_collectpaymentonsite,
                     xccc.xccc_clientrep,
                     xccc.xccc_licenserep,
                     xccc.xccc_invoiceextratext,
@@ -7826,19 +7827,20 @@ order by sr.sr_insertdatetime
                             FirmQuote = reader.GetBoolean(13),
                             InvoiceDateShow = reader.GetBoolean(14),
                             IvrRequestNumber = reader.GetBoolean(15),
-                            ClientRepresentative = reader.IsDBNull(16) ? null : reader.GetString(16),
-                            LicenseRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
-                            InvoiceExtraText = reader.IsDBNull(18) ? null : reader.GetString(18),
-                            Note = reader.IsDBNull(19) ? null : reader.GetString(19),
-                            PortalUrl = reader.IsDBNull(20) ? null : reader.GetString(20),
-                            PortalName = reader.IsDBNull(21) ? null : reader.GetString(21),
-                            PortalCredentials = reader.IsDBNull(22) ? null : reader.GetString(22),
-                            InsertDateTime = reader.GetDateTime(23),
-                            ModifiedDateTime = reader.IsDBNull(24) ? null : reader.GetDateTime(24),
-                            BillableRuleDescription = reader.IsDBNull(25) ? null : reader.GetString(25),
-                            BillableRuleRoundToMinute = reader.IsDBNull(26) ? null : reader.GetInt32(26),
-                            TermsDescription = reader.IsDBNull(27) ? null : reader.GetString(27),
-                            TermsNumberOfDays = reader.IsDBNull(28) ? 0 : reader.GetInt32(28)
+                            CollectPaymentOnSite = !reader.IsDBNull(16) && reader.GetBoolean(16),
+                            ClientRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
+                            LicenseRepresentative = reader.IsDBNull(18) ? null : reader.GetString(18),
+                            InvoiceExtraText = reader.IsDBNull(19) ? null : reader.GetString(19),
+                            Note = reader.IsDBNull(20) ? null : reader.GetString(20),
+                            PortalUrl = reader.IsDBNull(21) ? null : reader.GetString(21),
+                            PortalName = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            PortalCredentials = reader.IsDBNull(23) ? null : reader.GetString(23),
+                            InsertDateTime = reader.GetDateTime(24),
+                            ModifiedDateTime = reader.IsDBNull(25) ? null : reader.GetDateTime(25),
+                            BillableRuleDescription = reader.IsDBNull(26) ? null : reader.GetString(26),
+                            BillableRuleRoundToMinute = reader.IsDBNull(27) ? null : reader.GetInt32(27),
+                            TermsDescription = reader.IsDBNull(28) ? null : reader.GetString(28),
+                            TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29)
                         };
                     }
                 }
@@ -7981,6 +7983,7 @@ order by sr.sr_insertdatetime
                     xccc_firmquote = @firmquote,
                     xccc_invoicedateshow = @invoicedateshow,
                     xccc_ivrrequestnumber = @ivrrequestnumber,
+                    xccc_collectpaymentonsite = @collectpaymentonsite,
                     xccc_clientrep = @clientrep,
                     xccc_licenserep = @licenserep,
                     xccc_invoiceextratext = @invoiceextratext,
@@ -7990,6 +7993,7 @@ order by sr.sr_insertdatetime
                 
                 UPDATE Company
                 SET
+                    c_name = @cname,
                     c_portalurl = @portalurl,
                     c_portalname = @portalname,
                     c_portalcredentials = @portalcredentials
@@ -7999,6 +8003,7 @@ order by sr.sr_insertdatetime
             using (var command = new SqlCommand(sql, connection))
             {
                 command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
+                command.Parameters.Add("@cname", SqlDbType.VarChar, 200).Value = request.CompanyName?.Trim() ?? string.Empty;
                 command.Parameters.Add("@tripcharge", SqlDbType.Decimal).Value = request.TripCharge.HasValue ? (object)request.TripCharge.Value : DBNull.Value;
                 command.Parameters.Add("@billableRuleId", SqlDbType.Int).Value = request.BillableRuleId.HasValue ? (object)request.BillableRuleId.Value : DBNull.Value;
                 command.Parameters.Add("@termsId", SqlDbType.Int).Value = request.TermsId.HasValue ? (object)request.TermsId.Value : DBNull.Value;
@@ -8010,6 +8015,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@firmquote", SqlDbType.Bit).Value = request.FirmQuote;
                 command.Parameters.Add("@invoicedateshow", SqlDbType.Bit).Value = request.InvoiceDateShow;
                 command.Parameters.Add("@ivrrequestnumber", SqlDbType.Bit).Value = request.IvrRequestNumber;
+                command.Parameters.Add("@collectpaymentonsite", SqlDbType.Bit).Value = request.CollectPaymentOnSite;
                 command.Parameters.Add("@clientrep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.ClientRepresentative) ? (object)request.ClientRepresentative : DBNull.Value;
                 command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
                 command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
@@ -8043,6 +8049,326 @@ order by sr.sr_insertdatetime
                 Name = "DataService",
                 Description = "UpdateCompanyGeneralInfo",
                 Detail = $"Error updating company general info for xccc_id {request.XcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateCompanyAsync(string companyName)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var trimmedName = (companyName ?? string.Empty).Trim();
+        if (trimmedName.Length == 0)
+        {
+            return null;
+        }
+        if (trimmedName.Length > 50)
+        {
+            trimmedName = trimmedName.Substring(0, 50);
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+            int newCId;
+
+            const string insertCompanySql = @"
+                INSERT INTO Company (c_name, c_active)
+                VALUES (@c_name, 1);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var command = new SqlCommand(insertCompanySql, connection, transaction))
+            {
+                command.Parameters.Add("@c_name", SqlDbType.VarChar, 50).Value = trimmedName;
+                var result = await command.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                {
+                    await transaction.RollbackAsync();
+                    return null;
+                }
+                newCId = Convert.ToInt32(result);
+            }
+
+            const string seedPrioritiesSql = @"
+                INSERT INTO xrefCompanyPriority (c_id, p_id, xcp_priority, xcp_arrivaltimeinhours)
+                SELECT @c_id, p_id, p_priority, p_arrivaltimeinhours
+                FROM Priority";
+
+            using (var command = new SqlCommand(seedPrioritiesSql, connection, transaction))
+            {
+                command.Parameters.Add("@c_id", SqlDbType.Int).Value = newCId;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompany",
+                Detail = $"Created company '{trimmedName}' (c_id {newCId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newCId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating company '{CompanyName}'", trimmedName);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompany",
+                Detail = $"Error creating company '{trimmedName}': {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<List<CompanyWithCallCentersDto>> GetCompaniesWithCallCentersAsync()
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var companies = new Dictionary<int, CompanyWithCallCentersDto>();
+
+        const string sql = @"
+            SELECT c.c_id, c.c_name, c.c_active,
+                   xccc.xccc_id, xccc.cc_id, cc.cc_name, xccc.xccc_active
+            FROM Company c
+            LEFT JOIN xrefCompanyCallCenter xccc ON xccc.c_id = c.c_id
+            LEFT JOIN CallCenter cc ON cc.cc_id = xccc.cc_id
+            ORDER BY c.c_name, cc.cc_name";
+
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(sql, connection);
+        await connection.OpenAsync();
+        using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var cId = reader.GetInt32(0);
+            if (!companies.TryGetValue(cId, out var company))
+            {
+                company = new CompanyWithCallCentersDto
+                {
+                    CId = cId,
+                    CompanyName = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    Active = !reader.IsDBNull(2) && reader.GetBoolean(2),
+                    CallCenters = new List<CompanyCallCenterPairingDto>()
+                };
+                companies[cId] = company;
+            }
+
+            if (!reader.IsDBNull(3))
+            {
+                company.CallCenters.Add(new CompanyCallCenterPairingDto
+                {
+                    XcccId = reader.GetInt32(3),
+                    CcId = reader.GetInt32(4),
+                    CcName = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
+                    Active = !reader.IsDBNull(6) && reader.GetBoolean(6)
+                });
+            }
+        }
+
+        return companies.Values.ToList();
+    }
+
+    public async Task<int?> AssignCompanyToCallCenterAsync(int cId, int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string existsSql = @"
+                SELECT TOP 1 xccc_id FROM xrefCompanyCallCenter
+                WHERE c_id = @c_id AND cc_id = @cc_id";
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            using (var checkCmd = new SqlCommand(existsSql, connection))
+            {
+                checkCmd.Parameters.Add("@c_id", SqlDbType.Int).Value = cId;
+                checkCmd.Parameters.Add("@cc_id", SqlDbType.Int).Value = ccId;
+                var existing = await checkCmd.ExecuteScalarAsync();
+                if (existing != null && existing != DBNull.Value)
+                {
+                    return Convert.ToInt32(existing);
+                }
+            }
+
+            const string insertSql = @"
+                INSERT INTO xrefCompanyCallCenter (c_id, cc_id, xccc_active, br_id)
+                VALUES (@c_id, @cc_id, 1, 0);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int newXcccId;
+            using (var insertCmd = new SqlCommand(insertSql, connection))
+            {
+                insertCmd.Parameters.Add("@c_id", SqlDbType.Int).Value = cId;
+                insertCmd.Parameters.Add("@cc_id", SqlDbType.Int).Value = ccId;
+                var result = await insertCmd.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                {
+                    return null;
+                }
+                newXcccId = Convert.ToInt32(result);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignCompanyToCallCenter",
+                Detail = $"Assigned c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newXcccId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning c_id {CId} to cc_id {CcId}", cId, ccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignCompanyToCallCenter",
+                Detail = $"Error assigning c_id {cId} to cc_id {ccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<(bool Success, string? ErrorMessage, int CId, int CcId, string CompanyName, string CallCenterName)> UnassignCompanyFromCallCenterAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            int cId = 0, ccId = 0;
+            string companyName = string.Empty;
+            string callCenterName = string.Empty;
+
+            const string lookupSql = @"
+                SELECT xccc.c_id, xccc.cc_id, c.c_name, cc.cc_name
+                FROM xrefCompanyCallCenter xccc
+                INNER JOIN Company c ON c.c_id = xccc.c_id
+                INNER JOIN CallCenter cc ON cc.cc_id = xccc.cc_id
+                WHERE xccc.xccc_id = @xccc_id";
+
+            using (var lookupCmd = new SqlCommand(lookupSql, connection))
+            {
+                lookupCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                using var reader = await lookupCmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    return (false, "Pairing not found", 0, 0, string.Empty, string.Empty);
+                }
+                cId = reader.GetInt32(0);
+                ccId = reader.GetInt32(1);
+                companyName = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                callCenterName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+            }
+
+            const string fkCheckSql = @"
+                SELECT
+                    (SELECT COUNT(*) FROM MaterialsMarkup WHERE xccc_id = @xccc_id) AS markup_count,
+                    (SELECT COUNT(*) FROM LaborRate WHERE xccc_id = @xccc_id) AS trade_count,
+                    (SELECT COUNT(*) FROM CheckList WHERE xccc_id = @xccc_id) AS checklist_count,
+                    (SELECT COUNT(*) FROM Attachment WHERE xccc_id = @xccc_id) AS attachment_count";
+
+            int markupCount = 0, tradeCount = 0, checklistCount = 0, attachmentCount = 0;
+
+            using (var checkCmd = new SqlCommand(fkCheckSql, connection))
+            {
+                checkCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                using var reader = await checkCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    markupCount = reader.GetInt32(0);
+                    tradeCount = reader.GetInt32(1);
+                    checklistCount = reader.GetInt32(2);
+                    attachmentCount = reader.GetInt32(3);
+                }
+            }
+
+            if (markupCount + tradeCount + checklistCount + attachmentCount > 0)
+            {
+                var parts = new List<string>();
+                if (markupCount > 0) parts.Add($"{markupCount} materials markup");
+                if (tradeCount > 0) parts.Add($"{tradeCount} trade(s)");
+                if (checklistCount > 0) parts.Add($"{checklistCount} checklist(s)");
+                if (attachmentCount > 0) parts.Add($"{attachmentCount} attachment(s)");
+                var msg = $"Cannot unassign — pairing has " + string.Join(", ", parts) + ". Remove those first.";
+                return (false, msg, cId, ccId, companyName, callCenterName);
+            }
+
+            const string deleteSql = "DELETE FROM xrefCompanyCallCenter WHERE xccc_id = @xccc_id";
+            int rowsAffected;
+            using (var deleteCmd = new SqlCommand(deleteSql, connection))
+            {
+                deleteCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UnassignCompanyFromCallCenter",
+                Detail = $"Unassigned xccc_id {xcccId} (c_id {cId}, cc_id {ccId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return (rowsAffected > 0, null, cId, ccId, companyName, callCenterName);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error unassigning xccc_id {XcccId}", xcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UnassignCompanyFromCallCenter",
+                Detail = $"Error unassigning xccc_id {xcccId}: {ex}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });

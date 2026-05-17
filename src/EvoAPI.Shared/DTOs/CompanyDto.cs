@@ -24,6 +24,7 @@ public class CompanyDetailDto
     public bool FirmQuote { get; set; }
     public bool InvoiceDateShow { get; set; }
     public bool IvrRequestNumber { get; set; }
+    public bool CollectPaymentOnSite { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }
@@ -31,7 +32,7 @@ public class CompanyDetailDto
     public string? PortalUrl { get; set; }
     public string? PortalName { get; set; }
     public string? PortalCredentials { get; set; }
-    
+
     // Timestamps
     public DateTime InsertDateTime { get; set; }
     public DateTime? ModifiedDateTime { get; set; }
@@ -83,6 +84,7 @@ public class CompanyListDto
 public class UpdateCompanyGeneralInfoRequest
 {
     public int XcccId { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
     public decimal? TripCharge { get; set; }
     public int? BillableRuleId { get; set; }
     public int? TermsId { get; set; }
@@ -94,6 +96,7 @@ public class UpdateCompanyGeneralInfoRequest
     public bool FirmQuote { get; set; }
     public bool InvoiceDateShow { get; set; }
     public bool IvrRequestNumber { get; set; }
+    public bool CollectPaymentOnSite { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }
@@ -101,6 +104,46 @@ public class UpdateCompanyGeneralInfoRequest
     public string? PortalUrl { get; set; }
     public string? PortalName { get; set; }
     public string? PortalCredentials { get; set; }
+}
+
+public class CreateCompanyRequest
+{
+    public string CompanyName { get; set; } = string.Empty;
+}
+
+public class CreateCompanyResponse
+{
+    public int CId { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+}
+
+public class AssignCompanyCallCenterRequest
+{
+    public int CId { get; set; }
+    public int CcId { get; set; }
+}
+
+public class AssignCompanyCallCenterResponse
+{
+    public int XcccId { get; set; }
+    public int CId { get; set; }
+    public int CcId { get; set; }
+}
+
+public class CompanyCallCenterPairingDto
+{
+    public int XcccId { get; set; }
+    public int CcId { get; set; }
+    public string CcName { get; set; } = string.Empty;
+    public bool Active { get; set; }
+}
+
+public class CompanyWithCallCentersDto
+{
+    public int CId { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+    public bool Active { get; set; }
+    public List<CompanyCallCenterPairingDto> CallCenters { get; set; } = new();
 }
 
 public class CreateMaterialsMarkupRequest
