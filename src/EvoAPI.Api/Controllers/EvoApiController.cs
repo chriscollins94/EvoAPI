@@ -9127,11 +9127,72 @@ public class EvoApiController : BaseController
                     }
                 }
 
+                // Identify "flip-flop" activity rows: a single-field UPDATE that's immediately
+                // reverted by another single-field UPDATE on the same entity within 3s
+                // (e.g. sr_tripcharge_worked_billed 125→100 followed by 100→125 in the same second).
+                // Both rows in the pair are stashed in a session-scoped temp table and excluded
+                // from the count, data, and option-count queries below.
+                //
+                // *_modifieddatetime columns are ignored when counting field diffs — they
+                // auto-stamp on every UPDATE and would otherwise mask all single-field updates.
+                const string flipFlopSql = @"
+                    CREATE TABLE #FlipFlopSraIds (sra_id BIGINT PRIMARY KEY);
+
+                    ;WITH UpdateCandidates AS (
+                        SELECT a.sra_id, a.sra_insertdatetime, a.entity_name, a.entity_id, a.old_values, a.new_values
+                        FROM dbo.ServiceRequestActivity a
+                        WHERE a.sr_id = @SrId AND a.action = 'U'
+                          AND EXISTS (
+                              SELECT 1 FROM dbo.ServiceRequestActivity b
+                              WHERE b.sr_id = a.sr_id AND b.action = 'U'
+                                AND b.entity_name = a.entity_name
+                                AND ISNULL(b.entity_id, -1) = ISNULL(a.entity_id, -1)
+                                AND b.sra_id <> a.sra_id
+                                AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
+                          )
+                    ),
+                    FieldDiffs AS (
+                        SELECT uc.sra_id, uc.sra_insertdatetime, uc.entity_name, uc.entity_id,
+                               ov.[key] AS field_name,
+                               ov.[value] AS old_val,
+                               nv.[value] AS new_val
+                        FROM UpdateCandidates uc
+                        CROSS APPLY OPENJSON(uc.old_values) ov
+                        CROSS APPLY (SELECT [value] FROM OPENJSON(uc.new_values) WHERE [key] = ov.[key]) nv
+                        WHERE ov.[key] NOT LIKE '%[_]modifieddatetime'
+                          AND ISNULL(ov.[value], N'') <> ISNULL(nv.[value], N'')
+                    ),
+                    SingleFieldUpdates AS (
+                        SELECT fd.sra_id, fd.sra_insertdatetime, fd.entity_name, fd.entity_id,
+                               fd.field_name, fd.old_val, fd.new_val
+                        FROM FieldDiffs fd
+                        WHERE fd.sra_id IN (SELECT sra_id FROM FieldDiffs GROUP BY sra_id HAVING COUNT(*) = 1)
+                    )
+                    INSERT INTO #FlipFlopSraIds (sra_id)
+                    SELECT DISTINCT a.sra_id
+                    FROM SingleFieldUpdates a
+                    INNER JOIN SingleFieldUpdates b
+                        ON a.entity_name = b.entity_name
+                       AND ISNULL(a.entity_id, -1) = ISNULL(b.entity_id, -1)
+                       AND a.field_name = b.field_name
+                       AND a.sra_id <> b.sra_id
+                       AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
+                       AND ISNULL(a.old_val, N'') = ISNULL(b.new_val, N'')
+                       AND ISNULL(a.new_val, N'') = ISNULL(b.old_val, N'');";
+
+                using (var flipFlopCmd = new SqlCommand(flipFlopSql, connection))
+                {
+                    flipFlopCmd.Parameters.AddWithValue("@SrId", srId);
+                    await flipFlopCmd.ExecuteNonQueryAsync();
+                }
+
+                const string flipFlopExclusion = " AND sra_id NOT IN (SELECT sra_id FROM #FlipFlopSraIds)";
+
                 // Count total filtered rows
                 string countSql = @"
                     SELECT COUNT(*)
                     FROM dbo.ServiceRequestActivity
-                    WHERE sr_id = @SrId" + filterClause;
+                    WHERE sr_id = @SrId" + flipFlopExclusion + filterClause;
 
                 using (var countCmd = new SqlCommand(countSql, connection))
                 {
@@ -9149,7 +9210,7 @@ public class EvoApiController : BaseController
                         sra_id, sra_insertdatetime, sr_id, entity_name, entity_id, action,
                         old_values, new_values, app_user, app_user_id, app_source, sql_login, host_name
                     FROM dbo.ServiceRequestActivity
-                    WHERE sr_id = @SrId" + filterClause + @"
+                    WHERE sr_id = @SrId" + flipFlopExclusion + filterClause + @"
                     ORDER BY sra_insertdatetime DESC, sra_id DESC
                     OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
@@ -9185,21 +9246,22 @@ public class EvoApiController : BaseController
                     }
                 }
 
-                // Filter option lists (unfiltered counts for this SR — so the sidebar shows everything available)
-                const string optionsSql = @"
+                // Filter option lists (unfiltered counts for this SR — so the sidebar shows everything available).
+                // Flip-flop rows are excluded here too, so the sidebar tallies match what's actually displayed.
+                string optionsSql = @"
                     SELECT 'entity' AS kind, entity_name AS value, COUNT(*) AS n
                     FROM dbo.ServiceRequestActivity
-                    WHERE sr_id = @SrId
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
                     GROUP BY entity_name
                     UNION ALL
                     SELECT 'user' AS kind, ISNULL(app_user, N'(none)') AS value, COUNT(*) AS n
                     FROM dbo.ServiceRequestActivity
-                    WHERE sr_id = @SrId
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
                     GROUP BY ISNULL(app_user, N'(none)')
                     UNION ALL
                     SELECT 'action' AS kind, action AS value, COUNT(*) AS n
                     FROM dbo.ServiceRequestActivity
-                    WHERE sr_id = @SrId
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
                     GROUP BY action;";
 
                 using (var optCmd = new SqlCommand(optionsSql, connection))
