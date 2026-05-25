@@ -158,6 +158,16 @@ builder.Services.AddScoped<ITimeTrackingService, TimeTrackingService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 builder.Services.AddScoped<ITimeOffEmailService, TimeOffEmailService>();
 
+// Register AI services (generic dispatcher + Quote-AI PDF renderer).
+// Endpoint, model, prompt, schema all live in ConfigSetting (cs_type='AI').
+builder.Services.AddScoped<IFileExtractionService, FileExtractionService>();
+builder.Services.AddScoped<IAiService, AiService>();
+builder.Services.AddSingleton<EvoAPI.Infrastructure.Pdf.QuotePdfRenderer>();
+
+// Per-SR markup/tax config loader — used by both the labor-context endpoint
+// (display) and the Quote AI controller (math). Mirrors evo invoice cascade.
+builder.Services.AddScoped<IMarkupConfigLoader, MarkupConfigLoader>();
+
 // Register generic HttpClient for controllers (used by EvoApiController for file uploads)
 builder.Services.AddHttpClient();
 

@@ -23,20 +23,23 @@ public class EvoApiController : BaseController
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
         private readonly IAuditCriticalService _auditCriticalService;
-    
+        private readonly IMarkupConfigLoader _markupConfigLoader;
+
         public EvoApiController(
-            IDataService dataService, 
+            IDataService dataService,
             IAuditService auditService,
             IAuditCriticalService auditCriticalService,
             ILogger<EvoApiController> logger,
             HttpClient httpClient,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IMarkupConfigLoader markupConfigLoader)
         {
             _dataService = dataService;
             _logger = logger;
             _httpClient = httpClient;
             _configuration = configuration;
             _auditCriticalService = auditCriticalService;
+            _markupConfigLoader = markupConfigLoader;
             InitializeAuditService(auditService);
         }
         
@@ -8998,6 +9001,11 @@ public class EvoApiController : BaseController
                 // hit the index well enough at typical SR volumes; if performance becomes
                 // an issue, switch to prefix-only and add a full-text or trailing-substring
                 // strategy.
+                // Also matches by sr_id when q is purely numeric so callers (e.g. the
+                // Quote AI page) can bootstrap from ?srId=N via the same endpoint.
+                var trimmed = q.Trim();
+                var isNumeric = int.TryParse(trimmed, out var qAsInt);
+
                 const string sql = @"
                     SELECT TOP (@Limit)
                         sr.sr_id,
@@ -9006,12 +9014,15 @@ public class EvoApiController : BaseController
                         sr.sr_insertdatetime
                     FROM ServiceRequest sr
                     WHERE sr.sr_requestnumber LIKE '%' + @Q + '%'
+                       OR (@IsNumeric = 1 AND sr.sr_id = @QInt)
                     ORDER BY sr.sr_insertdatetime DESC;";
 
                 using (var cmd = new SqlCommand(sql, connection))
                 {
-                    cmd.Parameters.AddWithValue("@Q", q.Trim());
+                    cmd.Parameters.AddWithValue("@Q", trimmed);
                     cmd.Parameters.AddWithValue("@Limit", limit);
+                    cmd.Parameters.AddWithValue("@IsNumeric", isNumeric ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@QInt", isNumeric ? (object)qAsInt : DBNull.Value);
                     using (var reader = await cmd.ExecuteReaderAsync())
                     {
                         while (await reader.ReadAsync())
@@ -9044,6 +9055,169 @@ public class EvoApiController : BaseController
                 Success = false,
                 Message = "An error occurred while searching service requests",
                 Count = 0
+            });
+        }
+    }
+
+    // Resolves the trip-charge cascade onto the DTO, in-place. Mirrors
+    // EvoData.UpdateServiceRequestTripChargeBilledToDefault. Sets amount,
+    // source, and a human summary used by the chip and PDF.
+    private static void ResolveTripCharge(
+        SrLaborContextDto dto,
+        decimal? tradeFlat,
+        decimal? srPercent,
+        decimal? companyPercent)
+    {
+        // 1. Trade-level flat dollar — wins outright when configured > 0.
+        if (tradeFlat.HasValue && tradeFlat.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(tradeFlat.Value, 2);
+            dto.TripChargeSource  = "trade-flat";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} (trade flat)";
+            return;
+        }
+
+        // 2/3. Percent-of-hourly — needs an hourly rate to compute against.
+        if (!dto.RatePerHour.HasValue || dto.RatePerHour.Value <= 0)
+        {
+            dto.TripChargeSource  = "none";
+            dto.TripChargeSummary = "Not configured";
+            return;
+        }
+
+        if (srPercent.HasValue && srPercent.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(dto.RatePerHour.Value * (srPercent.Value / 100m), 2);
+            dto.TripChargeSource  = "sr-percent";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} ({srPercent.Value:0.##}% of hourly)";
+            return;
+        }
+
+        if (companyPercent.HasValue && companyPercent.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(dto.RatePerHour.Value * (companyPercent.Value / 100m), 2);
+            dto.TripChargeSource  = "company-percent";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} ({companyPercent.Value:0.##}% of hourly, company default)";
+            return;
+        }
+
+        dto.TripChargeSource  = "none";
+        dto.TripChargeSummary = "Not configured";
+    }
+
+    // Resolves the customer, call center, trade, and hourly labor rate for an
+    // SR. The active rate column on LaborRate is driven by LaborRateType.lrt_fieldname
+    // (e.g. 'lr_rateregular'), so we CASE on it to pull the right value. All
+    // joins are LEFT so the SR row itself always comes back even if rate config
+    // is missing — the UI shows a warning in that case.
+    [HttpGet("service-requests/{srId:int}/labor-context")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<SrLaborContextDto>>> GetServiceRequestLaborContext(int srId)
+    {
+        try
+        {
+            if (srId <= 0)
+                return BadRequest(new ApiResponse<SrLaborContextDto> { Success = false, Message = "srId is required" });
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+                return StatusCode(500, new ApiResponse<SrLaborContextDto> { Success = false, Message = "Database connection unavailable" });
+
+            const string sql = @"
+                SELECT
+                    sr.sr_id,
+                    sr.sr_requestnumber,
+                    c.c_name           AS Company,
+                    cc.cc_name         AS CallCenter,
+                    t.t_trade          AS Trade,
+                    lrt.lrt_laborratetype AS RateType,
+                    lrt.lrt_fieldname  AS RateField,
+                    CASE lrt.lrt_fieldname
+                        WHEN 'lr_rateregular'             THEN lr.lr_rateregular
+                        WHEN 'lr_rateovertime'            THEN lr.lr_rateovertime
+                        WHEN 'lr_rateholiday'             THEN lr.lr_rateholiday
+                        WHEN 'lr_ratespecial'             THEN lr.lr_ratespecial
+                        WHEN 'lr_ratescheduledafterhours' THEN lr.lr_ratescheduledafterhours
+                        WHEN 'lr_rateregulardiscount'     THEN lr.lr_rateregulardiscount
+                        ELSE NULL
+                    END                AS RateValue,
+                    lr.lr_tripcharge        AS TradeTripChargeFlat,    -- $ flat at trade level
+                    sr.sr_tripcharge_quote  AS SrTripChargePercent,    -- % of hourly on the SR
+                    xccc.xccc_tripcharge    AS CompanyTripChargePercent -- % of hourly company default
+                FROM ServiceRequest sr
+                LEFT JOIN xrefCompanyCallCenter xccc ON xccc.xccc_id = sr.xccc_id
+                LEFT JOIN Company c                  ON c.c_id      = xccc.c_id
+                LEFT JOIN CallCenter cc              ON cc.cc_id    = xccc.cc_id
+                LEFT JOIN Trade t                    ON t.t_id      = sr.t_id
+                LEFT JOIN LaborRateType lrt          ON lrt.lrt_id  = sr.lrt_id
+                LEFT JOIN LaborRate lr               ON lr.t_id = sr.t_id
+                                                     AND lr.xccc_id = sr.xccc_id
+                                                     AND lr.lr_flatorhourly = 'Hourly'
+                WHERE sr.sr_id = @SrId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var cmd = new SqlCommand(sql, connection);
+            cmd.Parameters.AddWithValue("@SrId", srId);
+            await connection.OpenAsync();
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+                return NotFound(new ApiResponse<SrLaborContextDto> { Success = false, Message = $"Service request {srId} not found" });
+
+            var dto = new SrLaborContextDto
+            {
+                SrId          = Convert.ToInt32(reader["sr_id"]),
+                RequestNumber = reader["sr_requestnumber"]?.ToString() ?? string.Empty,
+                Company       = reader["Company"]    as string,
+                CallCenter    = reader["CallCenter"] as string,
+                Trade         = reader["Trade"]      as string,
+                RateType      = reader["RateType"]   as string,
+                RateField     = reader["RateField"]  as string,
+                RatePerHour   = reader["RateValue"]  is decimal dec ? dec :
+                                reader["RateValue"]  is DBNull    ? null :
+                                Convert.ToDecimal(reader["RateValue"])
+            };
+
+            // Trip-charge cascade (matches evo's UpdateServiceRequestTripChargeBilledToDefault):
+            //   1. trade-flat $   (LaborRate.lr_tripcharge > 0)
+            //   2. sr-percent %   (sr.sr_tripcharge_quote * hourly / 100)
+            //   3. company-%      (xccc.xccc_tripcharge   * hourly / 100)
+            // All read in one shot from the same query above.
+            decimal? tradeFlat = reader["TradeTripChargeFlat"]        is DBNull ? null : Convert.ToDecimal(reader["TradeTripChargeFlat"]);
+            decimal? srPercent = reader["SrTripChargePercent"]        is DBNull ? null : Convert.ToDecimal(reader["SrTripChargePercent"]);
+            decimal? coPercent = reader["CompanyTripChargePercent"]   is DBNull ? null : Convert.ToDecimal(reader["CompanyTripChargePercent"]);
+
+            ResolveTripCharge(dto, tradeFlat, srPercent, coPercent);
+
+            reader.Close();
+
+            // Markup/tax inputs — same source the Quote AI calculator uses,
+            // returned alongside labor data so the UI chip can show a one-line
+            // summary ("Markup: tiered 15-30%") without a second round trip.
+            try
+            {
+                dto.MarkupConfig = await _markupConfigLoader.LoadAsync(srId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Markup config load failed for srId {SrId}; continuing without it", srId);
+            }
+
+            return Ok(new ApiResponse<SrLaborContextDto>
+            {
+                Success = true,
+                Message = "OK",
+                Data = dto,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading labor context for srId {SrId}", srId);
+            return StatusCode(500, new ApiResponse<SrLaborContextDto>
+            {
+                Success = false,
+                Message = "Failed to load labor context"
             });
         }
     }
