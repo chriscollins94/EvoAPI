@@ -176,20 +176,24 @@ public class AiController : BaseController
 
             // Prepend the configured trip charge as the first line item
             // (matches evo's invoice/quote layout). type=other so it doesn't
-            // get marked up — evo treats trip charge as a flat add.
+            // get marked up or taxed — evo treats trip charge as a flat add.
             if (srContext?.HasTripCharge == true)
             {
+                var tripAmount = srContext.TripChargeAmount!.Value;
                 quote.LineItems.Insert(0, new QuoteLineItemDto
                 {
                     Description   = "Trip Charge",
                     Quantity      = 1,
-                    UnitPrice     = srContext.TripChargeAmount!.Value,
-                    Total         = srContext.TripChargeAmount!.Value,
+                    UnitPrice     = tripAmount,
+                    Total         = tripAmount,
                     Type          = "other",
-                    MarkupPercent = 0
+                    MarkupPercent = 0,
+                    TaxAmount     = 0
                 });
-                quote.Subtotal = quote.LineItems.Sum(l => l.Total);
-                quote.Total    = quote.Subtotal + quote.Tax;
+                // Bump quote-level Subtotal/Total — Tax is unchanged since
+                // trip charge isn't taxed.
+                quote.Subtotal += tripAmount;
+                quote.Total    += tripAmount;
             }
 
             var pdfBytes = _quotePdfRenderer.Render(quote, srContext, markupCfg);
@@ -222,47 +226,63 @@ public class AiController : BaseController
     private static string Sanitize(string s) =>
         new string(s.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_').ToArray());
 
-    // Walks the AI-returned quote and stamps the server-computed markup on
-    // every material lineItem and every serviceItem. Recomputes line totals,
-    // the materials subtotal, and the overall subtotal/total to match.
+    // Walks the AI-returned quote and stamps the server-computed markup +
+    // tax on every material lineItem and every serviceItem. Recomputes line
+    // totals and breaks the quote-level subtotal/tax/total apart for display.
     //
-    // Lines tagged "labor" or "other" pass through with markupPercent = 0 —
-    // labor's unitPrice is already the configured rate (final billing), and
-    // "other" covers tripcharges/permits/fees which evo doesn't mark up.
+    // Lines tagged "labor" or "other" pass through with markupPercent = 0 and
+    // tax = 0 — labor's unitPrice is already the configured rate (final
+    // billing), and "other" covers trip charges / permits / fees which evo
+    // doesn't mark up or tax.
+    //
+    // Tax math mirrors evo's invoice formula:
+    //   line subtotal (marked-up)  = baseCost * qty * (1 + markup/100)
+    //   line tax      (marked-up)  = baseCost * qty * (taxRate/100) * (1 + markup/100)
+    //   line total                 = subtotal + tax
+    // Sum across lines for quote-level Subtotal / Tax / Total — Subtotal + Tax
+    // matches Total to the cent because rounded line components add up.
     private static void ApplyMarkup(QuoteJsonDto quote, MarkupConfigDto config)
     {
         // Service items (materials list on page 1)
         foreach (var si in quote.ServiceItems)
         {
-            var baseCost = si.EstimatedUnitCost;
-            var qty      = si.EstimatedQuantity;
-            var calc     = MarkupCalculator.Calculate(config, baseCost, qty, taxable: true);
+            var calc = MarkupCalculator.Calculate(config, si.EstimatedUnitCost, si.EstimatedQuantity, taxable: true);
             si.MarkupPercent      = calc.EffectiveMarkup;
             si.EstimatedTotalCost = calc.LineTotal;
         }
 
-        // Line items (billable breakdown). Only material lines get markup.
+        // Line items (billable breakdown). Only material lines get markup + tax.
+        decimal subtotalAccum = 0m;
+        decimal taxAccum      = 0m;
         foreach (var li in quote.LineItems)
         {
             var type = (li.Type ?? string.Empty).Trim().ToLowerInvariant();
             if (type == "material")
             {
-                var calc = MarkupCalculator.Calculate(config, li.UnitPrice, li.Quantity, taxable: true);
+                var calc      = MarkupCalculator.Calculate(config, li.UnitPrice, li.Quantity, taxable: true);
+                var markupMul = 1m + (decimal)calc.EffectiveMarkup / 100m;
+                var preTax    = Math.Round(li.UnitPrice * li.Quantity * markupMul, 2, MidpointRounding.AwayFromZero);
+                var lineTax   = Math.Round(calc.TaxAmount * markupMul,             2, MidpointRounding.AwayFromZero);
+
                 li.MarkupPercent = calc.EffectiveMarkup;
-                li.Total         = calc.LineTotal;
+                li.TaxAmount     = lineTax;
+                li.Total         = preTax + lineTax;
+
+                subtotalAccum += preTax;
+                taxAccum      += lineTax;
             }
             else
             {
-                // Labor & other: trust the AI's quantity * unitPrice. Clear
-                // markup so the renderer shows "—".
                 li.MarkupPercent = 0;
+                li.TaxAmount     = 0;
                 li.Total         = Math.Round(li.Quantity * li.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                subtotalAccum   += li.Total;
             }
         }
 
-        // Recompute totals so subtotal/total reflect the marked-up line totals.
-        quote.Subtotal = quote.LineItems.Sum(l => l.Total);
-        quote.Total    = quote.Subtotal + quote.Tax;
+        quote.Subtotal = subtotalAccum;
+        quote.Tax      = taxAccum;
+        quote.Total    = subtotalAccum + taxAccum;
     }
 
     // Best-effort deserialize of the SR context blob the UI POSTed. Returns

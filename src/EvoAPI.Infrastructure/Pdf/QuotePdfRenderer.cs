@@ -238,10 +238,11 @@ public class QuotePdfRenderer
         table.TopPadding = 2;
         table.BottomPadding = 2;
 
-        table.AddColumn("7.6cm");
-        table.AddColumn("1.6cm").Format.Alignment = ParagraphAlignment.Right;
-        table.AddColumn("2.3cm").Format.Alignment = ParagraphAlignment.Right;
-        table.AddColumn("1.7cm").Format.Alignment = ParagraphAlignment.Right;
+        table.AddColumn("6.4cm");
+        table.AddColumn("1.4cm").Format.Alignment = ParagraphAlignment.Right;
+        table.AddColumn("2.1cm").Format.Alignment = ParagraphAlignment.Right;
+        table.AddColumn("1.5cm").Format.Alignment = ParagraphAlignment.Right;
+        table.AddColumn("1.8cm").Format.Alignment = ParagraphAlignment.Right;
         table.AddColumn("2.8cm").Format.Alignment = ParagraphAlignment.Right;
 
         var headerRow = table.AddRow();
@@ -251,7 +252,8 @@ public class QuotePdfRenderer
         headerRow.Cells[1].AddParagraph("Qty");
         headerRow.Cells[2].AddParagraph("Unit Price");
         headerRow.Cells[3].AddParagraph("Markup");
-        headerRow.Cells[4].AddParagraph("Total");
+        headerRow.Cells[4].AddParagraph("Tax");
+        headerRow.Cells[5].AddParagraph("Total");
 
         foreach (var line in quote.LineItems)
         {
@@ -260,7 +262,8 @@ public class QuotePdfRenderer
             r.Cells[1].AddParagraph(line.Quantity.ToString("0.##"));
             r.Cells[2].AddParagraph(line.UnitPrice.ToString("C2"));
             r.Cells[3].AddParagraph(FormatMarkup(line.MarkupPercent));
-            r.Cells[4].AddParagraph(line.Total.ToString("C2"));
+            r.Cells[4].AddParagraph(line.TaxAmount > 0 ? line.TaxAmount.ToString("C2") : "—");
+            r.Cells[5].AddParagraph(line.Total.ToString("C2"));
         }
 
         // Markup-source footer — shows the office where the percentages came

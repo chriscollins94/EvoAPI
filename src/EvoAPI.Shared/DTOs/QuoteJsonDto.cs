@@ -41,6 +41,10 @@ public class QuoteLineItemDto
     [JsonPropertyName("type")]          public string  Type          { get; set; } = string.Empty;
     // Server-computed percent (whole number, e.g. 25 = 25%). AI must return 0.
     [JsonPropertyName("markupPercent")] public decimal MarkupPercent { get; set; }
+    // Server-computed marked-up tax dollar amount for this line. 0 unless the
+    // line is type=material and the customer isn't tax-exempt. Not in schema
+    // — AI doesn't set it; the server stamps it in ApplyMarkup.
+    [JsonPropertyName("taxAmount")]     public decimal TaxAmount     { get; set; }
 }
 
 public class QuoteLaborEstimateDto
