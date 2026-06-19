@@ -225,6 +225,89 @@ public class AuthenticationController : BaseController
         }
     }
 
+    /// <summary>
+    /// Reissues a fresh JWT (full standard lifetime) for the current, still-valid session,
+    /// letting the user extend their session without re-entering credentials or reloading the page.
+    /// Requires a valid token, so an already-expired session must log in again.
+    /// </summary>
+    [HttpPost("refresh")]
+    [Authorize]
+    public ActionResult<ApiResponse<object>> Refresh()
+    {
+        try
+        {
+            // Rebuild the AuthenticatedUser from the current token's claims. Reusing the claims
+            // keeps roles consistent with the active session and avoids a DB round-trip; it carries
+            // exactly the same authorization the user already holds until their next real login.
+            DateTime? passwordChanged = null;
+            var passwordChangedClaim = GetClaimValue<string>("passwordchanged");
+            if (!string.IsNullOrEmpty(passwordChangedClaim) &&
+                DateTime.TryParse(passwordChangedClaim, null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var parsedPwdChanged))
+            {
+                passwordChanged = parsedPwdChanged;
+            }
+
+            var user = new AuthenticatedUser
+            {
+                UserId = UserId,
+                Username = Username,
+                FirstName = GetClaimValue<string>("firstname") ?? string.Empty,
+                LastName = GetClaimValue<string>("lastname") ?? string.Empty,
+                Picture = GetClaimValue<string>("picture") ?? string.Empty,
+                PasswordChanged = passwordChanged,
+                Functions = User.FindAll("function").Select(c => c.Value).ToList()
+            };
+
+            if (user.UserId <= 0 || string.IsNullOrEmpty(user.Username))
+            {
+                return Unauthorized(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid session",
+                    Data = null,
+                    Count = 0,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+
+            // Reuse the existing XSRF token so any client-cached value remains valid.
+            var xsrfToken = string.IsNullOrEmpty(XsrfToken) ? Guid.NewGuid().ToString() : XsrfToken;
+
+            var timeout = _configuration.GetValue<int>("Jwt:ExpiryInMinutes", 60);
+            var tokenResult = _jwtTokenService.CreateJwtToken(user, xsrfToken, timeout);
+
+            SetAuthenticationCookies(tokenResult.Token, xsrfToken, user.Username, tokenResult.ExpiresInSeconds);
+
+            _ = LogAuditAsync("Token Refresh", $"User: {user.Username}, UserId: {user.UserId}");
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Session extended",
+                Data = new
+                {
+                    accessToken = tokenResult.Token,
+                    expiresInSeconds = tokenResult.ExpiresInSeconds
+                },
+                Count = 1,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Token refresh error");
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while extending the session",
+                Data = null,
+                Count = 0,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
     [HttpPost("changepassword")]
     [Authorize]
     public async Task<ActionResult<ApiResponse<object>>> ChangePassword([FromBody] ChangePasswordRequest request)
