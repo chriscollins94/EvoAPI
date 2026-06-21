@@ -7707,7 +7707,8 @@ order by sr.sr_insertdatetime
                     br.br_description,
                     br.br_roundtominute,
                     t.terms_description,
-                    t.terms_numberofdays
+                    t.terms_numberofdays,
+                    xccc.xccc_markuptriggeramount
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
@@ -7755,7 +7756,8 @@ order by sr.sr_insertdatetime
                             BillableRuleDescription = reader.IsDBNull(26) ? null : reader.GetString(26),
                             BillableRuleRoundToMinute = reader.IsDBNull(27) ? null : reader.GetInt32(27),
                             TermsDescription = reader.IsDBNull(28) ? null : reader.GetString(28),
-                            TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29)
+                            TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29),
+                            MarkupTriggerAmount = reader.IsDBNull(30) ? null : reader.GetDecimal(30)
                         };
                     }
                 }
@@ -7894,6 +7896,7 @@ order by sr.sr_insertdatetime
                     xccc_minimumlaborchargeinminutes = @minimumlaborcharge,
                     xccc_markuppercentage = @markuppercentage,
                     xccc_markuppercentagesupplier = @markuppercentagesupplier,
+                    xccc_markuptriggeramount = @markuptriggeramount,
                     xccc_active = @active,
                     xccc_firmquote = @firmquote,
                     xccc_invoicedateshow = @invoicedateshow,
@@ -7926,6 +7929,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@minimumlaborcharge", SqlDbType.Int).Value = request.MinimumLaborChargeMinutes;
                 command.Parameters.Add("@markuppercentage", SqlDbType.Int).Value = request.MarkupPercentage;
                 command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Int).Value = request.MarkupPercentageSupplier;
+                command.Parameters.Add("@markuptriggeramount", SqlDbType.Decimal).Value = request.MarkupTriggerAmount.HasValue ? (object)request.MarkupTriggerAmount.Value : DBNull.Value;
                 command.Parameters.Add("@active", SqlDbType.Bit).Value = request.Active;
                 command.Parameters.Add("@firmquote", SqlDbType.Bit).Value = request.FirmQuote;
                 command.Parameters.Add("@invoicedateshow", SqlDbType.Bit).Value = request.InvoiceDateShow;

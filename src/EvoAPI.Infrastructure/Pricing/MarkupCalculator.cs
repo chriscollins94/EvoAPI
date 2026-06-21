@@ -32,7 +32,11 @@ public static class MarkupCalculator
         public string  Source              { get; set; } = "none"; // trade / materials-range / company-default / none
     }
 
-    public static Result Calculate(MarkupConfigDto config, decimal baseCost, decimal quantity, bool taxable = true)
+    // useMaterialsRanges == false forces the flat-company-markup fallback below
+    // the xccc_markuptriggeramount threshold: the MaterialsRanges tier is skipped
+    // and the cascade falls through to CompanyDefaultPercent. Trade-level markup
+    // still wins and supplier markup is still added, matching evo's behavior.
+    public static Result Calculate(MarkupConfigDto config, decimal baseCost, decimal quantity, bool taxable = true, bool useMaterialsRanges = true)
     {
         var r = new Result { BaseCost = baseCost, Quantity = quantity };
 
@@ -51,7 +55,7 @@ public static class MarkupCalculator
             r.MarkupPercent = config.TradeMarkupPercent.Value;
             r.Source        = "trade";
         }
-        else if (config.MaterialsRanges.Count > 0)
+        else if (useMaterialsRanges && config.MaterialsRanges.Count > 0)
         {
             int best = 0;
             foreach (var range in config.MaterialsRanges)

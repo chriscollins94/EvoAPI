@@ -39,6 +39,7 @@ public class MarkupConfigLoader : IMarkupConfigLoader
                 sr.t_id,
                 xccc.xccc_markuppercentage         AS CompanyDefault,
                 xccc.xccc_markuppercentagesupplier AS CompanySupplier,
+                xccc.xccc_markuptriggeramount      AS TriggerAmount,
                 xccc.xccc_taxexempt                AS TaxExempt,
                 ISNULL(lr.lr_markup, 0)            AS TradeMarkup
             FROM ServiceRequest sr
@@ -53,6 +54,7 @@ public class MarkupConfigLoader : IMarkupConfigLoader
         int xcccId = 0;
         int? companyDefault = null;
         int? companySupplier = null;
+        decimal? triggerAmount = null;
         bool taxExempt = false;
         int  tradeMarkup = 0;
 
@@ -67,6 +69,7 @@ public class MarkupConfigLoader : IMarkupConfigLoader
             xcccId          = reader["xccc_id"]         is DBNull ? 0    : Convert.ToInt32(reader["xccc_id"]);
             companyDefault  = reader["CompanyDefault"]  is DBNull ? null : (int?)Convert.ToInt32(reader["CompanyDefault"]);
             companySupplier = reader["CompanySupplier"] is DBNull ? null : (int?)Convert.ToInt32(reader["CompanySupplier"]);
+            triggerAmount   = reader["TriggerAmount"]   is DBNull ? null : (decimal?)Convert.ToDecimal(reader["TriggerAmount"]);
             taxExempt       = reader["TaxExempt"]       is not DBNull && Convert.ToBoolean(reader["TaxExempt"]);
             tradeMarkup     = reader["TradeMarkup"]     is DBNull ? 0    : Convert.ToInt32(reader["TradeMarkup"]);
         }
@@ -118,7 +121,8 @@ public class MarkupConfigLoader : IMarkupConfigLoader
             CompanySupplierPercent = companySupplier,
             MaterialsRanges        = ranges,
             TaxExempt              = taxExempt,
-            TaxFlatRate            = taxFlatRate
+            TaxFlatRate            = taxFlatRate,
+            TriggerAmount          = triggerAmount
         };
         dto.Summary = BuildSummary(dto);
         return dto;

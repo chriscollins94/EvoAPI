@@ -22,6 +22,12 @@ public class MarkupConfigDto
     public List<MarkupRangeDto> MaterialsRanges { get; set; } = new();
     public bool    TaxExempt               { get; set; }
     public decimal TaxFlatRate             { get; set; }   // percent, e.g. 7
+
+    // xccc_markuptriggeramount. When > 0, the SR's full flat-markup total is
+    // compared against this dollar amount: below it, the MaterialsRanges tier
+    // is skipped in favor of the flat CompanyDefaultPercent; at/above it, the
+    // normal cascade applies. null / <= 0 means "always use the normal cascade".
+    public decimal? TriggerAmount          { get; set; }
     public string  Summary                 { get; set; } = string.Empty; // one-liner for UI/PDF footer
 }
 

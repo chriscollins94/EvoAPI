@@ -172,7 +172,27 @@ public class AiController : BaseController
                 }
             }
             if (markupCfg != null)
-                ApplyMarkup(quote, markupCfg);
+            {
+                // xccc_markuptriggeramount gate: when set, size the job with the
+                // FLAT company markup (materials ranges skipped) and include the
+                // trip charge. If that full total is below the trigger, keep the
+                // flat markup; otherwise use the normal materials-range cascade.
+                // ApplyMarkup recomputes from source values each call, so the
+                // throwaway flat-mode pass below leaves no residue.
+                bool useMaterialsRanges = true;
+                if (markupCfg.TriggerAmount.HasValue && markupCfg.TriggerAmount.Value > 0)
+                {
+                    decimal tripForDecision = (srContext?.HasTripCharge == true)
+                        ? srContext.TripChargeAmount!.Value
+                        : 0m;
+
+                    ApplyMarkup(quote, markupCfg, useMaterialsRanges: false);
+                    decimal flatTotal = quote.Total + tripForDecision;
+                    useMaterialsRanges = flatTotal >= markupCfg.TriggerAmount.Value;
+                }
+
+                ApplyMarkup(quote, markupCfg, useMaterialsRanges);
+            }
 
             // Prepend the configured trip charge as the first line item
             // (matches evo's invoice/quote layout). type=other so it doesn't
@@ -241,12 +261,12 @@ public class AiController : BaseController
     //   line total                 = subtotal + tax
     // Sum across lines for quote-level Subtotal / Tax / Total — Subtotal + Tax
     // matches Total to the cent because rounded line components add up.
-    private static void ApplyMarkup(QuoteJsonDto quote, MarkupConfigDto config)
+    private static void ApplyMarkup(QuoteJsonDto quote, MarkupConfigDto config, bool useMaterialsRanges = true)
     {
         // Service items (materials list on page 1)
         foreach (var si in quote.ServiceItems)
         {
-            var calc = MarkupCalculator.Calculate(config, si.EstimatedUnitCost, si.EstimatedQuantity, taxable: true);
+            var calc = MarkupCalculator.Calculate(config, si.EstimatedUnitCost, si.EstimatedQuantity, taxable: true, useMaterialsRanges: useMaterialsRanges);
             si.MarkupPercent      = calc.EffectiveMarkup;
             si.EstimatedTotalCost = calc.LineTotal;
         }
@@ -259,7 +279,7 @@ public class AiController : BaseController
             var type = (li.Type ?? string.Empty).Trim().ToLowerInvariant();
             if (type == "material")
             {
-                var calc      = MarkupCalculator.Calculate(config, li.UnitPrice, li.Quantity, taxable: true);
+                var calc      = MarkupCalculator.Calculate(config, li.UnitPrice, li.Quantity, taxable: true, useMaterialsRanges: useMaterialsRanges);
                 var markupMul = 1m + (decimal)calc.EffectiveMarkup / 100m;
                 var preTax    = Math.Round(li.UnitPrice * li.Quantity * markupMul, 2, MidpointRounding.AwayFromZero);
                 var lineTax   = Math.Round(calc.TaxAmount * markupMul,             2, MidpointRounding.AwayFromZero);

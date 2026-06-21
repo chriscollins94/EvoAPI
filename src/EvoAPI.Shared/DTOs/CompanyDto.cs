@@ -20,6 +20,7 @@ public class CompanyDetailDto
     public int MinimumLaborChargeMinutes { get; set; }
     public int MarkupPercentage { get; set; }
     public int MarkupPercentageSupplier { get; set; }
+    public decimal? MarkupTriggerAmount { get; set; }
     public bool Active { get; set; }
     public bool FirmQuote { get; set; }
     public bool InvoiceDateShow { get; set; }
@@ -92,6 +93,7 @@ public class UpdateCompanyGeneralInfoRequest
     public int MinimumLaborChargeMinutes { get; set; }
     public int MarkupPercentage { get; set; }
     public int MarkupPercentageSupplier { get; set; }
+    public decimal? MarkupTriggerAmount { get; set; }
     public bool Active { get; set; }
     public bool FirmQuote { get; set; }
     public bool InvoiceDateShow { get; set; }
