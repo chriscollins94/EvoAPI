@@ -2030,6 +2030,7 @@ public class DataService : IDataService
                     u.u_active as Active,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
@@ -2271,7 +2272,7 @@ public class DataService : IDataService
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
-                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id,
+                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_guaranteedhours, u_note, u_picture, z_id,
                     uc_id_shirt, uc_id_jacket, upw_id, upl_id,
                     u_licensenumber, u_licensestate, u_licenseexpiration
                 )
@@ -2279,7 +2280,7 @@ public class DataService : IDataService
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
-                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId,
+                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @GuaranteedHours, @Note, @Picture, @ZoneId,
                     @ShirtSizeId, @JacketSizeId, @PantsWaistId, @PantsLengthId,
                     @LicenseNumber, @LicenseState, @LicenseExpiration
                 )";
@@ -2304,6 +2305,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@GuaranteedHours", request.GuaranteedHours ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
@@ -2409,6 +2411,7 @@ public class DataService : IDataService
                     u_directoryonly = @DirectoryOnly,
                     u_daysavailablepto = @DaysAvailablePTO,
                     u_daysavailablevacation = @DaysAvailableVacation,
+                    u_guaranteedhours = @GuaranteedHours,
                     u_note = @Note,
                     u_picture = @Picture,
                     z_id = @ZoneId,
@@ -2447,6 +2450,7 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
+            command.Parameters.AddWithValue("@GuaranteedHours", request.GuaranteedHours.HasValue ? (object)request.GuaranteedHours.Value : DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? "");
             command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
@@ -2702,6 +2706,7 @@ public class DataService : IDataService
                     u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
@@ -2827,6 +2832,7 @@ public class DataService : IDataService
                     u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,

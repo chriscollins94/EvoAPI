@@ -18,6 +18,8 @@ public class EmployeeDto
     public bool DirectoryOnly { get; set; }
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
+    // Guaranteed weekly hours floor for the Payroll Worksheet "Increase to Guarantee" feature (32 techs / 40 office).
+    public decimal? GuaranteedHours { get; set; }
     public string? Note { get; set; }
     public string? VehicleNumber { get; set; }
     public string? Picture { get; set; }
@@ -118,30 +120,32 @@ public class CreateEmployeeRequest
     public bool DirectoryOnly { get; set; } = false;
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
+    // Guaranteed weekly hours floor for the Payroll Worksheet "Increase to Guarantee" feature (32 techs / 40 office).
+    public decimal? GuaranteedHours { get; set; }
     public string? Note { get; set; }
     public string? Picture { get; set; }
     public int? ZoneId { get; set; }
-    
+
     // Address Information
     public string? Address1 { get; set; }
     public string? Address2 { get; set; }
     public string? City { get; set; }
     public string? State { get; set; }
     public string? Zip { get; set; }
-    
+
     // Clothing Size Assignments (IDs reference userclothing table)
     public int? ShirtSizeId { get; set; }
     public int? JacketSizeId { get; set; }
-    
+
     // Pants Size Assignments (IDs reference UserPantsWaist and UserPantsLength tables)
     public int? PantsWaistId { get; set; }
     public int? PantsLengthId { get; set; }
-    
+
     // License Information
     public string? LicenseNumber { get; set; }
     public string? LicenseState { get; set; }
     public DateTime? LicenseExpiration { get; set; }
-    
+
     // Role Assignments
     public List<int> RoleIds { get; set; } = new();
 }
@@ -163,10 +167,12 @@ public class UpdateEmployeeRequest
     public bool DirectoryOnly { get; set; }
     public decimal? DaysAvailablePTO { get; set; }
     public decimal? DaysAvailableVacation { get; set; }
+    // Guaranteed weekly hours floor for the Payroll Worksheet "Increase to Guarantee" feature (32 techs / 40 office).
+    public decimal? GuaranteedHours { get; set; }
     public string? Note { get; set; }
     public string? Picture { get; set; }
     public int? ZoneId { get; set; }
-    
+
     // Address Information
     public int? AddressId { get; set; }
     public string? Address1 { get; set; }
