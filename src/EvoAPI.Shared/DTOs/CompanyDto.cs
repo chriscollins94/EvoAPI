@@ -52,6 +52,7 @@ public class MaterialsMarkupDto
     public int ToPrice { get; set; }
     public int MarkupPercentage { get; set; }
     public int MarkupHighQuantity { get; set; }
+    public int MarkupFoundational { get; set; }
     public DateTime InsertDateTime { get; set; }
     public DateTime? ModifiedDateTime { get; set; }
 }
@@ -155,6 +156,7 @@ public class CreateMaterialsMarkupRequest
     public int ToPrice { get; set; }
     public int MarkupPercentage { get; set; }
     public int MarkupHighQuantity { get; set; }
+    public int MarkupFoundational { get; set; }
 }
 
 public class UpdateMaterialsMarkupRequest
@@ -164,6 +166,7 @@ public class UpdateMaterialsMarkupRequest
     public int ToPrice { get; set; }
     public int MarkupPercentage { get; set; }
     public int MarkupHighQuantity { get; set; }
+    public int MarkupFoundational { get; set; }
 }
 
 public class CompanyPriorityDto

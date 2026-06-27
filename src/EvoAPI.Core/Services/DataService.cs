@@ -7767,7 +7767,7 @@ order by sr.sr_insertdatetime
             {
                 // Get Materials Markup
                 const string markupSql = @"
-                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime, mm_modifieddatetime
+                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational, mm_insertdatetime, mm_modifieddatetime
                     FROM MaterialsMarkup
                     WHERE xccc_id = @xcccId
                     ORDER BY mm_from";
@@ -7789,8 +7789,9 @@ order by sr.sr_insertdatetime
                                 ToPrice = reader.GetInt32(2),
                                 MarkupPercentage = reader.GetInt32(3),
                                 MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-                                InsertDateTime = reader.GetDateTime(5),
-                                ModifiedDateTime = reader.IsDBNull(6) ? null : reader.GetDateTime(6)
+                                MarkupFoundational = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                                InsertDateTime = reader.GetDateTime(6),
+                                ModifiedDateTime = reader.IsDBNull(7) ? null : reader.GetDateTime(7)
                             });
                         }
                     }
@@ -8307,8 +8308,8 @@ order by sr.sr_insertdatetime
         try
         {
             const string sql = @"
-                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime)
-                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, GETDATE());
+                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational, mm_insertdatetime)
+                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, @markupFoundational, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             using (var connection = new SqlConnection(connectionString))
@@ -8319,6 +8320,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
                 command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
                 command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Int).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var newId = (int?)await command.ExecuteScalarAsync();
@@ -8328,7 +8330,7 @@ order by sr.sr_insertdatetime
                 {
                     Name = "DataService",
                     Description = "CreateMaterialsMarkup",
-                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%, foundational {request.MarkupFoundational}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
@@ -8363,11 +8365,12 @@ order by sr.sr_insertdatetime
         try
         {
             const string sql = @"
-                SELECT 
+                SELECT
                     mm_from,
                     mm_to,
                     mm_markup,
-                    mm_markuphighquantity
+                    mm_markuphighquantity,
+                    mm_markupfoundational
                 FROM MaterialsMarkup
                 WHERE mm_id = @mmId";
 
@@ -8387,7 +8390,8 @@ order by sr.sr_insertdatetime
                             FromPrice = reader.GetInt32(0),
                             ToPrice = reader.GetInt32(1),
                             MarkupPercentage = reader.GetInt32(2),
-                            MarkupHighQuantity = reader.GetInt32(3)
+                            MarkupHighQuantity = reader.GetInt32(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetInt32(4)
                         };
                     }
                 }
@@ -8418,6 +8422,7 @@ order by sr.sr_insertdatetime
                     mm.mm_to,
                     mm.mm_markup,
                     mm.mm_markuphighquantity,
+                    mm.mm_markupfoundational,
                     c.c_name
                 FROM MaterialsMarkup mm
                 INNER JOIN xrefCompanyCallCenter xccc ON mm.xccc_id = xccc.xccc_id
@@ -8440,9 +8445,10 @@ order by sr.sr_insertdatetime
                             FromPrice = reader.GetInt32(0),
                             ToPrice = reader.GetInt32(1),
                             MarkupPercentage = reader.GetInt32(2),
-                            MarkupHighQuantity = reader.GetInt32(3)
+                            MarkupHighQuantity = reader.GetInt32(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetInt32(4)
                         };
-                        var companyName = reader.IsDBNull(4) ? null : reader.GetString(4);
+                        var companyName = reader.IsDBNull(5) ? null : reader.GetString(5);
                         return (markupData, companyName);
                     }
                 }
@@ -8487,11 +8493,12 @@ order by sr.sr_insertdatetime
 
             const string sql = @"
                 UPDATE MaterialsMarkup
-                SET 
+                SET
                     mm_from = @fromPrice,
                     mm_to = @toPrice,
                     mm_markup = @markupPercentage,
                     mm_markuphighquantity = @markupHighQuantity,
+                    mm_markupfoundational = @markupFoundational,
                     mm_modifieddatetime = GETDATE()
                 WHERE mm_id = @mmId";
 
@@ -8503,6 +8510,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
                 command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
                 command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Int).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
@@ -8512,7 +8520,7 @@ order by sr.sr_insertdatetime
                 {
                     Name = "DataService",
                     Description = "UpdateMaterialsMarkup",
-                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%, foundational {request.MarkupFoundational}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
@@ -8629,8 +8637,8 @@ order by sr.sr_insertdatetime
 
                 // Step 3: Copy materials markup from template
                 const string insertSql = @"
-                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity)
-                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity
+                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational)
+                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational
                     FROM MaterialsMarkup
                     WHERE xccc_id = @templateId";
 
