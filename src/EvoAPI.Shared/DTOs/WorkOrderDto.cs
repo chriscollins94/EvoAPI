@@ -28,6 +28,7 @@ public class WorkOrderDto
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? Escalated { get; set; }
     public bool ScheduleLock { get; set; }
+    public bool Is811Required { get; set; }
     public string ActionableNote { get; set; } = string.Empty;
     public string InvoiceNumber { get; set; } = string.Empty;
 

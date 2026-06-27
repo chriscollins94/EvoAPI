@@ -121,6 +121,7 @@ public class DataService : IDataService
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
+                        ISNULL(sr.sr_811required, 0) AS Is811Required,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ISNULL(CAST(sr.sr_quickbooks_docnumber AS varchar(20)), '') AS InvoiceNumber,
                         ROW_NUMBER() OVER (
@@ -177,6 +178,7 @@ public class DataService : IDataService
                     CreatedBy,
                     Escalated,
                     ScheduleLock,
+                    Is811Required,
                     ActionableNote,
                     InvoiceNumber
                 FROM RankedOrders
