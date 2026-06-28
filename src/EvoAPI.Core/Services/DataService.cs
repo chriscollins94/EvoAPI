@@ -7609,13 +7609,15 @@ order by sr.sr_insertdatetime
         {
             var companies = new List<CompanyListDto>();
             const string sql = @"
-                SELECT 
+                SELECT
                     xccc.xccc_id,
                     xccc.c_id as company_id,
                     xccc.cc_id as callcenter_id,
                     c.c_name as company_name,
                     xccc.xccc_active,
-                    xccc.xccc_note
+                    xccc.xccc_note,
+                    xccc.xccc_tripcharge,
+                    xccc.xccc_ivrrequestnumber
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 WHERE xccc.cc_id = @callCenterId
@@ -7637,7 +7639,9 @@ order by sr.sr_insertdatetime
                             CallCenterId = reader.GetInt32(2),
                             CompanyName = reader.GetString(3),
                             Active = reader.GetBoolean(4),
-                            Note = reader.IsDBNull(5) ? null : reader.GetString(5)
+                            Note = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            TripCharge = reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                            IvrRequestNumber = !reader.IsDBNull(7) && reader.GetBoolean(7)
                         });
                     }
                 }
@@ -12637,6 +12641,416 @@ order by sr.sr_insertdatetime
             _logger.LogError(ex, "Error updating address {AId}", aId);
             throw;
         }
+    }
+
+    #endregion
+
+    #region Service Request Creation
+
+    public async Task<bool> ServiceRequestNumberExistsAsync(string requestNumber)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        if (string.IsNullOrWhiteSpace(requestNumber))
+        {
+            return false;
+        }
+
+        const string sql = "SELECT COUNT(1) FROM ServiceRequest WHERE sr_requestnumber = @requestNumber";
+
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@requestNumber", SqlDbType.VarChar, 100).Value = requestNumber.Trim();
+        await connection.OpenAsync();
+        var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        return count > 0;
+    }
+
+    /// <summary>
+    /// Faithful port of the legacy EvoData.InsertServiceRequest: inserts the
+    /// ServiceRequest, its primary WorkOrder (status unassigned-1), points the
+    /// SR at that WorkOrder, then best-effort populates zone data. SR + WO +
+    /// primary-WO are atomic; zone data is non-fatal (matches legacy behavior
+    /// where a missing tax/zone mapping does not block creation).
+    /// </summary>
+    public async Task<CreateServiceRequestResponse> InsertServiceRequestAsync(CreateServiceRequestRequest request, int createdByUserId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        // Match legacy field truncation
+        var srSummary = Left(request.SrSummary, 200);
+        var srRequestNumber = Left(request.SrRequestNumber, 100);
+        var srIvrRequestNumber = Left(request.SrIvrRequestNumber, 100);
+        var woWorkOrderNumber = Left(request.WoWorkOrderNumber, 103);
+        var srCallNote = Left(request.SrCallNote, 4000);
+        var srOfficeNote = Left(request.SrOfficeNote, 4000);
+
+        var srNte = request.SrNte ?? 0m;
+        var srTripCharge = request.SrTripChargeWorked ?? 100m;
+        var ssId = request.SsId ?? 1;
+
+        int srId;
+        int woId;
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+            {
+                // 1) Insert ServiceRequest. sr_tripcharge_quote mirrors sr_tripcharge_worked and
+                //    sr_flatorhourly is seeded 'hourly', exactly as the legacy insert does.
+                const string insertSrSql = @"
+                    INSERT INTO ServiceRequest
+                        (xccc_id, l_id, t_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_ivrrequestnumber,
+                         sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly,
+                         sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby)
+                    VALUES
+                        (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
+                         @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
+                         @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby);
+                    SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                using (var command = new SqlCommand(insertSrSql, connection, transaction))
+                {
+                    command.Parameters.Add("@xccc_id", SqlDbType.Int).Value = request.XcccId;
+                    command.Parameters.Add("@l_id", SqlDbType.Int).Value = request.LId;
+                    command.Parameters.Add("@t_id", SqlDbType.Int).Value = request.TId;
+                    command.Parameters.Add("@ss_id", SqlDbType.Int).Value = ssId;
+                    command.Parameters.Add("@p_id", SqlDbType.Int).Value = request.PId;
+                    command.Parameters.Add("@lrt_id", SqlDbType.Int).Value = request.LrtId;
+                    command.Parameters.Add("@sr_summary", SqlDbType.VarChar, 200).Value = (object?)srSummary ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestnumber", SqlDbType.VarChar, 100).Value = (object?)srRequestNumber ?? DBNull.Value;
+                    command.Parameters.Add("@sr_ivrrequestnumber", SqlDbType.VarChar, 100).Value = (object?)srIvrRequestNumber ?? DBNull.Value;
+                    command.Parameters.Add("@sr_callnote", SqlDbType.VarChar, 4000).Value = (object?)srCallNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_officenote", SqlDbType.VarChar, 4000).Value = (object?)srOfficeNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_nte", SqlDbType.Money).Value = srNte;
+                    command.Parameters.Add("@sr_tripcharge_worked", SqlDbType.Money).Value = srTripCharge;
+                    command.Parameters.Add("@sr_requiresprearrivalcall", SqlDbType.Bit).Value = request.SrRequiresPreArrivalCall;
+                    command.Parameters.Add("@sr_shiftdifferential", SqlDbType.Bit).Value = request.SrShiftDifferential;
+                    command.Parameters.Add("@u_id_createdby", SqlDbType.Int).Value = createdByUserId;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        await transaction.RollbackAsync();
+                        throw new InvalidOperationException("Failed to insert ServiceRequest");
+                    }
+                    srId = Convert.ToInt32(result);
+                }
+
+                // 2) Insert primary WorkOrder, initial status unassigned-1
+                const string insertWoSql = @"
+                    INSERT INTO WorkOrder (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id)
+                    VALUES (@sr_id, @wo_workordernumber, @wo_description, @wo_nte,
+                            (SELECT ss_id FROM StatusSecondary WHERE ss_code = 'unassigned-1'));
+                    SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                using (var command = new SqlCommand(insertWoSql, connection, transaction))
+                {
+                    command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                    command.Parameters.Add("@wo_workordernumber", SqlDbType.VarChar, 103).Value = (object?)woWorkOrderNumber ?? DBNull.Value;
+                    command.Parameters.Add("@wo_description", SqlDbType.VarChar, 200).Value = (object?)srSummary ?? DBNull.Value;
+                    command.Parameters.Add("@wo_nte", SqlDbType.Money).Value = srNte;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        await transaction.RollbackAsync();
+                        throw new InvalidOperationException("Failed to insert WorkOrder");
+                    }
+                    woId = Convert.ToInt32(result);
+                }
+
+                // 3) Make the new WorkOrder the primary WO on the ServiceRequest
+                const string updatePrimarySql = "UPDATE ServiceRequest SET wo_id_primary = @woId WHERE sr_id = @srId";
+                using (var command = new SqlCommand(updatePrimarySql, connection, transaction))
+                {
+                    command.Parameters.Add("@woId", SqlDbType.Int).Value = woId;
+                    command.Parameters.Add("@srId", SqlDbType.Int).Value = srId;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                await transaction.CommitAsync();
+            }
+
+            // 4) Best-effort zone data (non-fatal, matches legacy UpdateServiceRequestZoneData)
+            await TryUpdateServiceRequestZoneDataAsync(connectionString, srId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertServiceRequest",
+                Detail = $"Created ServiceRequest {srId} ({srRequestNumber}), primary WorkOrder {woId}, by user {createdByUserId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return new CreateServiceRequestResponse
+            {
+                SrId = srId,
+                SrRequestNumber = srRequestNumber ?? string.Empty,
+                WoWorkOrderNumber = woWorkOrderNumber ?? string.Empty
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error inserting ServiceRequest {RequestNumber}", srRequestNumber);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertServiceRequest",
+                Detail = $"Error inserting ServiceRequest {srRequestNumber}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Resolves zone/zone-micro/facility-manager from the SR's location zip and stamps them
+    /// onto the ServiceRequest. Swallows errors (e.g. no tax/zone mapping for the zip) so a
+    /// missing mapping never blocks SR creation, exactly like the legacy implementation.
+    /// </summary>
+    private async Task TryUpdateServiceRequestZoneDataAsync(string connectionString, int srId)
+    {
+        try
+        {
+            const string zoneSelectSql = @"
+                SELECT TOP 1 z.z_number, zm.zm_number, (u.u_firstname + ' ' + u.u_lastname) AS zfm
+                FROM servicerequest sr, location l, address a, tax, ZoneMicro zm, zone z
+                LEFT JOIN [user] u ON z.u_id = u.u_id
+                WHERE sr.sr_id = @sr_id
+                  AND sr.l_id = l.l_id
+                  AND l.a_id = a.a_id
+                  AND LEFT(a.a_zip, 5) = tax.tax_zip
+                  AND tax.zm_id = zm.zm_id
+                  AND zm.z_id = z.z_id";
+
+            string? zoneNumber = null;
+            string? zoneMicroNumber = null;
+            string? zoneFacilityManager = null;
+
+            using var connection = new SqlConnection(connectionString);
+            using (var command = new SqlCommand(zoneSelectSql, connection))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                await connection.OpenAsync();
+                using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    zoneNumber = reader.IsDBNull(0) ? null : reader.GetValue(0).ToString();
+                    zoneMicroNumber = reader.IsDBNull(1) ? null : reader.GetValue(1).ToString();
+                    zoneFacilityManager = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
+
+            if (zoneNumber == null && zoneMicroNumber == null && zoneFacilityManager == null)
+            {
+                return; // No mapping for this zip; leave zone fields untouched (legacy swallows this)
+            }
+
+            const string zoneUpdateSql = @"
+                UPDATE ServiceRequest
+                SET sr_zonenumber = @sr_zonenumber,
+                    sr_zonemicronumber = @sr_zonemicronumber,
+                    sr_zonefacilitymanager = @sr_zonefacilitymanager
+                WHERE sr_id = @sr_id";
+
+            using (var command = new SqlCommand(zoneUpdateSql, connection))
+            {
+                command.Parameters.Add("@sr_zonenumber", SqlDbType.VarChar, 50).Value = (object?)zoneNumber ?? DBNull.Value;
+                command.Parameters.Add("@sr_zonemicronumber", SqlDbType.VarChar, 50).Value = (object?)zoneMicroNumber ?? DBNull.Value;
+                command.Parameters.Add("@sr_zonefacilitymanager", SqlDbType.VarChar, 200).Value = (object?)zoneFacilityManager ?? DBNull.Value;
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to update zone data for ServiceRequest {SrId}", srId);
+        }
+    }
+
+    private static string? Left(string? value, int maxLength)
+    {
+        if (value == null) return null;
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    /// <summary>
+    /// Tech guidance for the New Service Request flow: per-technician distance from the job
+    /// (via home/customer zip lat-lon) plus hours booked over the next 7 days, for techs that
+    /// hold the selected trade. Faithful port of the legacy EvoData.GetTechUtilization
+    /// (trade-aware variant — a trade is always selected in this flow).
+    /// </summary>
+    public async Task<List<TechUtilizationDto>> GetTechUtilizationAsync(int tId, string customerZip)
+    {
+        const string sql = @"
+            WITH Numbers AS (
+                SELECT n
+                FROM (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),
+                             (10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),
+                             (21),(22),(23),(24),(25),(26),(27),(28),(29),(30),
+                             (31),(32),(33),(34),(35),(36),(37),(38),(39),(40),
+                             (41),(42),(43),(44),(45),(46),(47),(48),(49),(50)
+                     ) AS X(n)
+            ),
+            DateSeries AS (
+                SELECT
+                    xwou.u_id,
+                    wo.wo_id,
+                    DATEADD(hour, -6, wo_startdatetime) AS adjusted_start,
+                    DATEADD(hour, -6, wo_enddatetime)   AS adjusted_end,
+                    DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date)) AS work_date,
+                    DATEDIFF(
+                        day,
+                        CAST(DATEADD(hour, -6, GETDATE()) AS date),
+                        DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date))
+                    ) AS day_offset
+                FROM xrefWorkOrderUser xwou
+                JOIN workorder wo ON wo.wo_id = xwou.wo_id
+                CROSS JOIN Numbers
+                WHERE DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date))
+                      <= CAST(DATEADD(hour, -6, wo_enddatetime) AS date)
+                  AND DATEADD(hour, -6, wo_startdatetime) >= DATEADD(day, -33, DATEADD(hour, -6, GETDATE()))
+                  AND DATEADD(hour, -6, wo_enddatetime)   <= DATEADD(day,  33, DATEADD(hour, -6, GETDATE()))
+            ),
+            PivotedData AS (
+                SELECT
+                     u.u_id
+                    ,u.u_firstname
+                    ,u.u_lastname
+                    ,u.u_note
+                    ,a.a_zip
+                    ,zip.zip_lat       AS home_lat
+                    ,zip.zip_lon       AS home_lon
+                    ,xsltt.xsltt_note
+                    ,day_offset
+                    ,sl_score
+                    ,sl_description
+                    ,t_trade
+                    ,CASE
+                         WHEN work_date = CAST(adjusted_start AS date)
+                              AND work_date = CAST(adjusted_end   AS date)
+                         THEN DATEDIFF(hour, adjusted_start, adjusted_end)
+
+                         WHEN work_date = CAST(adjusted_start AS date)
+                         THEN DATEDIFF(hour, adjusted_start, DATEADD(day, 1, CAST(adjusted_start AS date)))
+
+                         WHEN work_date = CAST(adjusted_end AS date)
+                         THEN DATEDIFF(hour, CAST(adjusted_end AS date), adjusted_end)
+
+                         ELSE 24
+                     END AS hours
+                FROM [user] u
+                     LEFT JOIN DateSeries ds
+                            ON u.u_id = ds.u_id
+                     LEFT JOIN Address a
+                            ON u.a_id = a.a_id
+                     LEFT JOIN Zip
+                            ON a.a_zip = zip.zip_zip
+                     JOIN xrefUserRole x
+                            ON u.u_id = x.u_id
+                     JOIN role r
+                            ON r.r_id = x.r_id
+                     JOIN xrefSkillLevelTechTrade xsltt
+                            ON u.u_id = xsltt.u_id
+                     JOIN SkillLevel sl
+                            ON xsltt.sl_id = sl.sl_id
+                     JOIN Trade t
+                            ON xsltt.t_id = t.t_id
+                WHERE r.r_role   = 'Technician'
+                  AND u.u_active = 1
+                  AND xsltt.t_id = @t_id
+                  AND sl.sl_score NOT IN (-1, 0)
+            ),
+            SRData AS (
+                SELECT TOP 1
+                    zip_zip AS customer_zip
+                    ,zip_lat AS customer_lat
+                    ,zip_lon AS customer_lon
+                FROM zip
+                WHERE zip_zip = @customer_zip
+            )
+            SELECT
+                 p.u_id
+                ,p.u_firstname
+                ,p.u_lastname
+                ,p.sl_score
+                ,p.sl_description
+                ,ISNULL([0],0) AS Today0
+                ,ISNULL([1],0) AS Today1
+                ,ISNULL([2],0) AS Today2
+                ,ISNULL([3],0) AS Today3
+                ,ISNULL([4],0) AS Today4
+                ,ISNULL([5],0) AS Today5
+                ,ISNULL([6],0) AS Today6
+                ,CASE WHEN @customer_zip IS NOT NULL AND LEN(@customer_zip) > 0
+                      THEN
+                           SQRT(
+                               POWER(69.1 * (p.home_lat - sr.customer_lat), 2) +
+                               POWER(69.1 * (p.home_lon - sr.customer_lon)
+                                     * COS(sr.customer_lat / 57.3), 2)
+                           )
+                      ELSE NULL
+                 END AS distance_miles
+            FROM (
+                SELECT
+                     u_id, u_firstname, u_lastname, u_note, a_zip,
+                     home_lat, home_lon, xsltt_note, sl_score, sl_description, t_trade,
+                     [0], [1], [2], [3], [4], [5], [6]
+                FROM PivotedData
+                PIVOT (
+                    SUM(hours)
+                    FOR day_offset IN ([0], [1], [2], [3], [4], [5], [6])
+                ) AS PVT
+            ) AS p
+            LEFT JOIN SRData sr ON 1 = 1
+            ORDER BY p.sl_score DESC, p.u_lastname;";
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["@t_id"] = tId,
+            ["@customer_zip"] = customerZip ?? string.Empty
+        };
+
+        var dt = await ExecuteQueryAsync(sql, parameters);
+
+        var result = new List<TechUtilizationDto>();
+        foreach (DataRow row in dt.Rows)
+        {
+            result.Add(new TechUtilizationDto
+            {
+                UId = ConvertToInt(row["u_id"]),
+                UFirstName = row["u_firstname"]?.ToString() ?? string.Empty,
+                ULastName = row["u_lastname"]?.ToString() ?? string.Empty,
+                SlScore = ConvertToNullableInt(row["sl_score"]),
+                SlDescription = row["sl_description"]?.ToString(),
+                DistanceMiles = row["distance_miles"] == DBNull.Value ? (double?)null : Convert.ToDouble(row["distance_miles"]),
+                Today0 = ConvertToInt(row["Today0"]),
+                Today1 = ConvertToInt(row["Today1"]),
+                Today2 = ConvertToInt(row["Today2"]),
+                Today3 = ConvertToInt(row["Today3"]),
+                Today4 = ConvertToInt(row["Today4"]),
+                Today5 = ConvertToInt(row["Today5"]),
+                Today6 = ConvertToInt(row["Today6"])
+            });
+        }
+
+        return result;
     }
 
     #endregion

@@ -8680,6 +8680,247 @@ public class EvoApiController : BaseController
 
     #endregion
 
+    #region Service Request Creation
+
+    [HttpGet("servicerequests/exists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<bool>>> ServiceRequestNumberExists([FromQuery] string requestNumber)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(requestNumber))
+            {
+                return Ok(new ApiResponse<bool>
+                {
+                    Success = true,
+                    Message = "No request number provided",
+                    Data = false,
+                    Count = 0
+                });
+            }
+
+            var exists = await _dataService.ServiceRequestNumberExistsAsync(requestNumber);
+
+            stopwatch.Stop();
+            await LogOperationAsync("ServiceRequestNumberExists", $"Checked SR# '{requestNumber}' exists={exists}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<bool>
+            {
+                Success = true,
+                Message = exists ? "Service Request number already exists" : "Service Request number is available",
+                Data = exists,
+                Count = exists ? 1 : 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("ServiceRequestNumberExists", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error checking service request number {RequestNumber}", requestNumber);
+            return StatusCode(500, new ApiResponse<bool>
+            {
+                Success = false,
+                Message = "An error occurred while checking the service request number"
+            });
+        }
+    }
+
+    [HttpPost("servicerequests")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CreateServiceRequestResponse>>> CreateServiceRequest([FromBody] CreateServiceRequestRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null)
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Request body is required"
+                });
+            }
+
+            // Minimum required identifiers for any SR (Accepted or Reject)
+            if (request.XcccId <= 0 || request.LId <= 0 || request.TId <= 0 || request.PId <= 0)
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Company, Location, Trade, and Priority are required"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.SrRequestNumber) || string.IsNullOrWhiteSpace(request.WoWorkOrderNumber))
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Service Request number and Work Order number are required"
+                });
+            }
+
+            var result = await _dataService.InsertServiceRequestAsync(request, UserId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("CreateServiceRequest", $"Created SR {result.SrId} ({result.SrRequestNumber})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<CreateServiceRequestResponse>
+            {
+                Success = true,
+                Message = "Service Request created successfully",
+                Data = result,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceRequest", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error creating service request {RequestNumber}", request?.SrRequestNumber);
+            return StatusCode(500, new ApiResponse<CreateServiceRequestResponse>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service request"
+            });
+        }
+    }
+
+    // Trades + labor rates for a company, scoped for the New Service Request flow.
+    // Mirrors the CompanyAdminOnly GetCompanyTrades data but is available to any
+    // authenticated scheduler (creators are not necessarily company admins).
+    [HttpGet("servicerequests/companies/{xcccId:int}/laborrates")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<LaborRateDto>>>> GetServiceRequestLaborRates(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var laborRates = await _dataService.GetCompanyTradesAsync(xcccId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestLaborRates", $"Retrieved {laborRates.Count} labor rates for company {xcccId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<LaborRateDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {laborRates.Count} labor rates",
+                Data = laborRates,
+                Count = laborRates.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestLaborRates", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving labor rates for company {XcccId}", xcccId);
+            return StatusCode(500, new ApiResponse<List<LaborRateDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving labor rates"
+            });
+        }
+    }
+
+    // Record a client-side attachment upload failure to the audit log so it can be
+    // investigated later (office users won't check the browser console).
+    [HttpPost("servicerequests/attachment-error")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> LogServiceRequestAttachmentError([FromBody] ServiceRequestAttachmentErrorRequest request)
+    {
+        try
+        {
+            var detail = $"SR {request?.SrId}, file '{request?.FileName}': {request?.Message}";
+            await LogAuditErrorAsync("New Service Request - Attachment Upload Failed", new Exception(detail));
+            return Ok(new ApiResponse<object> { Success = true, Message = "Logged" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to log service request attachment error");
+            return StatusCode(500, new ApiResponse<object> { Success = false, Message = "Failed to log" });
+        }
+    }
+
+    // Per-company priorities (arrival-time SLAs) scoped for the New Service Request flow.
+    [HttpGet("servicerequests/companies/{companyId:int}/priorities")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CompanyPriorityDto>>>> GetServiceRequestPriorities(int companyId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var priorities = await _dataService.GetCompanyPrioritiesAsync(companyId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestPriorities", $"Retrieved {priorities.Count} priorities for company {companyId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {priorities.Count} priorities",
+                Data = priorities,
+                Count = priorities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestPriorities", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving priorities for company {CompanyId}", companyId);
+            return StatusCode(500, new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving priorities"
+            });
+        }
+    }
+
+    // Tech guidance: per-technician distance + 7-day utilization for a trade/job zip.
+    [HttpGet("servicerequests/tech-utilization")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechUtilizationDto>>>> GetServiceRequestTechUtilization([FromQuery] int tId, [FromQuery] string? zip)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (tId <= 0)
+            {
+                return BadRequest(new ApiResponse<List<TechUtilizationDto>>
+                {
+                    Success = false,
+                    Message = "A trade (tId) is required"
+                });
+            }
+
+            var techs = await _dataService.GetTechUtilizationAsync(tId, zip ?? string.Empty);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestTechUtilization", $"Retrieved {techs.Count} techs for trade {tId}, zip '{zip}'", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<TechUtilizationDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {techs.Count} technicians",
+                Data = techs,
+                Count = techs.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestTechUtilization", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving tech utilization for trade {TId}", tId);
+            return StatusCode(500, new ApiResponse<List<TechUtilizationDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving tech utilization"
+            });
+        }
+    }
+
+    #endregion
+
     #region Employee Attachments
 
     [HttpGet("employees/{id:int}/attachments")]

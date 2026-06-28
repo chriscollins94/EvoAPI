@@ -231,6 +231,11 @@ public interface IDataService
     Task<LocationDto> CreateLocationAsync(int cId, CreateLocationRequest request);
     Task<LocationDto?> UpdateLocationAsync(int lId, UpdateLocationRequest request);
 
+    // Service Request creation (New Service Request flow)
+    Task<bool> ServiceRequestNumberExistsAsync(string requestNumber);
+    Task<CreateServiceRequestResponse> InsertServiceRequestAsync(CreateServiceRequestRequest request, int createdByUserId);
+    Task<List<TechUtilizationDto>> GetTechUtilizationAsync(int tId, string customerZip);
+
     // Call Center Contact Management
     Task<List<ContactDto>> GetCallCenterContactsAsync(int ccId);
     Task<ContactDto> CreateCallCenterContactAsync(int ccId, CreateContactRequest request);

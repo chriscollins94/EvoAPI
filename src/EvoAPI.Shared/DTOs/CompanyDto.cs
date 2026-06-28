@@ -81,6 +81,12 @@ public class CompanyListDto
     public string CompanyName { get; set; } = string.Empty;
     public bool Active { get; set; }
     public string? Note { get; set; }
+
+    // Surfaced for the New Service Request flow (so schedulers don't need the
+    // CompanyAdminOnly company-detail endpoint): default trip charge and whether
+    // this company uses IVR request numbers.
+    public decimal? TripCharge { get; set; }
+    public bool IvrRequestNumber { get; set; }
 }
 
 public class UpdateCompanyGeneralInfoRequest
