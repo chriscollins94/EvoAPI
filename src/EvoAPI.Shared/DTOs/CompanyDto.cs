@@ -26,6 +26,7 @@ public class CompanyDetailDto
     public bool InvoiceDateShow { get; set; }
     public bool IvrRequestNumber { get; set; }
     public bool CollectPaymentOnSite { get; set; }
+    public bool NteGuidance { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }
@@ -83,10 +84,11 @@ public class CompanyListDto
     public string? Note { get; set; }
 
     // Surfaced for the New Service Request flow (so schedulers don't need the
-    // CompanyAdminOnly company-detail endpoint): default trip charge and whether
-    // this company uses IVR request numbers.
+    // CompanyAdminOnly company-detail endpoint): default trip charge, whether this
+    // company uses IVR request numbers, and whether to show NTE guidance.
     public decimal? TripCharge { get; set; }
     public bool IvrRequestNumber { get; set; }
+    public bool NteGuidance { get; set; }
 }
 
 public class UpdateCompanyGeneralInfoRequest
@@ -106,6 +108,7 @@ public class UpdateCompanyGeneralInfoRequest
     public bool InvoiceDateShow { get; set; }
     public bool IvrRequestNumber { get; set; }
     public bool CollectPaymentOnSite { get; set; }
+    public bool NteGuidance { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
     public string? InvoiceExtraText { get; set; }

@@ -235,6 +235,7 @@ public interface IDataService
     Task<bool> ServiceRequestNumberExistsAsync(string requestNumber);
     Task<CreateServiceRequestResponse> InsertServiceRequestAsync(CreateServiceRequestRequest request, int createdByUserId);
     Task<List<TechUtilizationDto>> GetTechUtilizationAsync(int tId, string customerZip);
+    Task<NteEstimateDto> GetNteEstimateAsync(int xcccId, int tId);
 
     // Call Center Contact Management
     Task<List<ContactDto>> GetCallCenterContactsAsync(int ccId);

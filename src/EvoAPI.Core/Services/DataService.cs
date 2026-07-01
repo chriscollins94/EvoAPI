@@ -7617,7 +7617,8 @@ order by sr.sr_insertdatetime
                     xccc.xccc_active,
                     xccc.xccc_note,
                     xccc.xccc_tripcharge,
-                    xccc.xccc_ivrrequestnumber
+                    xccc.xccc_ivrrequestnumber,
+                    xccc.xccc_nteguidance
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 WHERE xccc.cc_id = @callCenterId
@@ -7641,7 +7642,8 @@ order by sr.sr_insertdatetime
                             Active = reader.GetBoolean(4),
                             Note = reader.IsDBNull(5) ? null : reader.GetString(5),
                             TripCharge = reader.IsDBNull(6) ? null : reader.GetDecimal(6),
-                            IvrRequestNumber = !reader.IsDBNull(7) && reader.GetBoolean(7)
+                            IvrRequestNumber = !reader.IsDBNull(7) && reader.GetBoolean(7),
+                            NteGuidance = !reader.IsDBNull(8) && reader.GetBoolean(8)
                         });
                     }
                 }
@@ -7720,7 +7722,8 @@ order by sr.sr_insertdatetime
                     br.br_roundtominute,
                     t.terms_description,
                     t.terms_numberofdays,
-                    xccc.xccc_markuptriggeramount
+                    xccc.xccc_markuptriggeramount,
+                    xccc.xccc_nteguidance
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
@@ -7769,7 +7772,8 @@ order by sr.sr_insertdatetime
                             BillableRuleRoundToMinute = reader.IsDBNull(27) ? null : reader.GetInt32(27),
                             TermsDescription = reader.IsDBNull(28) ? null : reader.GetString(28),
                             TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29),
-                            MarkupTriggerAmount = reader.IsDBNull(30) ? null : reader.GetDecimal(30)
+                            MarkupTriggerAmount = reader.IsDBNull(30) ? null : reader.GetDecimal(30),
+                            NteGuidance = !reader.IsDBNull(31) && reader.GetBoolean(31)
                         };
                     }
                 }
@@ -7915,6 +7919,7 @@ order by sr.sr_insertdatetime
                     xccc_invoicedateshow = @invoicedateshow,
                     xccc_ivrrequestnumber = @ivrrequestnumber,
                     xccc_collectpaymentonsite = @collectpaymentonsite,
+                    xccc_nteguidance = @nteguidance,
                     xccc_clientrep = @clientrep,
                     xccc_licenserep = @licenserep,
                     xccc_invoiceextratext = @invoiceextratext,
@@ -7948,6 +7953,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@invoicedateshow", SqlDbType.Bit).Value = request.InvoiceDateShow;
                 command.Parameters.Add("@ivrrequestnumber", SqlDbType.Bit).Value = request.IvrRequestNumber;
                 command.Parameters.Add("@collectpaymentonsite", SqlDbType.Bit).Value = request.CollectPaymentOnSite;
+                command.Parameters.Add("@nteguidance", SqlDbType.Bit).Value = request.NteGuidance;
                 command.Parameters.Add("@clientrep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.ClientRepresentative) ? (object)request.ClientRepresentative : DBNull.Value;
                 command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
                 command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
@@ -12694,6 +12700,16 @@ order by sr.sr_insertdatetime
         var srCallNote = Left(request.SrCallNote, 4000);
         var srOfficeNote = Left(request.SrOfficeNote, 4000);
 
+        // Method of Request + requestor / on-site contact capture (New Service Request wizard)
+        var srMethodOfRequest = Left(request.SrMethodOfRequest, 20);
+        var srRequestorName = Left(request.SrRequestorName, 100);
+        var srRequestorEmail = Left(request.SrRequestorEmail, 150);
+        var srRequestorPhone = Left(request.SrRequestorPhone, 30);
+        var srRequestEmailText = request.SrRequestEmailText;   // VARCHAR(MAX), no truncation
+        var srSiteContactName = Left(request.SrSiteContactName, 100);
+        var srSiteContactPhone = Left(request.SrSiteContactPhone, 30);
+        var srSiteContactEmail = Left(request.SrSiteContactEmail, 150);
+
         var srNte = request.SrNte ?? 0m;
         var srTripCharge = request.SrTripChargeWorked ?? 100m;
         var ssId = request.SsId ?? 1;
@@ -12713,11 +12729,15 @@ order by sr.sr_insertdatetime
                     INSERT INTO ServiceRequest
                         (xccc_id, l_id, t_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_ivrrequestnumber,
                          sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly,
-                         sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby)
+                         sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby,
+                         sr_methodofrequest, sr_requestor_name, sr_requestor_email, sr_requestor_phone, sr_requestemailtext,
+                         sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email)
                     VALUES
                         (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
                          @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
-                         @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby);
+                         @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby,
+                         @sr_methodofrequest, @sr_requestor_name, @sr_requestor_email, @sr_requestor_phone, @sr_requestemailtext,
+                         @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email);
                     SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
                 using (var command = new SqlCommand(insertSrSql, connection, transaction))
@@ -12738,6 +12758,14 @@ order by sr.sr_insertdatetime
                     command.Parameters.Add("@sr_requiresprearrivalcall", SqlDbType.Bit).Value = request.SrRequiresPreArrivalCall;
                     command.Parameters.Add("@sr_shiftdifferential", SqlDbType.Bit).Value = request.SrShiftDifferential;
                     command.Parameters.Add("@u_id_createdby", SqlDbType.Int).Value = createdByUserId;
+                    command.Parameters.Add("@sr_methodofrequest", SqlDbType.VarChar, 20).Value = (object?)srMethodOfRequest ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_name", SqlDbType.VarChar, 100).Value = (object?)srRequestorName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_email", SqlDbType.VarChar, 150).Value = (object?)srRequestorEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_phone", SqlDbType.VarChar, 30).Value = (object?)srRequestorPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestemailtext", SqlDbType.VarChar, -1).Value = (object?)srRequestEmailText ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_name", SqlDbType.VarChar, 100).Value = (object?)srSiteContactName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_phone", SqlDbType.VarChar, 30).Value = (object?)srSiteContactPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_email", SqlDbType.VarChar, 150).Value = (object?)srSiteContactEmail ?? DBNull.Value;
 
                     var result = await command.ExecuteScalarAsync();
                     if (result == null || result == DBNull.Value)
@@ -13051,6 +13079,173 @@ order by sr.sr_insertdatetime
         }
 
         return result;
+    }
+
+    // lrt_id -> today's LaborRate column, matching the legacy pay-rate-type mapping.
+    private static readonly Dictionary<int, string> _lrtRateColumn = new()
+    {
+        { 1, "lr_rateregular" },
+        { 2, "lr_rateovertime" },
+        { 3, "lr_rateholiday" },
+        { 7, "lr_ratespecial" },
+        { 4, "lr_ratescheduledafterhours" },
+        { 5, "lr_rateregulardiscount" },
+        { 6, "lr_ratehelper" },
+        { 8, "lr_ratehelperovertime" },
+    };
+
+    private static double Percentile(List<double> values, double p)
+    {
+        if (values.Count == 0) return 0;
+        var sorted = values.OrderBy(v => v).ToList();
+        if (sorted.Count == 1) return sorted[0];
+        double rank = (p / 100.0) * (sorted.Count - 1);
+        int lo = (int)Math.Floor(rank);
+        int hi = (int)Math.Ceiling(rank);
+        if (lo == hi) return sorted[lo];
+        return sorted[lo] + (rank - lo) * (sorted[hi] - sorted[lo]);
+    }
+
+    private async Task<int> GetIntConfigAsync(string identifier, int fallback)
+    {
+        var raw = await GetConfigSettingValueAsync("Config", identifier);
+        return int.TryParse(raw, out var v) && v > 0 ? v : fallback;
+    }
+
+    /// <summary>
+    /// Builds a recommended NTE for a company + sub-trade from historical jobs in the last
+    /// N months: labor re-priced at today's rates (by the rate type each past job used) plus
+    /// billable pre-tax materials, each taken at the configured percentile, plus the current
+    /// trip charge. Returns a displayable breakdown and the trade-level NTE for reference.
+    /// </summary>
+    public async Task<NteEstimateDto> GetNteEstimateAsync(int xcccId, int tId)
+    {
+        var percentile = await GetIntConfigAsync("NteGuidancePercentile", 75);
+        var windowMonths = await GetIntConfigAsync("NteGuidanceWindowMonths", 12);
+        var minJobs = await GetIntConfigAsync("NteGuidanceMinJobs", 5);
+
+        var dto = new NteEstimateDto
+        {
+            WindowMonths = windowMonths,
+            Percentile = percentile,
+            HasEnoughHistory = false
+        };
+
+        // Current rates / trip charge / trade NTE for this combo (today's pricing)
+        const string rateSql = @"
+            SELECT lr.lr_rateregular, lr.lr_rateovertime, lr.lr_rateholiday, lr.lr_ratespecial,
+                   lr.lr_ratescheduledafterhours, lr.lr_rateregulardiscount, lr.lr_ratehelper, lr.lr_ratehelperovertime,
+                   lr.lr_nte, lr.lr_tripcharge, t.t_nte, xccc.xccc_tripcharge
+            FROM LaborRate lr
+            INNER JOIN Trade t ON lr.t_id = t.t_id
+            INNER JOIN xrefCompanyCallCenter xccc ON lr.xccc_id = xccc.xccc_id
+            WHERE lr.xccc_id = @xccc AND lr.t_id = @t";
+
+        var rateDt = await ExecuteQueryAsync(rateSql, new Dictionary<string, object> { ["@xccc"] = xcccId, ["@t"] = tId });
+
+        var todaysRate = new Dictionary<int, double>();
+        decimal tripCharge = 0;
+        decimal? tradeNte = null;
+        if (rateDt.Rows.Count > 0)
+        {
+            var r = rateDt.Rows[0];
+            double Col(string c) => r[c] == DBNull.Value ? 0 : Convert.ToDouble(r[c]);
+            foreach (var kv in _lrtRateColumn) todaysRate[kv.Key] = Col(kv.Value);
+
+            var lrTrip = r["lr_tripcharge"] == DBNull.Value ? 0 : Convert.ToDecimal(r["lr_tripcharge"]);
+            var xcccTrip = r["xccc_tripcharge"] == DBNull.Value ? 0 : Convert.ToDecimal(r["xccc_tripcharge"]);
+            tripCharge = lrTrip > 0 ? lrTrip : xcccTrip;
+
+            if (r["lr_nte"] != DBNull.Value) tradeNte = Convert.ToDecimal(r["lr_nte"]);
+            else if (r["t_nte"] != DBNull.Value) tradeNte = Convert.ToDecimal(r["t_nte"]);
+        }
+        dto.TripCharge = tripCharge;
+        dto.TradeNte = tradeNte;
+
+        // Per-SR on-site hours by rate type, for completed service work orders in the window
+        const string hoursSql = @"
+            SELECT sr.sr_id, tt.lrt_id,
+                   SUM(DATEDIFF(SECOND, tt.tt_begin, tt.tt_end)) / 3600.0 AS hours
+            FROM TimeTracking tt
+            INNER JOIN WorkOrder wo ON tt.wo_id = wo.wo_id
+            INNER JOIN ServiceRequest sr ON wo.sr_id = sr.sr_id
+            WHERE sr.xccc_id = @xccc AND sr.t_id = @t
+              AND tt.ttt_id = 3 AND tt.tt_end IS NOT NULL
+              AND wo.wot_id = 1
+              AND tt.tt_begin >= DATEADD(MONTH, -@windowMonths, GETDATE())
+            GROUP BY sr.sr_id, tt.lrt_id";
+
+        var hoursDt = await ExecuteQueryAsync(hoursSql, new Dictionary<string, object>
+        {
+            ["@xccc"] = xcccId,
+            ["@t"] = tId,
+            ["@windowMonths"] = windowMonths
+        });
+
+        // Per-SR billable pre-tax materials (incurred items only)
+        const string matSql = @"
+            SELECT sr.sr_id,
+                   SUM(xwosi.xwosi_basecost * xwosi.xwosi_quantity
+                       * (1 + ISNULL(xwosi.xwosi_percentagemarkup, 0) / 100.0)) AS materials
+            FROM xrefWorkOrderServiceItem xwosi
+            INNER JOIN WorkOrder wo ON xwosi.wo_id = wo.wo_id
+            INNER JOIN ServiceRequest sr ON wo.sr_id = sr.sr_id
+            WHERE sr.xccc_id = @xccc AND sr.t_id = @t
+              AND xwosi.xwosi_forquote = 0
+            GROUP BY sr.sr_id";
+
+        var matDt = await ExecuteQueryAsync(matSql, new Dictionary<string, object> { ["@xccc"] = xcccId, ["@t"] = tId });
+        var materialsBySr = new Dictionary<int, double>();
+        foreach (DataRow row in matDt.Rows)
+        {
+            var srId = ConvertToInt(row["sr_id"]);
+            materialsBySr[srId] = row["materials"] == DBNull.Value ? 0 : Convert.ToDouble(row["materials"]);
+        }
+
+        // Roll hours up per SR -> labor $ (at today's rates) and total hours
+        var laborBySr = new Dictionary<int, double>();
+        var hoursBySr = new Dictionary<int, double>();
+        foreach (DataRow row in hoursDt.Rows)
+        {
+            var srId = ConvertToInt(row["sr_id"]);
+            var lrtId = row["lrt_id"] == DBNull.Value ? 1 : ConvertToInt(row["lrt_id"]);
+            var hrs = row["hours"] == DBNull.Value ? 0 : Convert.ToDouble(row["hours"]);
+            var rate = todaysRate.TryGetValue(lrtId, out var rr) && rr > 0 ? rr : (todaysRate.TryGetValue(1, out var reg) ? reg : 0);
+            laborBySr[srId] = laborBySr.GetValueOrDefault(srId) + hrs * rate;
+            hoursBySr[srId] = hoursBySr.GetValueOrDefault(srId) + hrs;
+        }
+
+        var jobIds = hoursBySr.Keys.ToList();
+        dto.JobCount = jobIds.Count;
+
+        if (jobIds.Count < minJobs)
+        {
+            return dto; // HasEnoughHistory stays false; trade NTE + trip charge already populated
+        }
+
+        var laborList = jobIds.Select(id => laborBySr.GetValueOrDefault(id)).ToList();
+        var materialsList = jobIds.Select(id => materialsBySr.GetValueOrDefault(id)).ToList();
+        var hoursList = jobIds.Select(id => hoursBySr.GetValueOrDefault(id)).ToList();
+
+        var laborP = (decimal)Math.Round(Percentile(laborList, percentile), 2);
+        var materialsP = (decimal)Math.Round(Percentile(materialsList, percentile), 2);
+        var laborHoursP = (decimal)Math.Round(Percentile(hoursList, percentile), 2);
+        var avgHours = (decimal)Math.Round(hoursList.Average(), 2);
+
+        dto.HasEnoughHistory = true;
+        dto.AvgHours = avgHours;
+        dto.LaborHours = laborHoursP;
+        dto.LaborAmount = laborP;
+        dto.MaterialsAmount = materialsP;
+        dto.EstimatedNte = Math.Round(laborP + materialsP + tripCharge, 2);
+        dto.Lines = new List<NteEstimateLineDto>
+        {
+            new() { Label = $"Labor ({percentile}th pct)", Value = laborP, Note = $"≈{laborHoursP:0.##} hrs at current rates" },
+            new() { Label = $"Materials ({percentile}th pct)", Value = materialsP, Note = "billable, pre-tax" },
+            new() { Label = "Trip charge", Value = tripCharge, Note = null }
+        };
+
+        return dto;
     }
 
     #endregion

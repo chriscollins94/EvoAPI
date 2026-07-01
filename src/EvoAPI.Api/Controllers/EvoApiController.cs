@@ -8919,6 +8919,49 @@ public class EvoApiController : BaseController
         }
     }
 
+    // NTE guidance: recommended Not-To-Exceed from historical jobs for a company + sub-trade.
+    [HttpGet("servicerequests/nte-estimate")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<NteEstimateDto>>> GetServiceRequestNteEstimate([FromQuery] int xcccId, [FromQuery] int tId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (xcccId <= 0 || tId <= 0)
+            {
+                return BadRequest(new ApiResponse<NteEstimateDto>
+                {
+                    Success = false,
+                    Message = "Company (xcccId) and trade (tId) are required"
+                });
+            }
+
+            var estimate = await _dataService.GetNteEstimateAsync(xcccId, tId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestNteEstimate", $"NTE estimate for company {xcccId}, trade {tId}: {estimate.JobCount} jobs, enough={estimate.HasEnoughHistory}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<NteEstimateDto>
+            {
+                Success = true,
+                Message = "NTE estimate retrieved",
+                Data = estimate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestNteEstimate", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error building NTE estimate for company {XcccId}, trade {TId}", xcccId, tId);
+            return StatusCode(500, new ApiResponse<NteEstimateDto>
+            {
+                Success = false,
+                Message = "An error occurred while building the NTE estimate"
+            });
+        }
+    }
+
     #endregion
 
     #region Employee Attachments

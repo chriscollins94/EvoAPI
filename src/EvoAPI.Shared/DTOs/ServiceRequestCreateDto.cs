@@ -34,6 +34,22 @@ public class CreateServiceRequestRequest
 
     public bool SrRequiresPreArrivalCall { get; set; }
     public bool SrShiftDifferential { get; set; }
+
+    /// <summary>How the request came in: "Phone Call" or "Email". Null if not recorded.</summary>
+    public string? SrMethodOfRequest { get; set; }
+
+    // Phone Call path: details of the person who called in the request.
+    public string? SrRequestorName { get; set; }
+    public string? SrRequestorEmail { get; set; }
+    public string? SrRequestorPhone { get; set; }
+
+    /// <summary>Email path: the full pasted email body, including sender info.</summary>
+    public string? SrRequestEmailText { get; set; }
+
+    // Point of contact at the job site.
+    public string? SrSiteContactName { get; set; }
+    public string? SrSiteContactPhone { get; set; }
+    public string? SrSiteContactEmail { get; set; }
 }
 
 public class CreateServiceRequestResponse
@@ -52,6 +68,35 @@ public class ServiceRequestAttachmentErrorRequest
     public int SrId { get; set; }
     public string? FileName { get; set; }
     public string? Message { get; set; }
+}
+
+/// <summary>
+/// NTE guidance for the New Service Request flow: a recommended Not-To-Exceed built from
+/// historical jobs for the selected company + sub-trade, decomposed into displayable line
+/// items. Labor is re-priced at today's rates (by the rate type each past job used),
+/// materials are billable pre-tax, and each component is taken at the configured percentile.
+/// </summary>
+public class NteEstimateDto
+{
+    public bool HasEnoughHistory { get; set; }
+    public int JobCount { get; set; }
+    public int WindowMonths { get; set; }
+    public int Percentile { get; set; }
+    public decimal? AvgHours { get; set; }
+    public decimal? LaborHours { get; set; }   // percentile hours, for the "~X hrs" note
+    public decimal? LaborAmount { get; set; }
+    public decimal? MaterialsAmount { get; set; }
+    public decimal TripCharge { get; set; }
+    public decimal? EstimatedNte { get; set; }
+    public decimal? TradeNte { get; set; }      // trade-level NTE shown as a reference regardless
+    public List<NteEstimateLineDto> Lines { get; set; } = new();
+}
+
+public class NteEstimateLineDto
+{
+    public string Label { get; set; } = string.Empty;
+    public decimal Value { get; set; }
+    public string? Note { get; set; }
 }
 
 /// <summary>
