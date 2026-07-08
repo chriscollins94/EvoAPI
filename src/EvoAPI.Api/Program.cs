@@ -220,6 +220,10 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteNotificationService,
     EvoAPI.Infrastructure.Services.NteNotificationService>();
 builder.Services.AddHostedService<EvoAPI.Infrastructure.Services.NteNotificationBackgroundService>();
 
+// SMS consent capture (post-login opt-in screen for techs; TFV compliance)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IUserConsentRepository,
+    EvoAPI.Infrastructure.Repositories.UserConsentRepository>();
+
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
 // builder.Services.AddHostedService<TimeTrackingSyncService>();
