@@ -35,7 +35,7 @@ namespace EvoAPI.Api.Controllers
 
                 if (IsTech)
                 {
-                    response.PhoneNumber = NormalizeToE164(await GetMobileOnFileAsync(UserId));
+                    response.PhoneNumber = await GetMobileOnFileAsync(UserId);
 
                     var optedIn = await _userConsentRepository.HasOptedInAsync(
                         UserId, UserConsentConstants.NteSmsAlerts, UserConsentConstants.NteSmsDisclosureVersion, ct);
@@ -65,7 +65,7 @@ namespace EvoAPI.Api.Controllers
             {
                 // Number, type and version are all derived server-side so the stored
                 // record always reflects what the screen displayed, not client input.
-                var phone = NormalizeToE164(await GetMobileOnFileAsync(UserId));
+                var phone = await GetMobileOnFileAsync(UserId);
                 if (phone == null)
                 {
                     return BadRequest(new ApiResponse<bool> { Success = false, Message = "No mobile number on file" });
@@ -104,13 +104,17 @@ namespace EvoAPI.Api.Controllers
             }
         }
 
+        /// Prefer the work-provided cell (u_phonemobile); fall back to the personal
+        /// number (u_phonehome) when the mobile is blank or unusable.
         private async Task<string?> GetMobileOnFileAsync(int userId)
         {
-            const string sql = "SELECT u_phonemobile FROM [User] WHERE u_id = @UserId";
+            const string sql = "SELECT u_phonemobile, u_phonehome FROM [User] WHERE u_id = @UserId";
             var result = await _dataService.ExecuteQueryAsync(sql, new Dictionary<string, object> { { "@UserId", userId } });
             if (result.Rows.Count == 0) return null;
-            var value = result.Rows[0]["u_phonemobile"]?.ToString();
-            return string.IsNullOrWhiteSpace(value) ? null : value;
+
+            var mobile = NormalizeToE164(result.Rows[0]["u_phonemobile"]?.ToString());
+            if (mobile != null) return mobile;
+            return NormalizeToE164(result.Rows[0]["u_phonehome"]?.ToString());
         }
 
         /// u_phonemobile has no enforced format; accept 10-digit US numbers (with or

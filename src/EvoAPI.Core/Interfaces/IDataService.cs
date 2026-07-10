@@ -172,6 +172,16 @@ public interface IDataService
     Task<int?> CreateUserPantsLengthAsync(CreateUserPantsLengthRequest request);
     Task<bool> UpdateUserPantsLengthAsync(UpdateUserPantsLengthRequest request);
 
+    // Service Item Rack methods
+    Task<DataTable> GetAllServiceItemRacksAsync();
+    Task<int?> CreateServiceItemRackAsync(CreateServiceItemRackRequest request);
+    Task<bool> UpdateServiceItemRackAsync(UpdateServiceItemRackRequest request);
+
+    // Service Item Facility methods
+    Task<DataTable> GetAllServiceItemFacilitiesAsync();
+    Task<int?> CreateServiceItemFacilityAsync(CreateServiceItemFacilityRequest request);
+    Task<bool> UpdateServiceItemFacilityAsync(UpdateServiceItemFacilityRequest request);
+
     // User Relationship methods
     Task<DataTable> GetAllUserRelationshipsAsync();
     Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request);

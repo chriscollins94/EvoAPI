@@ -9236,6 +9236,382 @@ order by sr.sr_insertdatetime
         }
     }
 
+    // Service Item Rack methods
+    public async Task<DataTable> GetAllServiceItemRacksAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    sir_id,
+                    sir_insertdatetime,
+                    sir_modifieddatetime,
+                    sir_rack
+                FROM dbo.ServiceItemRack
+                ORDER BY sir_rack";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemRacks",
+                Detail = $"Retrieved {result.Rows.Count} service item racks",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemRacks",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service item racks");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateServiceItemRackAsync(CreateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.ServiceItemRack
+                (sir_rack, sir_insertdatetime, sir_modifieddatetime)
+                VALUES
+                (@Rack, GETDATE(), GETDATE());
+
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Rack", request.Rack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateServiceItemRack",
+                    Detail = $"Created new service item rack '{request.Rack}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateServiceItemRack",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating service item rack {Rack}", request.Rack);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceItemRackAsync(UpdateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.ServiceItemRack
+                SET
+                    sir_rack = @Rack,
+                    sir_modifieddatetime = GETDATE()
+                WHERE sir_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Rack", request.Rack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemRack",
+                Detail = $"Updated service item rack {request.Id} - {request.Rack}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemRack",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating service item rack {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // Service Item Facility methods
+    public async Task<DataTable> GetAllServiceItemFacilitiesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    sif_id,
+                    sif_insertdatetime,
+                    sif_modifieddatetime,
+                    sif_facility
+                FROM dbo.ServiceItemFacility
+                ORDER BY sif_facility";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemFacilities",
+                Detail = $"Retrieved {result.Rows.Count} service item facilities",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemFacilities",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service item facilities");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateServiceItemFacilityAsync(CreateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.ServiceItemFacility
+                (sif_facility, sif_insertdatetime, sif_modifieddatetime)
+                VALUES
+                (@Facility, GETDATE(), GETDATE());
+
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Facility", request.Facility }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateServiceItemFacility",
+                    Detail = $"Created new service item facility '{request.Facility}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateServiceItemFacility",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating service item facility {Facility}", request.Facility);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceItemFacilityAsync(UpdateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.ServiceItemFacility
+                SET
+                    sif_facility = @Facility,
+                    sif_modifieddatetime = GETDATE()
+                WHERE sif_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Facility", request.Facility }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemFacility",
+                Detail = $"Updated service item facility {request.Id} - {request.Facility}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemFacility",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating service item facility {Id}", request.Id);
+            throw;
+        }
+    }
+
     // User Pants Waist methods
     public async Task<DataTable> GetAllUserPantsWaistAsync()
     {

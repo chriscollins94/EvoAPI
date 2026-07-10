@@ -3564,6 +3564,38 @@ public class EvoApiController : BaseController
         return clothingSizes;
     }
 
+    private static List<ServiceItemRackDto> ConvertDataTableToServiceItemRacks(DataTable dataTable)
+    {
+        var racks = new List<ServiceItemRackDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            racks.Add(new ServiceItemRackDto
+            {
+                Id = Convert.ToInt32(row["sir_id"]),
+                Rack = row["sir_rack"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return racks;
+    }
+
+    private static List<ServiceItemFacilityDto> ConvertDataTableToServiceItemFacilities(DataTable dataTable)
+    {
+        var facilities = new List<ServiceItemFacilityDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            facilities.Add(new ServiceItemFacilityDto
+            {
+                Id = Convert.ToInt32(row["sif_id"]),
+                Facility = row["sif_facility"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return facilities;
+    }
+
     private static List<UserPantsWaistDto> ConvertDataTableToUserPantsWaist(DataTable dataTable)
     {
         var pantsWaist = new List<UserPantsWaistDto>();
@@ -6343,6 +6375,460 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while updating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    // Service Item Rack endpoints
+    [HttpGet("serviceitemrack")]
+    public async Task<ActionResult<ApiResponse<List<ServiceItemRackDto>>>> GetServiceItemRacks()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Getting all service item racks");
+
+            var dataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var racks = ConvertDataTableToServiceItemRacks(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceItemRacks", $"Retrieved {racks.Count} service item racks", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<ServiceItemRackDto>>
+            {
+                Success = true,
+                Message = "Service item racks retrieved successfully",
+                Data = racks,
+                Count = racks.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceItemRacks", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error retrieving service item racks");
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving service item racks",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("serviceitemrack")]
+    public async Task<ActionResult<ApiResponse<ServiceItemRackDto>>> CreateServiceItemRack([FromBody] CreateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Creating new service item rack: {Rack}", request.Rack);
+
+            if (string.IsNullOrWhiteSpace(request.Rack))
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Rack is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Rack.Length > 50)
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Rack must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var existingRacks = ConvertDataTableToServiceItemRacks(existingDataTable);
+            if (existingRacks.Any(r => r.Rack.Equals(request.Rack.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "This rack already exists",
+                    Count = 0
+                });
+            }
+
+            var newId = await _dataService.CreateServiceItemRackAsync(request);
+
+            if (newId.HasValue)
+            {
+                var newRack = new ServiceItemRackDto
+                {
+                    Id = newId.Value,
+                    Rack = request.Rack.Trim()
+                };
+
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemRack", $"Created service item rack - {request.Rack} with ID {newId.Value}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = true,
+                    Message = "Service item rack created successfully",
+                    Data = newRack,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemRack", $"Failed to create service item rack - {request.Rack}", stopwatch.Elapsed);
+
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Failed to create service item rack",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceItemRack", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error creating service item rack {Rack}", request.Rack);
+
+            return StatusCode(500, new ApiResponse<ServiceItemRackDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service item rack",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("serviceitemrack/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateServiceItemRack(int id, [FromBody] UpdateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Updating service item rack {Id}", id);
+
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Rack))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Rack is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Rack.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Rack must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var existingRacks = ConvertDataTableToServiceItemRacks(existingDataTable);
+            if (existingRacks.Any(r => r.Id != id && r.Rack.Equals(request.Rack.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This rack already exists",
+                    Count = 0
+                });
+            }
+
+            var success = await _dataService.UpdateServiceItemRackAsync(request);
+
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogOperationAsync("UpdateServiceItemRack", $"Updated service item rack {id} to {request.Rack}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Service item rack updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateServiceItemRack", $"Failed to update service item rack {id}", stopwatch.Elapsed);
+
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Service item rack not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateServiceItemRack", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error updating service item rack {Id}", id);
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the service item rack",
+                Count = 0
+            });
+        }
+    }
+
+    // Service Item Facility endpoints
+    [HttpGet("serviceitemfacility")]
+    public async Task<ActionResult<ApiResponse<List<ServiceItemFacilityDto>>>> GetServiceItemFacilities()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Getting all service item facilities");
+
+            var dataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var facilities = ConvertDataTableToServiceItemFacilities(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceItemFacilities", $"Retrieved {facilities.Count} service item facilities", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<ServiceItemFacilityDto>>
+            {
+                Success = true,
+                Message = "Service item facilities retrieved successfully",
+                Data = facilities,
+                Count = facilities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceItemFacilities", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error retrieving service item facilities");
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving service item facilities",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("serviceitemfacility")]
+    public async Task<ActionResult<ApiResponse<ServiceItemFacilityDto>>> CreateServiceItemFacility([FromBody] CreateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Creating new service item facility: {Facility}", request.Facility);
+
+            if (string.IsNullOrWhiteSpace(request.Facility))
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Facility is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Facility.Length > 50)
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Facility must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var existingFacilities = ConvertDataTableToServiceItemFacilities(existingDataTable);
+            if (existingFacilities.Any(f => f.Facility.Equals(request.Facility.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "This facility already exists",
+                    Count = 0
+                });
+            }
+
+            var newId = await _dataService.CreateServiceItemFacilityAsync(request);
+
+            if (newId.HasValue)
+            {
+                var newFacility = new ServiceItemFacilityDto
+                {
+                    Id = newId.Value,
+                    Facility = request.Facility.Trim()
+                };
+
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemFacility", $"Created service item facility - {request.Facility} with ID {newId.Value}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = true,
+                    Message = "Service item facility created successfully",
+                    Data = newFacility,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemFacility", $"Failed to create service item facility - {request.Facility}", stopwatch.Elapsed);
+
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Failed to create service item facility",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceItemFacility", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error creating service item facility {Facility}", request.Facility);
+
+            return StatusCode(500, new ApiResponse<ServiceItemFacilityDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service item facility",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("serviceitemfacility/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateServiceItemFacility(int id, [FromBody] UpdateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Updating service item facility {Id}", id);
+
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Facility))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Facility is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Facility.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Facility must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var existingFacilities = ConvertDataTableToServiceItemFacilities(existingDataTable);
+            if (existingFacilities.Any(f => f.Id != id && f.Facility.Equals(request.Facility.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This facility already exists",
+                    Count = 0
+                });
+            }
+
+            var success = await _dataService.UpdateServiceItemFacilityAsync(request);
+
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogOperationAsync("UpdateServiceItemFacility", $"Updated service item facility {id} to {request.Facility}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Service item facility updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateServiceItemFacility", $"Failed to update service item facility {id}", stopwatch.Elapsed);
+
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Service item facility not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateServiceItemFacility", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error updating service item facility {Id}", id);
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the service item facility",
                 Count = 0
             });
         }
