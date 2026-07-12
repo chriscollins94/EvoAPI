@@ -5512,12 +5512,12 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 100"
+                    Message = "Markup percentage must be between 0 and 500"
                 });
             }
 
@@ -5615,12 +5615,12 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 100"
+                    Message = "Markup percentage must be between 0 and 500"
                 });
             }
 
