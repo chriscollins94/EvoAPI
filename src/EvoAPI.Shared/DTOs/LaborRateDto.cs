@@ -23,7 +23,7 @@ public class LaborRateDto
     public decimal? LrRateFlat { get; set; }
     public string? LrFlatOrHourly { get; set; }
     public decimal? LrTripCharge { get; set; }
-    public int? LrMarkup { get; set; }
+    public decimal? LrMarkup { get; set; }
     public string? LrNote { get; set; }
     public bool TActive { get; set; }
     public DateTime LrInsertDateTime { get; set; }
@@ -72,7 +72,7 @@ public class CreateLaborRateRequest
     public decimal? LrRateFlat { get; set; }
     public string? LrFlatOrHourly { get; set; }
     public decimal? LrTripCharge { get; set; }
-    public int? LrMarkup { get; set; }
+    public decimal? LrMarkup { get; set; }
     public string? LrNote { get; set; }
 }
 
@@ -92,6 +92,6 @@ public class UpdateLaborRateRequest
     public decimal? LrRateFlat { get; set; }
     public string? LrFlatOrHourly { get; set; }
     public decimal? LrTripCharge { get; set; }
-    public int? LrMarkup { get; set; }
+    public decimal? LrMarkup { get; set; }
     public string? LrNote { get; set; }
 }

@@ -18,8 +18,8 @@ public class CompanyDetailDto
     public int? TermsNumberOfDays { get; set; }
     public bool TaxExempt { get; set; }
     public int MinimumLaborChargeMinutes { get; set; }
-    public int MarkupPercentage { get; set; }
-    public int MarkupPercentageSupplier { get; set; }
+    public decimal MarkupPercentage { get; set; }
+    public decimal MarkupPercentageSupplier { get; set; }
     public decimal? MarkupTriggerAmount { get; set; }
     public bool Active { get; set; }
     public bool FirmQuote { get; set; }
@@ -51,9 +51,9 @@ public class MaterialsMarkupDto
     public int XcccId { get; set; }
     public int FromPrice { get; set; }
     public int ToPrice { get; set; }
-    public int MarkupPercentage { get; set; }
-    public int MarkupHighQuantity { get; set; }
-    public int MarkupFoundational { get; set; }
+    public decimal MarkupPercentage { get; set; }
+    public decimal MarkupHighQuantity { get; set; }
+    public decimal MarkupFoundational { get; set; }
     public DateTime InsertDateTime { get; set; }
     public DateTime? ModifiedDateTime { get; set; }
 }
@@ -100,8 +100,8 @@ public class UpdateCompanyGeneralInfoRequest
     public int? TermsId { get; set; }
     public bool TaxExempt { get; set; }
     public int MinimumLaborChargeMinutes { get; set; }
-    public int MarkupPercentage { get; set; }
-    public int MarkupPercentageSupplier { get; set; }
+    public decimal MarkupPercentage { get; set; }
+    public decimal MarkupPercentageSupplier { get; set; }
     public decimal? MarkupTriggerAmount { get; set; }
     public bool Active { get; set; }
     public bool FirmQuote { get; set; }
@@ -163,9 +163,9 @@ public class CreateMaterialsMarkupRequest
     public int XcccId { get; set; }
     public int FromPrice { get; set; }
     public int ToPrice { get; set; }
-    public int MarkupPercentage { get; set; }
-    public int MarkupHighQuantity { get; set; }
-    public int MarkupFoundational { get; set; }
+    public decimal MarkupPercentage { get; set; }
+    public decimal MarkupHighQuantity { get; set; }
+    public decimal MarkupFoundational { get; set; }
 }
 
 public class UpdateMaterialsMarkupRequest
@@ -173,9 +173,9 @@ public class UpdateMaterialsMarkupRequest
     public int MmId { get; set; }
     public int FromPrice { get; set; }
     public int ToPrice { get; set; }
-    public int MarkupPercentage { get; set; }
-    public int MarkupHighQuantity { get; set; }
-    public int MarkupFoundational { get; set; }
+    public decimal MarkupPercentage { get; set; }
+    public decimal MarkupHighQuantity { get; set; }
+    public decimal MarkupFoundational { get; set; }
 }
 
 public class CompanyPriorityDto

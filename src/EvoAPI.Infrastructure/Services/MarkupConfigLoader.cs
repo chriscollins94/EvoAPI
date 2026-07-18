@@ -52,11 +52,11 @@ public class MarkupConfigLoader : IMarkupConfigLoader
             WHERE sr.sr_id = @SrId;";
 
         int xcccId = 0;
-        int? companyDefault = null;
-        int? companySupplier = null;
+        decimal? companyDefault = null;
+        decimal? companySupplier = null;
         decimal? triggerAmount = null;
         bool taxExempt = false;
-        int  tradeMarkup = 0;
+        decimal tradeMarkup = 0;
 
         using (var conn = new SqlConnection(connectionString))
         using (var cmd = new SqlCommand(scalarSql, conn))
@@ -67,11 +67,11 @@ public class MarkupConfigLoader : IMarkupConfigLoader
             if (!await reader.ReadAsync(ct)) return null;
 
             xcccId          = reader["xccc_id"]         is DBNull ? 0    : Convert.ToInt32(reader["xccc_id"]);
-            companyDefault  = reader["CompanyDefault"]  is DBNull ? null : (int?)Convert.ToInt32(reader["CompanyDefault"]);
-            companySupplier = reader["CompanySupplier"] is DBNull ? null : (int?)Convert.ToInt32(reader["CompanySupplier"]);
+            companyDefault  = reader["CompanyDefault"]  is DBNull ? null : (decimal?)Convert.ToDecimal(reader["CompanyDefault"]);
+            companySupplier = reader["CompanySupplier"] is DBNull ? null : (decimal?)Convert.ToDecimal(reader["CompanySupplier"]);
             triggerAmount   = reader["TriggerAmount"]   is DBNull ? null : (decimal?)Convert.ToDecimal(reader["TriggerAmount"]);
             taxExempt       = reader["TaxExempt"]       is not DBNull && Convert.ToBoolean(reader["TaxExempt"]);
-            tradeMarkup     = reader["TradeMarkup"]     is DBNull ? 0    : Convert.ToInt32(reader["TradeMarkup"]);
+            tradeMarkup     = reader["TradeMarkup"]     is DBNull ? 0    : Convert.ToDecimal(reader["TradeMarkup"]);
         }
 
         // ---- Pull MaterialsMarkup ranges for this company/call center -----
@@ -95,8 +95,8 @@ public class MarkupConfigLoader : IMarkupConfigLoader
                 {
                     From          = Convert.ToDecimal(reader["mm_from"]),
                     To            = Convert.ToDecimal(reader["mm_to"]),
-                    Markup        = Convert.ToInt32  (reader["mm_markup"]),
-                    HighQtyMarkup = Convert.ToInt32  (reader["mm_markuphighquantity"])
+                    Markup        = Convert.ToDecimal(reader["mm_markup"]),
+                    HighQtyMarkup = reader["mm_markuphighquantity"] is DBNull ? 0 : Convert.ToDecimal(reader["mm_markuphighquantity"])
                 });
             }
         }

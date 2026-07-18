@@ -7752,8 +7752,8 @@ order by sr.sr_insertdatetime
                             TermsId = reader.IsDBNull(7) ? null : reader.GetInt32(7),
                             TaxExempt = reader.GetBoolean(8),
                             MinimumLaborChargeMinutes = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
-                            MarkupPercentage = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
-                            MarkupPercentageSupplier = reader.IsDBNull(11) ? 0 : reader.GetInt32(11),
+                            MarkupPercentage = reader.IsDBNull(10) ? 0 : reader.GetDecimal(10),
+                            MarkupPercentageSupplier = reader.IsDBNull(11) ? 0 : reader.GetDecimal(11),
                             Active = reader.GetBoolean(12),
                             FirmQuote = reader.GetBoolean(13),
                             InvoiceDateShow = reader.GetBoolean(14),
@@ -7803,9 +7803,9 @@ order by sr.sr_insertdatetime
                                 XcccId = xcccId,
                                 FromPrice = reader.GetInt32(1),
                                 ToPrice = reader.GetInt32(2),
-                                MarkupPercentage = reader.GetInt32(3),
-                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-                                MarkupFoundational = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                                MarkupPercentage = reader.GetDecimal(3),
+                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
+                                MarkupFoundational = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
                                 InsertDateTime = reader.GetDateTime(6),
                                 ModifiedDateTime = reader.IsDBNull(7) ? null : reader.GetDateTime(7)
                             });
@@ -7945,8 +7945,8 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@termsId", SqlDbType.Int).Value = request.TermsId.HasValue ? (object)request.TermsId.Value : DBNull.Value;
                 command.Parameters.Add("@taxexempt", SqlDbType.Bit).Value = request.TaxExempt;
                 command.Parameters.Add("@minimumlaborcharge", SqlDbType.Int).Value = request.MinimumLaborChargeMinutes;
-                command.Parameters.Add("@markuppercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Int).Value = request.MarkupPercentageSupplier;
+                command.Parameters.Add("@markuppercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Decimal).Value = request.MarkupPercentageSupplier;
                 command.Parameters.Add("@markuptriggeramount", SqlDbType.Decimal).Value = request.MarkupTriggerAmount.HasValue ? (object)request.MarkupTriggerAmount.Value : DBNull.Value;
                 command.Parameters.Add("@active", SqlDbType.Bit).Value = request.Active;
                 command.Parameters.Add("@firmquote", SqlDbType.Bit).Value = request.FirmQuote;
@@ -8336,9 +8336,9 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
-                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
-                command.Parameters.Add("@markupFoundational", SqlDbType.Int).Value = request.MarkupFoundational;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Decimal).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Decimal).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var newId = (int?)await command.ExecuteScalarAsync();
@@ -8407,9 +8407,9 @@ order by sr.sr_insertdatetime
                             MmId = mmId,
                             FromPrice = reader.GetInt32(0),
                             ToPrice = reader.GetInt32(1),
-                            MarkupPercentage = reader.GetInt32(2),
-                            MarkupHighQuantity = reader.GetInt32(3),
-                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetInt32(4)
+                            MarkupPercentage = reader.GetDecimal(2),
+                            MarkupHighQuantity = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4)
                         };
                     }
                 }
@@ -8462,9 +8462,9 @@ order by sr.sr_insertdatetime
                             MmId = mmId,
                             FromPrice = reader.GetInt32(0),
                             ToPrice = reader.GetInt32(1),
-                            MarkupPercentage = reader.GetInt32(2),
-                            MarkupHighQuantity = reader.GetInt32(3),
-                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetInt32(4)
+                            MarkupPercentage = reader.GetDecimal(2),
+                            MarkupHighQuantity = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4)
                         };
                         var companyName = reader.IsDBNull(5) ? null : reader.GetString(5);
                         return (markupData, companyName);
@@ -8526,9 +8526,9 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@mmId", SqlDbType.Int).Value = request.MmId;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
-                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
-                command.Parameters.Add("@markupFoundational", SqlDbType.Int).Value = request.MarkupFoundational;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Decimal).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Decimal).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
@@ -11001,7 +11001,7 @@ order by sr.sr_insertdatetime
                     LrRateFlat = ConvertToNullableDecimal(row["lr_rateflat"]),
                     LrFlatOrHourly = row["lr_flatorhourly"]?.ToString(),
                     LrTripCharge = ConvertToNullableDecimal(row["lr_tripcharge"]),
-                    LrMarkup = ConvertToNullableInt(row["lr_markup"]),
+                    LrMarkup = ConvertToNullableDecimal(row["lr_markup"]),
                     LrNote = row["lr_note"]?.ToString(),
                     TActive = ConvertToBool(row["t_active"]),
                     LrInsertDateTime = ConvertToDateTime(row["lr_insertdatetime"]),
@@ -11942,7 +11942,7 @@ order by sr.sr_insertdatetime
                             LrRateFlat = reader.IsDBNull(18) ? null : reader.GetDecimal(18),
                             LrFlatOrHourly = reader.IsDBNull(19) ? null : reader.GetString(19),
                             LrTripCharge = reader.IsDBNull(20) ? null : reader.GetDecimal(20),
-                            LrMarkup = reader.IsDBNull(21) ? null : reader.GetInt32(21),
+                            LrMarkup = reader.IsDBNull(21) ? null : reader.GetDecimal(21),
                             LrNote = reader.IsDBNull(22) ? null : reader.GetString(22),
                             LrInsertDateTime = reader.GetDateTime(23),
                             LrModifiedDateTime = reader.IsDBNull(24) ? null : reader.GetDateTime(24)

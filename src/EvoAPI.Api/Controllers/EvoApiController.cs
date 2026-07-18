@@ -5512,12 +5512,14 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500 ||
+                request.MarkupHighQuantity < 0 || request.MarkupHighQuantity > 500 ||
+                request.MarkupFoundational < 0 || request.MarkupFoundational > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 500"
+                    Message = "Markup percentages must be between 0 and 500"
                 });
             }
 
@@ -5533,9 +5535,10 @@ public class EvoApiController : BaseController
                     { "FromPrice", request.FromPrice },
                     { "ToPrice", request.ToPrice },
                     { "MarkupPercentage", request.MarkupPercentage },
-                    { "MarkupHighQuantity", request.MarkupHighQuantity }
+                    { "MarkupHighQuantity", request.MarkupHighQuantity },
+                    { "MarkupFoundational", request.MarkupFoundational }
                 };
-                
+
                 SetAuditCriticalUserContext();
                 await _auditCriticalService.LogChangeAsync(
                     $"Materials Markup Created - Company ID: {request.XcccId}",
@@ -5615,12 +5618,14 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500 ||
+                request.MarkupHighQuantity < 0 || request.MarkupHighQuantity > 500 ||
+                request.MarkupFoundational < 0 || request.MarkupFoundational > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 500"
+                    Message = "Markup percentages must be between 0 and 500"
                 });
             }
 
@@ -5647,15 +5652,17 @@ public class EvoApiController : BaseController
                     { "FromPrice", oldMarkupData.FromPrice },
                     { "ToPrice", oldMarkupData.ToPrice },
                     { "MarkupPercentage", oldMarkupData.MarkupPercentage },
-                    { "MarkupHighQuantity", oldMarkupData.MarkupHighQuantity }
+                    { "MarkupHighQuantity", oldMarkupData.MarkupHighQuantity },
+                    { "MarkupFoundational", oldMarkupData.MarkupFoundational }
                 };
-                
+
                 var newValues = new Dictionary<string, object?>
                 {
                     { "FromPrice", request.FromPrice },
                     { "ToPrice", request.ToPrice },
                     { "MarkupPercentage", request.MarkupPercentage },
-                    { "MarkupHighQuantity", request.MarkupHighQuantity }
+                    { "MarkupHighQuantity", request.MarkupHighQuantity },
+                    { "MarkupFoundational", request.MarkupFoundational }
                 };
                 
                 SetAuditCriticalUserContext();

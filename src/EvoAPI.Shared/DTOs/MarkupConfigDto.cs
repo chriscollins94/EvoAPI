@@ -16,9 +16,9 @@ namespace EvoAPI.Shared.DTOs;
 // new SRs.
 public class MarkupConfigDto
 {
-    public int?    TradeMarkupPercent      { get; set; }   // null = no trade override
-    public int?    CompanyDefaultPercent   { get; set; }
-    public int?    CompanySupplierPercent  { get; set; }
+    public decimal? TradeMarkupPercent      { get; set; }   // null = no trade override
+    public decimal? CompanyDefaultPercent   { get; set; }
+    public decimal? CompanySupplierPercent  { get; set; }
     public List<MarkupRangeDto> MaterialsRanges { get; set; } = new();
     public bool    TaxExempt               { get; set; }
     public decimal TaxFlatRate             { get; set; }   // percent, e.g. 7
@@ -35,6 +35,6 @@ public class MarkupRangeDto
 {
     public decimal From          { get; set; }   // mm_from
     public decimal To            { get; set; }   // mm_to
-    public int     Markup        { get; set; }   // mm_markup
-    public int     HighQtyMarkup { get; set; }   // mm_markuphighquantity (qty > 10 trigger)
+    public decimal Markup        { get; set; }   // mm_markup ("Quoted" markup - the AI quote path always uses this per D9)
+    public decimal HighQtyMarkup { get; set; }   // mm_markuphighquantity (qty > 10 trigger)
 }

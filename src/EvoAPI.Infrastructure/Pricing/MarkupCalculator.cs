@@ -24,10 +24,10 @@ public static class MarkupCalculator
         public decimal BaseCost            { get; set; }
         public decimal Quantity            { get; set; }
         public decimal TaxAmount           { get; set; }
-        public int     TaxPercent          { get; set; }
-        public int     MarkupPercent       { get; set; } // cascaded value (before supplier)
-        public int     SupplierPercent     { get; set; }
-        public int     EffectiveMarkup     => MarkupPercent + SupplierPercent;
+        public decimal TaxPercent          { get; set; }
+        public decimal MarkupPercent       { get; set; } // cascaded value (before supplier)
+        public decimal SupplierPercent     { get; set; }
+        public decimal EffectiveMarkup     => MarkupPercent + SupplierPercent;
         public decimal LineTotal           { get; set; } // ((cost*qty)+tax) * (1+effective/100), 2dp rounded
         public string  Source              { get; set; } = "none"; // trade / materials-range / company-default / none
     }
@@ -46,7 +46,7 @@ public static class MarkupCalculator
         if (taxable && !config.TaxExempt && config.TaxFlatRate > 0)
         {
             r.TaxAmount  = subtotal * (config.TaxFlatRate / 100m);
-            r.TaxPercent = (int)Math.Round(config.TaxFlatRate, MidpointRounding.AwayFromZero);
+            r.TaxPercent = config.TaxFlatRate;
         }
 
         // ---- Markup cascade ----------------------------------------------
@@ -57,7 +57,7 @@ public static class MarkupCalculator
         }
         else if (useMaterialsRanges && config.MaterialsRanges.Count > 0)
         {
-            int best = 0;
+            decimal best = 0;
             foreach (var range in config.MaterialsRanges)
             {
                 if (baseCost < range.From || baseCost > range.To) continue;
@@ -82,7 +82,7 @@ public static class MarkupCalculator
             r.SupplierPercent = config.CompanySupplierPercent.Value;
 
         // ---- Final --------------------------------------------------------
-        var totalRaw = (subtotal + r.TaxAmount) * (1m + (decimal)r.EffectiveMarkup / 100m);
+        var totalRaw = (subtotal + r.TaxAmount) * (1m + r.EffectiveMarkup / 100m);
         r.LineTotal  = Math.Round(totalRaw, 2, MidpointRounding.AwayFromZero);
 
         return r;
