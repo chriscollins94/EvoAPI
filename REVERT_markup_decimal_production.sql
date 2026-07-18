@@ -108,12 +108,33 @@ BEGIN
 END
 GO
 
--- ---- 3) Re-create the known default constraint ------------------------------
+-- ---- 3) Re-create the known default constraints -----------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.default_constraints WHERE name = 'DF_MaterialsMarkup_mm_markuphighquantity')
 BEGIN
     ALTER TABLE dbo.MaterialsMarkup
         ADD CONSTRAINT DF_MaterialsMarkup_mm_markuphighquantity DEFAULT ((0)) FOR mm_markuphighquantity;
 END
+
+-- The three xwosi percentage columns are NOT NULL and the service-item INSERT
+-- omits them, so their DEFAULT ((0)) constraints are load-bearing — without
+-- them every service-item insert fails (Msg 515).
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints dc
+               JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+               WHERE dc.parent_object_id = OBJECT_ID('dbo.xrefWorkOrderServiceItem') AND c.name = 'xwosi_percentagemarkup')
+    ALTER TABLE dbo.xrefWorkOrderServiceItem
+        ADD CONSTRAINT DF_xrefWorkOrderServiceItem_xwosi_percentagemarkup DEFAULT ((0)) FOR xwosi_percentagemarkup;
+
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints dc
+               JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+               WHERE dc.parent_object_id = OBJECT_ID('dbo.xrefWorkOrderServiceItem') AND c.name = 'xwosi_percentagemarkupsupplier')
+    ALTER TABLE dbo.xrefWorkOrderServiceItem
+        ADD CONSTRAINT DF_xrefWorkOrderServiceItem_xwosi_percentagemarkupsupplier DEFAULT ((0)) FOR xwosi_percentagemarkupsupplier;
+
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints dc
+               JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+               WHERE dc.parent_object_id = OBJECT_ID('dbo.xrefWorkOrderServiceItem') AND c.name = 'xwosi_percentagetax')
+    ALTER TABLE dbo.xrefWorkOrderServiceItem
+        ADD CONSTRAINT DF_xrefWorkOrderServiceItem_xwosi_percentagetax DEFAULT ((0)) FOR xwosi_percentagetax;
 GO
 
 -- ---- Verification -----------------------------------------------------------
