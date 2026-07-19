@@ -224,6 +224,10 @@ builder.Services.AddHostedService<EvoAPI.Infrastructure.Services.NteNotification
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IUserConsentRepository,
     EvoAPI.Infrastructure.Repositories.UserConsentRepository>();
 
+// Performance upload/dashboard (employee + zone Excel snapshots)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPerformanceRepository,
+    EvoAPI.Infrastructure.Repositories.PerformanceRepository>();
+
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
 // builder.Services.AddHostedService<TimeTrackingSyncService>();
@@ -264,6 +268,7 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireClaim("accesslevel", "ADMIN"));
     options.AddPolicy("AttackPointsOnly", policy => policy.RequireClaim("function", "Admin - Attack Points"));
+    options.AddPolicy("PerformanceOnly", policy => policy.RequireClaim("function", "Admin - Performance"));
     options.AddPolicy("CompanyAdminOnly", policy => policy.RequireClaim("function", "Admin - Company"));
     options.AddPolicy("UserAdminOnly", policy => 
     {
