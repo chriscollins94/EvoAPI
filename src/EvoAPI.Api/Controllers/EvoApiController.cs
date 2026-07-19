@@ -9280,6 +9280,118 @@ public class EvoApiController : BaseController
         }
     }
 
+    // Assign technicians to a just-created SR (New Service Request wizard, step 6).
+    // One WO per tech: first tech takes the primary WO, the rest get new numbered WOs.
+    [HttpPost("servicerequests/{srId:int}/technicians")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AssignServiceRequestTechniciansResponse>>> AssignServiceRequestTechnicians(int srId, [FromBody] AssignServiceRequestTechniciansRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null || request.Assignments == null || request.Assignments.Count == 0)
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "At least one technician assignment is required"
+                });
+            }
+
+            request.SrId = srId;
+
+            if (request.Assignments.Any(a => a.UId <= 0))
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "Each assignment requires a technician"
+                });
+            }
+
+            if (request.Assignments.Any(a => a.StartDateTimeUtc >= a.EndDateTimeUtc))
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "Each assignment's start must be before its end"
+                });
+            }
+
+            var result = await _dataService.AssignServiceRequestTechniciansAsync(request, UserId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("AssignServiceRequestTechnicians",
+                $"Assigned {result.WorkOrders.Count} technician(s) to SR {srId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<AssignServiceRequestTechniciansResponse>
+            {
+                Success = true,
+                Message = "Technicians assigned successfully",
+                Data = result,
+                Count = result.WorkOrders.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("AssignServiceRequestTechnicians", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error assigning technicians to service request {SrId}", srId);
+            return StatusCode(500, new ApiResponse<AssignServiceRequestTechniciansResponse>
+            {
+                Success = false,
+                Message = "An error occurred while assigning technicians"
+            });
+        }
+    }
+
+    // Double-booking check for the wizard: overlapping open WOs for each proposed
+    // tech + window. Informational only — the UI warns but still allows assignment.
+    [HttpPost("servicerequests/technician-conflicts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechScheduleConflictDto>>>> GetTechScheduleConflicts([FromBody] TechScheduleConflictsRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null || request.Assignments == null || request.Assignments.Count == 0)
+            {
+                return Ok(new ApiResponse<List<TechScheduleConflictDto>>
+                {
+                    Success = true,
+                    Message = "No assignments to check",
+                    Data = new List<TechScheduleConflictDto>(),
+                    Count = 0
+                });
+            }
+
+            var conflicts = await _dataService.GetTechScheduleConflictsAsync(request);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetTechScheduleConflicts",
+                $"Checked {request.Assignments.Count} assignment(s), found {conflicts.Count} conflict(s)", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<TechScheduleConflictDto>>
+            {
+                Success = true,
+                Message = conflicts.Count > 0 ? "Schedule conflicts found" : "No schedule conflicts",
+                Data = conflicts,
+                Count = conflicts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTechScheduleConflicts", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error checking technician schedule conflicts");
+            return StatusCode(500, new ApiResponse<List<TechScheduleConflictDto>>
+            {
+                Success = false,
+                Message = "An error occurred while checking schedule conflicts"
+            });
+        }
+    }
+
     // Trades + labor rates for a company, scoped for the New Service Request flow.
     // Mirrors the CompanyAdminOnly GetCompanyTrades data but is available to any
     // authenticated scheduler (creators are not necessarily company admins).

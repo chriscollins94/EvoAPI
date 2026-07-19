@@ -13295,6 +13295,268 @@ order by sr.sr_insertdatetime
     }
 
     /// <summary>
+    /// Assigns technicians to a just-created Service Request, one Work Order per tech.
+    /// The first assignment takes the primary WO if it is still unassigned (sets its
+    /// schedule dates and inserts the xrefWorkOrderUser row); every other tech gets a new
+    /// WO numbered max-suffix+1, mirroring legacy UpdateWorkOrderAssignOrCreate +
+    /// GetWorkOrderNumberNew. Each WO gets a system-generated note and
+    /// sp_updateWorkOrderStatusAuto; sp_updateServiceRequestStatusAuto runs once at the
+    /// end. All-or-nothing: any failure rolls the whole assignment back (the SR itself is
+    /// left untouched).
+    /// </summary>
+    public async Task<AssignServiceRequestTechniciansResponse> AssignServiceRequestTechniciansAsync(AssignServiceRequestTechniciansRequest request, int assignedByUserId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var response = new AssignServiceRequestTechniciansResponse { SrId = request.SrId };
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+            // SR context: primary WO (id, number, description, whether already assigned),
+            // the admin's display name, and the current max WO number suffix for the SR.
+            int primaryWoId;
+            string? primaryWoNumber;
+            string? primaryWoDescription;
+            bool primaryAssigned;
+            string adminName;
+
+            const string contextSql = @"
+                SELECT wo.wo_id, wo.wo_workordernumber, wo.wo_description,
+                       CASE WHEN EXISTS (SELECT 1 FROM xrefWorkOrderUser x WHERE x.wo_id = wo.wo_id) THEN 1 ELSE 0 END AS assigned,
+                       ISNULL((SELECT u_firstname + ' ' + u_lastname FROM [user] WHERE u_id = @u_id_admin), 'Office') AS admin_name
+                FROM ServiceRequest sr
+                JOIN WorkOrder wo ON wo.wo_id = sr.wo_id_primary
+                WHERE sr.sr_id = @sr_id";
+
+            using (var command = new SqlCommand(contextSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                command.Parameters.Add("@u_id_admin", SqlDbType.Int).Value = assignedByUserId;
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    throw new InvalidOperationException($"ServiceRequest {request.SrId} not found or has no primary WorkOrder");
+                }
+                primaryWoId = reader.GetInt32(0);
+                primaryWoNumber = reader.IsDBNull(1) ? null : reader.GetString(1);
+                primaryWoDescription = reader.IsDBNull(2) ? null : reader.GetString(2);
+                primaryAssigned = reader.GetInt32(3) == 1;
+                adminName = reader.GetString(4);
+            }
+
+            // Max existing "-N" suffix across the SR's WOs (deleted WOs must not cause
+            // duplicate numbers — same rule as legacy GetWorkOrderNumberNew).
+            var maxSuffix = 0;
+            string? baseNumber = null;
+            const string numbersSql = "SELECT wo_workordernumber FROM WorkOrder WHERE sr_id = @sr_id ORDER BY wo_id";
+            using (var command = new SqlCommand(numbersSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                    baseNumber ??= number;
+                    var dash = number.LastIndexOf('-');
+                    if (dash >= 0 && int.TryParse(number.Substring(dash + 1), out var suffix) && suffix > maxSuffix)
+                    {
+                        maxSuffix = suffix;
+                    }
+                }
+            }
+            if (string.IsNullOrEmpty(baseNumber) || baseNumber.LastIndexOf('-') < 0)
+            {
+                throw new InvalidOperationException($"ServiceRequest {request.SrId} has no numbered WorkOrder to derive new numbers from");
+            }
+            var numberPrefix = baseNumber.Substring(0, baseNumber.LastIndexOf('-') + 1);
+
+            var usedPrimary = false;
+            foreach (var assignment in request.Assignments)
+            {
+                int woId;
+                string woNumber;
+
+                if (!usedPrimary && !primaryAssigned)
+                {
+                    // First tech takes the primary WO: stamp its schedule and assign.
+                    usedPrimary = true;
+                    woId = primaryWoId;
+                    woNumber = primaryWoNumber ?? baseNumber;
+
+                    const string updatePrimarySql = @"
+                        UPDATE WorkOrder SET wo_startdatetime = @start, wo_enddatetime = @end WHERE wo_id = @wo_id";
+                    using var command = new SqlCommand(updatePrimarySql, connection, transaction);
+                    command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+                    command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+                    command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                    await command.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    // Additional tech: new WO numbered max-suffix+1. wo_nte = 0 matches the
+                    // legacy convention — the SR's NTE lives on the primary WO only.
+                    maxSuffix++;
+                    woNumber = numberPrefix + maxSuffix;
+
+                    const string insertWoSql = @"
+                        INSERT INTO WorkOrder (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id, wo_startdatetime, wo_enddatetime)
+                        VALUES (@sr_id, @wo_workordernumber, @wo_description, 0,
+                                (SELECT ss_id FROM StatusSecondary WHERE ss_code = 'unassigned-1'),
+                                @start, @end);
+                        SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                    using var command = new SqlCommand(insertWoSql, connection, transaction);
+                    command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                    command.Parameters.Add("@wo_workordernumber", SqlDbType.VarChar, 103).Value = Left(woNumber, 103);
+                    command.Parameters.Add("@wo_description", SqlDbType.VarChar, 200).Value = (object?)primaryWoDescription ?? DBNull.Value;
+                    command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+                    command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        throw new InvalidOperationException($"Failed to insert WorkOrder {woNumber} for ServiceRequest {request.SrId}");
+                    }
+                    woId = Convert.ToInt32(result);
+                }
+
+                // Assign the tech, leave the audit-trail note, and let the status SP set
+                // the WO status (assigned/scheduled per its business rules).
+                const string assignSql = @"
+                    INSERT INTO xrefWorkOrderUser (wo_id, u_id) VALUES (@wo_id, @u_id);
+
+                    INSERT INTO WorkOrderNote (wo_id, won_note, won_public, won_user)
+                    VALUES (@wo_id,
+                            'Work Order ' + @wo_number + ' assigned to ' +
+                            ISNULL((SELECT u_firstname + ' ' + u_lastname FROM [user] WHERE u_id = @u_id), 'Unknown') +
+                            ' via New Service Request by ' + @admin_name + '.',
+                            0, 'System Generated');
+
+                    EXEC sp_updateWorkOrderStatusAuto @wo_id;";
+
+                using (var command = new SqlCommand(assignSql, connection, transaction))
+                {
+                    command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                    command.Parameters.Add("@u_id", SqlDbType.Int).Value = assignment.UId;
+                    command.Parameters.Add("@wo_number", SqlDbType.VarChar, 103).Value = woNumber;
+                    command.Parameters.Add("@admin_name", SqlDbType.VarChar, 200).Value = adminName;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                response.WorkOrders.Add(new AssignedWorkOrderDto { WoId = woId, WoWorkOrderNumber = woNumber, UId = assignment.UId });
+            }
+
+            // Roll the WO statuses up to the SR once, exactly like the legacy flow.
+            const string srStatusSql = "EXEC sp_updateServiceRequestStatusAuto @sr_id";
+            using (var command = new SqlCommand(srStatusSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignServiceRequestTechnicians",
+                Detail = $"Assigned {response.WorkOrders.Count} technician(s) to ServiceRequest {request.SrId} " +
+                         $"({string.Join(", ", response.WorkOrders.Select(w => $"{w.WoWorkOrderNumber}→u{w.UId}"))}), by user {assignedByUserId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning technicians to ServiceRequest {SrId}", request.SrId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignServiceRequestTechnicians",
+                Detail = $"Error assigning technicians to ServiceRequest {request.SrId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Double-booking check for the New Service Request wizard: existing open work orders
+    /// (parent status Unassigned/Assigned/Incomplete) already scheduled for each proposed
+    /// tech that overlap the proposed window. Informational — never blocks assignment.
+    /// </summary>
+    public async Task<List<TechScheduleConflictDto>> GetTechScheduleConflictsAsync(TechScheduleConflictsRequest request)
+    {
+        const string sql = @"
+            SELECT wo.wo_id, wo.wo_workordernumber, wo.wo_startdatetime, wo.wo_enddatetime,
+                   l.l_location, s.s_status + ' - ' + ss.ss_statussecondary AS wo_status
+            FROM xrefWorkOrderUser x
+            JOIN WorkOrder wo ON wo.wo_id = x.wo_id
+            JOIN StatusSecondary ss ON ss.ss_id = wo.ss_id
+            JOIN [status] s ON s.s_id = ss.s_id
+            JOIN ServiceRequest sr ON sr.sr_id = wo.sr_id
+            JOIN Location l ON l.l_id = sr.l_id
+            WHERE x.u_id = @u_id
+              AND s.s_status IN ('Unassigned', 'Assigned', 'Incomplete')
+              AND wo.wo_startdatetime IS NOT NULL
+              AND wo.wo_enddatetime IS NOT NULL
+              AND wo.wo_startdatetime < @end
+              AND wo.wo_enddatetime > @start
+            ORDER BY wo.wo_startdatetime";
+
+        var conflicts = new List<TechScheduleConflictDto>();
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        foreach (var assignment in request.Assignments)
+        {
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.Add("@u_id", SqlDbType.Int).Value = assignment.UId;
+            command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+            command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                conflicts.Add(new TechScheduleConflictDto
+                {
+                    UId = assignment.UId,
+                    WoId = reader.GetInt32(0),
+                    WoWorkOrderNumber = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    // wo datetimes are stored UTC; stamp the kind so JSON carries the Z suffix
+                    StartDateTimeUtc = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
+                    EndDateTimeUtc = DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
+                    Location = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Status = reader.IsDBNull(5) ? null : reader.GetString(5)
+                });
+            }
+        }
+
+        return conflicts;
+    }
+
+    /// <summary>
     /// Tech guidance for the New Service Request flow: per-technician distance from the job
     /// (via home/customer zip lat-lon) plus hours booked over the next 7 days, for techs that
     /// hold the selected trade. Faithful port of the legacy EvoData.GetTechUtilization

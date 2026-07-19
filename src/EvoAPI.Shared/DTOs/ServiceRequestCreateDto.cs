@@ -60,6 +60,63 @@ public class CreateServiceRequestResponse
 }
 
 /// <summary>
+/// Assign one or more technicians to a just-created Service Request, one Work Order per
+/// tech: the first assignment takes the (still unassigned) primary WO, each additional
+/// tech gets a newly numbered WO — the same shape the legacy schedule page produces via
+/// UpdateWorkOrderAssignOrCreate.
+/// </summary>
+public class AssignServiceRequestTechniciansRequest
+{
+    public int SrId { get; set; }
+    public List<ServiceRequestTechAssignment> Assignments { get; set; } = new();
+}
+
+public class ServiceRequestTechAssignment
+{
+    public int UId { get; set; }
+
+    /// <summary>Scheduled start, UTC (wo_startdatetime is stored UTC).</summary>
+    public DateTime StartDateTimeUtc { get; set; }
+
+    /// <summary>Scheduled end, UTC.</summary>
+    public DateTime EndDateTimeUtc { get; set; }
+}
+
+public class AssignServiceRequestTechniciansResponse
+{
+    public int SrId { get; set; }
+    public List<AssignedWorkOrderDto> WorkOrders { get; set; } = new();
+}
+
+public class AssignedWorkOrderDto
+{
+    public int WoId { get; set; }
+    public string WoWorkOrderNumber { get; set; } = string.Empty;
+    public int UId { get; set; }
+}
+
+/// <summary>
+/// Pre-create double-booking check: for each proposed tech + time window, find existing
+/// open work orders (Unassigned/Assigned/Incomplete) already scheduled for that tech that
+/// overlap the window. Informational only — assignment is still allowed.
+/// </summary>
+public class TechScheduleConflictsRequest
+{
+    public List<ServiceRequestTechAssignment> Assignments { get; set; } = new();
+}
+
+public class TechScheduleConflictDto
+{
+    public int UId { get; set; }
+    public int WoId { get; set; }
+    public string WoWorkOrderNumber { get; set; } = string.Empty;
+    public DateTime StartDateTimeUtc { get; set; }
+    public DateTime EndDateTimeUtc { get; set; }
+    public string? Location { get; set; }
+    public string? Status { get; set; }
+}
+
+/// <summary>
 /// Client-reported attachment upload failure, logged to the audit table so it can be
 /// troubleshooted later (the office user won't see the browser console).
 /// </summary>

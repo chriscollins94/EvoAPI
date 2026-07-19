@@ -244,6 +244,8 @@ public interface IDataService
     // Service Request creation (New Service Request flow)
     Task<bool> ServiceRequestNumberExistsAsync(string requestNumber);
     Task<CreateServiceRequestResponse> InsertServiceRequestAsync(CreateServiceRequestRequest request, int createdByUserId);
+    Task<AssignServiceRequestTechniciansResponse> AssignServiceRequestTechniciansAsync(AssignServiceRequestTechniciansRequest request, int assignedByUserId);
+    Task<List<TechScheduleConflictDto>> GetTechScheduleConflictsAsync(TechScheduleConflictsRequest request);
     Task<List<TechUtilizationDto>> GetTechUtilizationAsync(int tId, string customerZip);
     Task<NteEstimateDto> GetNteEstimateAsync(int xcccId, int tId);
 
