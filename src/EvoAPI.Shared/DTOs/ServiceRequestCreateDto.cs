@@ -35,7 +35,10 @@ public class CreateServiceRequestRequest
     public bool SrRequiresPreArrivalCall { get; set; }
     public bool SrShiftDifferential { get; set; }
 
-    /// <summary>How the request came in: "Phone Call" or "Email". Null if not recorded.</summary>
+    /// <summary>Agency, chosen from the ServiceRequestAgencies ConfigSetting list. Null if not recorded.</summary>
+    public string? SrAgency { get; set; }
+
+    /// <summary>How the request came in: "Phone Call", "Email" or "Portal". Null if not recorded.</summary>
     public string? SrMethodOfRequest { get; set; }
 
     // Phone Call path: details of the person who called in the request.
@@ -45,6 +48,10 @@ public class CreateServiceRequestRequest
 
     /// <summary>Email path: the full pasted email body, including sender info.</summary>
     public string? SrRequestEmailText { get; set; }
+
+    // Portal path: where the request lives and any notes about it.
+    public string? SrPortalUrl { get; set; }
+    public string? SrPortalNote { get; set; }
 
     // Point of contact at the job site.
     public string? SrSiteContactName { get; set; }

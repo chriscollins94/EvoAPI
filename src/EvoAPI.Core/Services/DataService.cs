@@ -13082,6 +13082,9 @@ order by sr.sr_insertdatetime
         var srRequestorEmail = Left(request.SrRequestorEmail, 150);
         var srRequestorPhone = Left(request.SrRequestorPhone, 30);
         var srRequestEmailText = request.SrRequestEmailText;   // VARCHAR(MAX), no truncation
+        var srPortalUrl = Left(request.SrPortalUrl, 500);
+        var srPortalNote = Left(request.SrPortalNote, 4000);
+        var srAgency = Left(request.SrAgency, 100);
         var srSiteContactName = Left(request.SrSiteContactName, 100);
         var srSiteContactPhone = Left(request.SrSiteContactPhone, 30);
         var srSiteContactEmail = Left(request.SrSiteContactEmail, 150);
@@ -13107,12 +13110,14 @@ order by sr.sr_insertdatetime
                          sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly,
                          sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby,
                          sr_methodofrequest, sr_requestor_name, sr_requestor_email, sr_requestor_phone, sr_requestemailtext,
+                         sr_portal_url, sr_portal_note, sr_agency,
                          sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email)
                     VALUES
                         (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
                          @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
                          @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby,
                          @sr_methodofrequest, @sr_requestor_name, @sr_requestor_email, @sr_requestor_phone, @sr_requestemailtext,
+                         @sr_portal_url, @sr_portal_note, @sr_agency,
                          @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email);
                     SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
@@ -13139,6 +13144,9 @@ order by sr.sr_insertdatetime
                     command.Parameters.Add("@sr_requestor_email", SqlDbType.VarChar, 150).Value = (object?)srRequestorEmail ?? DBNull.Value;
                     command.Parameters.Add("@sr_requestor_phone", SqlDbType.VarChar, 30).Value = (object?)srRequestorPhone ?? DBNull.Value;
                     command.Parameters.Add("@sr_requestemailtext", SqlDbType.VarChar, -1).Value = (object?)srRequestEmailText ?? DBNull.Value;
+                    command.Parameters.Add("@sr_portal_url", SqlDbType.VarChar, 500).Value = (object?)srPortalUrl ?? DBNull.Value;
+                    command.Parameters.Add("@sr_portal_note", SqlDbType.VarChar, 4000).Value = (object?)srPortalNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_agency", SqlDbType.VarChar, 100).Value = (object?)srAgency ?? DBNull.Value;
                     command.Parameters.Add("@sr_sitecontact_name", SqlDbType.VarChar, 100).Value = (object?)srSiteContactName ?? DBNull.Value;
                     command.Parameters.Add("@sr_sitecontact_phone", SqlDbType.VarChar, 30).Value = (object?)srSiteContactPhone ?? DBNull.Value;
                     command.Parameters.Add("@sr_sitecontact_email", SqlDbType.VarChar, 150).Value = (object?)srSiteContactEmail ?? DBNull.Value;
