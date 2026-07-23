@@ -45,6 +45,19 @@ public class ActiveServiceRequestDto
     public bool IsActive { get; set; }
 }
 
+public class PendingTechInfoReportDto
+{
+    public int SrId { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    public DateTime InsertDateTime { get; set; }
+    public DateTime? StartDateTime { get; set; }
+    public string TechFirstName { get; set; } = string.Empty;
+    public string TechLastName { get; set; } = string.Empty;
+    public string Trade { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+    public int? MinutesInPriorStatus { get; set; } // Historic mode only
+}
+
 public class WorkOrderRequest
 {
     public int NumberOfDays { get; set; } = 30;

@@ -548,6 +548,45 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("pending-tech-info")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<PendingTechInfoReportDto>>>> GetPendingTechInfo([FromQuery] string mode = "current")
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var isHistoric = string.Equals(mode, "historic", StringComparison.OrdinalIgnoreCase);
+            var dataTable = isHistoric
+                ? await _dataService.GetPendingTechInfoHistoricAsync()
+                : await _dataService.GetPendingTechInfoCurrentAsync();
+            var reportData = ConvertDataTableToPendingTechInfo(dataTable);
+
+            stopwatch.Stop();
+
+            await LogAuditAsync("GetPendingTechInfo", $"Retrieved {reportData.Count} {(isHistoric ? "historic" : "current")} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<PendingTechInfoReportDto>>
+            {
+                Success = true,
+                Message = "Pending tech info data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetPendingTechInfo", ex);
+
+            return StatusCode(500, new ApiResponse<List<PendingTechInfoReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve pending tech info data"
+            });
+        }
+    }
+
     [HttpGet("timecard-discrepancies")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<TimecardDiscrepanciesDto>>>> GetTimecardDiscrepancies(
@@ -942,7 +981,31 @@ public class ReportsController : BaseController
                 IsActive = ConvertToInt(row["u_active"]) == 1
             });
         }
-        
+
+        return result;
+    }
+
+    private static List<PendingTechInfoReportDto> ConvertDataTableToPendingTechInfo(DataTable dataTable)
+    {
+        var result = new List<PendingTechInfoReportDto>();
+        var hasMinutes = dataTable.Columns.Contains("ssc_minutesinpriorstatus");
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new PendingTechInfoReportDto
+            {
+                SrId = ConvertToInt(row["sr_id"]),
+                RequestNumber = CleanString(row["sr_requestnumber"]),
+                InsertDateTime = ConvertToDateTime(row["wo_insertdatetime"]) ?? DateTime.MinValue,
+                StartDateTime = ConvertToDateTime(row["wo_startdatetime"]),
+                TechFirstName = CleanString(row["u_firstname"]),
+                TechLastName = CleanString(row["u_lastname"]),
+                Trade = CleanString(row["t_trade"]),
+                CompanyName = CleanString(row["c_name"]),
+                MinutesInPriorStatus = hasMinutes ? ConvertToNullableInt(row["ssc_minutesinpriorstatus"]) : null
+            });
+        }
+
         return result;
     }
 

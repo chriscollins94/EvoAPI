@@ -5134,6 +5134,143 @@ order by sr.sr_insertdatetime
         }
     }
 
+    public async Task<DataTable> GetPendingTechInfoCurrentAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            // Work orders currently in secondary status 37 (Pending Tech Info Basic)
+            const string sql = @"
+                select wo.sr_id, sr.sr_requestnumber, u.u_firstname, u.u_lastname, wo.wo_insertdatetime, t.t_trade, c.c_name, wo.wo_startdatetime
+                from servicerequest sr, workorder wo, statussecondary ss, xrefworkorderuser xwou, [user] u, trade t, xrefcompanycallcenter xccc, company c
+                where ss.ss_id = 37
+                and wo.sr_id = sr.sr_id
+                and sr.xccc_id = xccc.xccc_id
+                and xccc.c_id = c.c_id
+                and wo.ss_id = ss.ss_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and sr.t_id = t.t_id
+                order by wo.wo_insertdatetime desc
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetPendingTechInfoCurrent",
+                        Detail = $"Retrieved {dataTable.Rows.Count} pending tech info current records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfoCurrent",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving pending tech info current data");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetPendingTechInfoHistoricAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            // Work orders that have passed through secondary status 37 (Pending Tech Info Basic),
+            // with time spent in that status from statussecondarychange
+            const string sql = @"
+                select wo.sr_id, sr.sr_requestnumber, u.u_firstname, u.u_lastname, wo.wo_insertdatetime, t.t_trade, c.c_name, wo.wo_startdatetime, ssc.ssc_minutesinpriorstatus
+                from servicerequest sr, workorder wo, statussecondarychange ssc, xrefworkorderuser xwou, [user] u, trade t, xrefcompanycallcenter xccc, company c
+                where ssc.ss_id_prior = 37
+                and wo.sr_id = sr.sr_id
+                and sr.xccc_id = xccc.xccc_id
+                and xccc.c_id = c.c_id
+                and wo.wo_id = ssc.wo_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and sr.t_id = t.t_id
+                order by wo.wo_insertdatetime desc
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetPendingTechInfoHistoric",
+                        Detail = $"Retrieved {dataTable.Rows.Count} pending tech info historic records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfoHistoric",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving pending tech info historic data");
+            throw;
+        }
+    }
+
     public async Task<List<MissingReceiptDashboardDto>> GetMissingReceiptsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
