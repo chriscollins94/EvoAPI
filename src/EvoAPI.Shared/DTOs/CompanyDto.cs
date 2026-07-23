@@ -29,6 +29,7 @@ public class CompanyDetailDto
     public bool NteGuidance { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
+    public string? Agencies { get; set; }
     public string? InvoiceExtraText { get; set; }
     public string? Note { get; set; }
     public string? PortalUrl { get; set; }
@@ -89,6 +90,10 @@ public class CompanyListDto
     public decimal? TripCharge { get; set; }
     public bool IvrRequestNumber { get; set; }
     public bool NteGuidance { get; set; }
+
+    // Comma-delimited Agency options for the New Service Request Agency dropdown
+    // (hidden when empty).
+    public string? Agencies { get; set; }
 }
 
 public class UpdateCompanyGeneralInfoRequest
@@ -111,6 +116,7 @@ public class UpdateCompanyGeneralInfoRequest
     public bool NteGuidance { get; set; }
     public string? ClientRepresentative { get; set; }
     public string? LicenseRepresentative { get; set; }
+    public string? Agencies { get; set; }
     public string? InvoiceExtraText { get; set; }
     public string? Note { get; set; }
     public string? PortalUrl { get; set; }

@@ -5210,6 +5210,7 @@ public class EvoApiController : BaseController
                     { "IvrRequestNumber", currentCompany?.IvrRequestNumber },
                     { "ClientRepresentative", currentCompany?.ClientRepresentative },
                     { "LicenseRepresentative", currentCompany?.LicenseRepresentative },
+                    { "Agencies", currentCompany?.Agencies },
                     { "InvoiceExtraText", currentCompany?.InvoiceExtraText },
                     { "Note", currentCompany?.Note }
                 };
@@ -5231,6 +5232,7 @@ public class EvoApiController : BaseController
                     { "IvrRequestNumber", request.IvrRequestNumber },
                     { "ClientRepresentative", request.ClientRepresentative },
                     { "LicenseRepresentative", request.LicenseRepresentative },
+                    { "Agencies", request.Agencies },
                     { "InvoiceExtraText", request.InvoiceExtraText },
                     { "Note", request.Note }
                 };

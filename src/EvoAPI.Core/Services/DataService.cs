@@ -7755,7 +7755,8 @@ order by sr.sr_insertdatetime
                     xccc.xccc_note,
                     xccc.xccc_tripcharge,
                     xccc.xccc_ivrrequestnumber,
-                    xccc.xccc_nteguidance
+                    xccc.xccc_nteguidance,
+                    xccc.xccc_agencies
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 WHERE xccc.cc_id = @callCenterId
@@ -7780,7 +7781,8 @@ order by sr.sr_insertdatetime
                             Note = reader.IsDBNull(5) ? null : reader.GetString(5),
                             TripCharge = reader.IsDBNull(6) ? null : reader.GetDecimal(6),
                             IvrRequestNumber = !reader.IsDBNull(7) && reader.GetBoolean(7),
-                            NteGuidance = !reader.IsDBNull(8) && reader.GetBoolean(8)
+                            NteGuidance = !reader.IsDBNull(8) && reader.GetBoolean(8),
+                            Agencies = reader.IsDBNull(9) ? null : reader.GetString(9)
                         });
                     }
                 }
@@ -7860,7 +7862,8 @@ order by sr.sr_insertdatetime
                     t.terms_description,
                     t.terms_numberofdays,
                     xccc.xccc_markuptriggeramount,
-                    xccc.xccc_nteguidance
+                    xccc.xccc_nteguidance,
+                    xccc.xccc_agencies
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
@@ -7910,7 +7913,8 @@ order by sr.sr_insertdatetime
                             TermsDescription = reader.IsDBNull(28) ? null : reader.GetString(28),
                             TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29),
                             MarkupTriggerAmount = reader.IsDBNull(30) ? null : reader.GetDecimal(30),
-                            NteGuidance = !reader.IsDBNull(31) && reader.GetBoolean(31)
+                            NteGuidance = !reader.IsDBNull(31) && reader.GetBoolean(31),
+                            Agencies = reader.IsDBNull(32) ? null : reader.GetString(32)
                         };
                     }
                 }
@@ -8059,6 +8063,7 @@ order by sr.sr_insertdatetime
                     xccc_nteguidance = @nteguidance,
                     xccc_clientrep = @clientrep,
                     xccc_licenserep = @licenserep,
+                    xccc_agencies = @agencies,
                     xccc_invoiceextratext = @invoiceextratext,
                     xccc_note = @note,
                     xccc_modifieddatetime = GETDATE()
@@ -8093,6 +8098,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@nteguidance", SqlDbType.Bit).Value = request.NteGuidance;
                 command.Parameters.Add("@clientrep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.ClientRepresentative) ? (object)request.ClientRepresentative : DBNull.Value;
                 command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
+                command.Parameters.Add("@agencies", SqlDbType.VarChar, 1000).Value = !string.IsNullOrEmpty(request.Agencies) ? (object)request.Agencies : DBNull.Value;
                 command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
                 command.Parameters.Add("@note", SqlDbType.VarChar, 8000).Value = !string.IsNullOrEmpty(request.Note) ? (object)request.Note : DBNull.Value;
                 command.Parameters.Add("@portalurl", SqlDbType.VarChar, 100).Value = !string.IsNullOrEmpty(request.PortalUrl) ? (object)request.PortalUrl : DBNull.Value;
