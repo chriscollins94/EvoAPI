@@ -13089,6 +13089,13 @@ order by sr.sr_insertdatetime
         var srSiteContactPhone = Left(request.SrSiteContactPhone, 30);
         var srSiteContactEmail = Left(request.SrSiteContactEmail, 150);
 
+        // PO / Invoice / Quote contact capture. PO provider fields only carry values when PO is required.
+        var srPoProviderName = request.SrPoRequired ? Left(request.SrPoProviderName, 100) : null;
+        var srPoProviderPhone = request.SrPoRequired ? Left(request.SrPoProviderPhone, 30) : null;
+        var srPoProviderEmail = request.SrPoRequired ? Left(request.SrPoProviderEmail, 150) : null;
+        var srInvoiceEmail = Left(request.SrInvoiceEmail, 150);
+        var srQuoteEmail = Left(request.SrQuoteEmail, 150);
+
         var srNte = request.SrNte ?? 0m;
         var srTripCharge = request.SrTripChargeWorked ?? 100m;
         var ssId = request.SsId ?? 1;
@@ -13111,14 +13118,18 @@ order by sr.sr_insertdatetime
                          sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby,
                          sr_methodofrequest, sr_requestor_name, sr_requestor_email, sr_requestor_phone, sr_requestemailtext,
                          sr_portal_url, sr_portal_note, sr_agency,
-                         sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email)
+                         sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email,
+                         sr_porequired, sr_poprovider_name, sr_poprovider_phone, sr_poprovider_email,
+                         sr_invoice_email, sr_quote_email)
                     VALUES
                         (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
                          @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
                          @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby,
                          @sr_methodofrequest, @sr_requestor_name, @sr_requestor_email, @sr_requestor_phone, @sr_requestemailtext,
                          @sr_portal_url, @sr_portal_note, @sr_agency,
-                         @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email);
+                         @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email,
+                         @sr_porequired, @sr_poprovider_name, @sr_poprovider_phone, @sr_poprovider_email,
+                         @sr_invoice_email, @sr_quote_email);
                     SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
                 using (var command = new SqlCommand(insertSrSql, connection, transaction))
@@ -13150,6 +13161,12 @@ order by sr.sr_insertdatetime
                     command.Parameters.Add("@sr_sitecontact_name", SqlDbType.VarChar, 100).Value = (object?)srSiteContactName ?? DBNull.Value;
                     command.Parameters.Add("@sr_sitecontact_phone", SqlDbType.VarChar, 30).Value = (object?)srSiteContactPhone ?? DBNull.Value;
                     command.Parameters.Add("@sr_sitecontact_email", SqlDbType.VarChar, 150).Value = (object?)srSiteContactEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_porequired", SqlDbType.Bit).Value = request.SrPoRequired;
+                    command.Parameters.Add("@sr_poprovider_name", SqlDbType.VarChar, 100).Value = (object?)srPoProviderName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_poprovider_phone", SqlDbType.VarChar, 30).Value = (object?)srPoProviderPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_poprovider_email", SqlDbType.VarChar, 150).Value = (object?)srPoProviderEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_invoice_email", SqlDbType.VarChar, 150).Value = (object?)srInvoiceEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_quote_email", SqlDbType.VarChar, 150).Value = (object?)srQuoteEmail ?? DBNull.Value;
 
                     var result = await command.ExecuteScalarAsync();
                     if (result == null || result == DBNull.Value)

@@ -57,6 +57,18 @@ public class CreateServiceRequestRequest
     public string? SrSiteContactName { get; set; }
     public string? SrSiteContactPhone { get; set; }
     public string? SrSiteContactEmail { get; set; }
+
+    /// <summary>True when a purchase order is required. The PO provider fields below only carry values when set.</summary>
+    public bool SrPoRequired { get; set; }
+    public string? SrPoProviderName { get; set; }
+    public string? SrPoProviderPhone { get; set; }
+    public string? SrPoProviderEmail { get; set; }
+
+    /// <summary>Email to submit the invoice to (defaulted from the company's 'Billing' contact, editable).</summary>
+    public string? SrInvoiceEmail { get; set; }
+
+    /// <summary>Email to submit the quote to (defaulted from the company's 'Quote' contact, editable).</summary>
+    public string? SrQuoteEmail { get; set; }
 }
 
 public class CreateServiceRequestResponse
