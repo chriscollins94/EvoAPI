@@ -269,6 +269,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("AdminOnly", policy => policy.RequireClaim("accesslevel", "ADMIN"));
     options.AddPolicy("AttackPointsOnly", policy => policy.RequireClaim("function", "Admin - Attack Points"));
     options.AddPolicy("PerformanceOnly", policy => policy.RequireClaim("function", "Admin - Performance"));
+    options.AddPolicy("SkillLevelOnly", policy => policy.RequireClaim("function", "Admin - Skill Level"));
     options.AddPolicy("CompanyAdminOnly", policy => policy.RequireClaim("function", "Admin - Company"));
     options.AddPolicy("UserAdminOnly", policy => 
     {
