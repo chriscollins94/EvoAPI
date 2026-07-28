@@ -60,11 +60,15 @@ public class AuthenticationController : BaseController
             var password = request.Password;
             var require2fa = false;
 
-            if (userRequires2fa && password.Length >= 3 && int.TryParse(password.Substring(password.Length - 3), out int providedCode))
+            // Compare the trailing 3 characters as a string - the expected code is zero-padded
+            // (e.g. "060"), so parsing to an int here would drop the leading zero and never match.
+            var providedCode = password.Length >= 3 ? password.Substring(password.Length - 3) : null;
+
+            if (userRequires2fa && providedCode != null && providedCode.All(char.IsDigit))
             {
                 // User requires 2FA and password ends with 3 digits
                 var expectedCode = _authenticationService.CalculateSecureCode();
-                if (providedCode.ToString() == expectedCode)
+                if (providedCode == expectedCode)
                 {
                     // Valid 2FA code - strip it from password
                     password = password.Substring(0, password.Length - 3);
