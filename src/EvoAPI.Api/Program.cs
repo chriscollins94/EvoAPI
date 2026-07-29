@@ -148,6 +148,7 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuditCriticalService, AuditCriticalService>();
 builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
+builder.Services.AddScoped<IServiceItemInventoryRepository, EvoAPI.Infrastructure.Repositories.ServiceItemInventoryRepository>();
 
 // Register authentication services
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
@@ -271,6 +272,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PerformanceOnly", policy => policy.RequireClaim("function", "Admin - Performance"));
     options.AddPolicy("SkillLevelOnly", policy => policy.RequireClaim("function", "Admin - Skill Level"));
     options.AddPolicy("CompanyAdminOnly", policy => policy.RequireClaim("function", "Admin - Company"));
+    options.AddPolicy("ServiceItemsOnly", policy => policy.RequireClaim("function", "Admin - Service Items"));
     options.AddPolicy("UserAdminOnly", policy => 
     {
         policy.RequireClaim("accesslevel", "ADMIN");
