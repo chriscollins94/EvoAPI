@@ -8,6 +8,10 @@
 -- Metric targets live in ConfigSetting (cs_type = 'PerformanceTarget'), seeded
 -- below; edited from the admin Performance page, never auto-updated by uploads.
 -- Metric display names / formats / higher-vs-lower-is-better live in code.
+--
+-- This script only runs on a database that has never had these tables. For an
+-- existing database, add_performance_zone_columns.sql adds the two zone columns
+-- introduced with the trimmed zone workbook format -- keep the two in sync.
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PerformanceUpload')
 BEGIN
@@ -70,7 +74,9 @@ BEGIN
         pz_callbacks           DECIMAL(18,6) NULL,
         pz_pendingtechinfo     DECIMAL(18,6) NULL,
         pz_positiveqtrpct      DECIMAL(18,6) NULL,
-        pz_profitgrade         VARCHAR(4)    NULL,        -- not present in zone summary rows today; kept for symmetry
+        pz_revpertechperday    DECIMAL(18,6) NULL,        -- $/tech/day; zone file only, untargeted
+        pz_ytdcontribution     DECIMAL(18,6) NULL,        -- cumulative $, often negative; zone file only, untargeted
+        pz_profitgrade         VARCHAR(4)    NULL,        -- retired: the zone file no longer has a grade column
         pz_insertdatetime      DATETIME      NOT NULL DEFAULT GETDATE(),
         CONSTRAINT UQ_PerformanceZone_Batch_Zone UNIQUE (pfu_id, z_id)
     );

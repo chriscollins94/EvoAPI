@@ -53,6 +53,12 @@ public class PerformanceZoneDto
     public string? ZoneDescription { get; set; }
     public int UploadId { get; set; }
     public DateTime ReportDate { get; set; }
+
+    // Zone-file-only metrics. The technician file has no equivalent columns, so
+    // these live on the zone DTO alone. Both are untargeted.
+    public decimal? RevPerTechPerDay { get; set; }
+    public decimal? YtdContribution { get; set; }
+
     public decimal? Utilization { get; set; }
     public decimal? AchLaborTrip { get; set; }
     public decimal? CallOuts { get; set; }
@@ -64,7 +70,6 @@ public class PerformanceZoneDto
     public decimal? Callbacks { get; set; }
     public decimal? PendingTechInfo { get; set; }
     public decimal? PositiveQtrPct { get; set; }
-    public string? ProfitGrade { get; set; }
 }
 
 /// <summary>
@@ -107,6 +112,8 @@ public class PerformanceEmployeeRowDto
 public class PerformanceZoneRowDto
 {
     public string ZoneAcronym { get; set; } = string.Empty;
+    public decimal? RevPerTechPerDay { get; set; }
+    public decimal? YtdContribution { get; set; }
     public decimal? Utilization { get; set; }
     public decimal? AchLaborTrip { get; set; }
     public decimal? CallOuts { get; set; }
@@ -118,7 +125,6 @@ public class PerformanceZoneRowDto
     public decimal? Callbacks { get; set; }
     public decimal? PendingTechInfo { get; set; }
     public decimal? PositiveQtrPct { get; set; }
-    public string? ProfitGrade { get; set; }
 }
 
 /// <summary>

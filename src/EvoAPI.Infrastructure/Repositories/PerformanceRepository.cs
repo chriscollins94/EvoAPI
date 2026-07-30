@@ -25,7 +25,12 @@ public class PerformanceRepository : IPerformanceRepository
         pe.pe_profitgrade         AS ProfitGrade,
         pe.pe_healthscore         AS HealthScore";
 
+    // Rev Per Tech Per Day and YTD Contribution are zone-file-only and have no
+    // technician equivalent, so they appear here and not in EmployeeMetricColumns.
+    // pz_profitgrade is intentionally absent: the zone file no longer carries a grade.
     private const string ZoneMetricColumns = @"
+        pz.pz_revpertechperday    AS RevPerTechPerDay,
+        pz.pz_ytdcontribution     AS YtdContribution,
         pz.pz_utilization         AS Utilization,
         pz.pz_achlabortrip        AS AchLaborTrip,
         pz.pz_callouts            AS CallOuts,
@@ -36,8 +41,7 @@ public class PerformanceRepository : IPerformanceRepository
         pz.pz_receiptsviolations  AS ReceiptsViolations,
         pz.pz_callbacks           AS Callbacks,
         pz.pz_pendingtechinfo     AS PendingTechInfo,
-        pz.pz_positiveqtrpct      AS PositiveQtrPct,
-        pz.pz_profitgrade         AS ProfitGrade";
+        pz.pz_positiveqtrpct      AS PositiveQtrPct";
 
     public PerformanceRepository(IConfiguration configuration)
     {
@@ -164,13 +168,15 @@ public class PerformanceRepository : IPerformanceRepository
 
         const string insertRow = @"
             INSERT INTO dbo.PerformanceZone
-                (pfu_id, z_id, pz_utilization, pz_achlabortrip, pz_callouts, pz_serviceitemspayback,
+                (pfu_id, z_id, pz_revpertechperday, pz_ytdcontribution,
+                 pz_utilization, pz_achlabortrip, pz_callouts, pz_serviceitemspayback,
                  pz_truckfuelefficiency, pz_gallonsperday, pz_grossmargin, pz_receiptsviolations,
-                 pz_callbacks, pz_pendingtechinfo, pz_positiveqtrpct, pz_profitgrade)
+                 pz_callbacks, pz_pendingtechinfo, pz_positiveqtrpct)
             VALUES
-                (@UploadId, @ZoneId, @Utilization, @AchLaborTrip, @CallOuts, @ServiceItemsPayback,
+                (@UploadId, @ZoneId, @RevPerTechPerDay, @YtdContribution,
+                 @Utilization, @AchLaborTrip, @CallOuts, @ServiceItemsPayback,
                  @TruckFuelEfficiency, @GallonsPerDay, @GrossMargin, @ReceiptsViolations,
-                 @Callbacks, @PendingTechInfo, @PositiveQtrPct, @ProfitGrade)";
+                 @Callbacks, @PendingTechInfo, @PositiveQtrPct)";
 
         foreach (var (zoneId, row) in rows)
         {
@@ -178,6 +184,8 @@ public class PerformanceRepository : IPerformanceRepository
             {
                 UploadId = uploadId,
                 ZoneId = zoneId,
+                row.RevPerTechPerDay,
+                row.YtdContribution,
                 row.Utilization,
                 row.AchLaborTrip,
                 row.CallOuts,
@@ -188,8 +196,7 @@ public class PerformanceRepository : IPerformanceRepository
                 row.ReceiptsViolations,
                 row.Callbacks,
                 row.PendingTechInfo,
-                row.PositiveQtrPct,
-                row.ProfitGrade
+                row.PositiveQtrPct
             }, transaction);
         }
 
