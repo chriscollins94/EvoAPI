@@ -227,13 +227,16 @@ public class TimeTrackingSyncService : BackgroundService
                 SELECT 
                     u_id, 
                     ttt_id, 
-                    wo_id,
+                    tt.wo_id,
                     tt_insertdatetime,
                     ROW_NUMBER() OVER (PARTITION BY u_id ORDER BY ttt_id DESC, tt_insertdatetime DESC) as rn
-                FROM timetracking 
-                WHERE tt_end IS NULL
+                FROM timetracking tt, workorder wo, servicerequest sr, xrefCompanyCallCenter xccc, company c
+                WHERE tt.wo_id = wo.wo_id AND wo.sr_id = sr.sr_id AND sr.xccc_id = xccc.xccc_id and xccc.c_id = c.c_id
+                    AND tt_end IS NULL
                     AND ttt_id IN (2, 3)
-                    AND tt_insertdatetime >= DATEADD(HOUR, -24, GETDATE())
+                    AND tt_insertdatetime >= DATEADD(HOUR, -240, GETDATE())
+                    AND c.c_id not in (select cs_value from configsetting where cs_identifier = 'HighVolumeCompanyID')
+
             )
             SELECT u_id, ttt_id, wo_id
             FROM RankedTimeTracking

@@ -34,7 +34,10 @@ logger.LogInformation("DB_PASSWORD from config: {HasPassword}", !string.IsNullOr
 
 // Replace password placeholder with actual password from secrets/environment
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-logger.LogInformation("Original ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+logger.LogInformation("Original ConnectionString: {ConnectionString}", 
+    connectionString != null 
+        ? System.Text.RegularExpressions.Regex.Replace(connectionString, @"Password=[^;]*", "Password=******") 
+        : "null");
 
 if (!string.IsNullOrEmpty(connectionString) && connectionString.Contains("{DB_PASSWORD}"))
 {
@@ -91,7 +94,35 @@ logger.LogInformation("Final Google Maps API Key status: {Status}",
         ? "CONFIGURED" 
         : "NOT CONFIGURED");
 
-logger.LogInformation("Final ConnectionString: {ConnectionString}", connectionString?.Replace("Password=", "Password=***"));
+// Replace EvoWS Base URL placeholder with actual URL from environment variables
+var evoWSBaseUrl = builder.Configuration["EvoWS:BaseUrl"];
+logger.LogInformation("Original EvoWS Base URL: {EvoWSBaseUrl}", evoWSBaseUrl ?? "NOT FOUND");
+
+if (!string.IsNullOrEmpty(evoWSBaseUrl) && evoWSBaseUrl.Contains("${EVOWS_BASE_URL}"))
+{
+    var envEvoWSUrl = Environment.GetEnvironmentVariable("EVOWS_BASE_URL");
+    if (!string.IsNullOrEmpty(envEvoWSUrl))
+    {
+        builder.Configuration["EvoWS:BaseUrl"] = envEvoWSUrl;
+        logger.LogInformation("EvoWS Base URL replacement successful from environment variable: {EvoWSBaseUrl}", envEvoWSUrl);
+    }
+    else
+    {
+        logger.LogError("EVOWS_BASE_URL environment variable not found");
+    }
+}
+
+// Final validation of EvoWS Base URL
+var finalEvoWSUrl = builder.Configuration["EvoWS:BaseUrl"];
+logger.LogInformation("Final EvoWS Base URL status: {Status}", 
+    !string.IsNullOrEmpty(finalEvoWSUrl) && !finalEvoWSUrl.Contains("$") 
+        ? $"CONFIGURED - {finalEvoWSUrl}" 
+        : "NOT CONFIGURED");
+
+logger.LogInformation("Final ConnectionString: {ConnectionString}", 
+    connectionString != null 
+        ? System.Text.RegularExpressions.Regex.Replace(connectionString, @"Password=[^;]*", "Password=******") 
+        : "null");
 logger.LogInformation("=== END ENVIRONMENT CONFIG ===");
 
 // Configure Kestrel for HTTPS in local development environments
@@ -114,8 +145,32 @@ builder.Services.AddControllers();
 
 // Register application services
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<IAuditCriticalService, AuditCriticalService>();
 builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IServiceItemRepository, EvoAPI.Infrastructure.Repositories.ServiceItemRepository>();
+builder.Services.AddScoped<IServiceItemInventoryRepository, EvoAPI.Infrastructure.Repositories.ServiceItemInventoryRepository>();
+
+// Register authentication services
+builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
+builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<ITimeTrackingService, TimeTrackingService>();
+
+// Register email services
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+builder.Services.AddScoped<ITimeOffEmailService, TimeOffEmailService>();
+
+// Register AI services (generic dispatcher + Quote-AI PDF renderer).
+// Endpoint, model, prompt, schema all live in ConfigSetting (cs_type='AI').
+builder.Services.AddScoped<IFileExtractionService, FileExtractionService>();
+builder.Services.AddScoped<IAiService, AiService>();
+builder.Services.AddSingleton<EvoAPI.Infrastructure.Pdf.QuotePdfRenderer>();
+
+// Per-SR markup/tax config loader — used by both the labor-context endpoint
+// (display) and the Quote AI controller (math). Mirrors evo invoice cascade.
+builder.Services.AddScoped<IMarkupConfigLoader, MarkupConfigLoader>();
+
+// Register generic HttpClient for controllers (used by EvoApiController for file uploads)
+builder.Services.AddHttpClient();
 
 // Register HttpClient for Google Maps service
 builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
@@ -142,6 +197,37 @@ builder.Services.AddScoped<IFleetmaticsService, FleetmaticsService>();
 
 // Register Fleetmatics background service for daily sync
 builder.Services.AddHostedService<FleetmaticsSyncService>();
+
+// Register HttpClient and QuickBooks troubleshooting service
+builder.Services.AddHttpClient<IQuickBooksService, QuickBooksService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-QuickBooksClient/1.0");
+});
+
+// Register NTE notification service (background loop + ACS SMS/Email).
+// Config (thresholds, ACS creds, message templates) lives in ConfigSetting -
+// edit there to retune without redeploying.
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteQueryRepository,
+    EvoAPI.Infrastructure.Repositories.NteQueryRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INotificationLogRepository,
+    EvoAPI.Infrastructure.Repositories.NotificationLogRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteSpendCalculator,
+    EvoAPI.Infrastructure.Services.StubNteSpendCalculator>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.ISmsService,
+    EvoAPI.Infrastructure.Services.AcsSmsService>();
+builder.Services.AddScoped<EvoAPI.Infrastructure.Services.AcsEmailService>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteNotificationService,
+    EvoAPI.Infrastructure.Services.NteNotificationService>();
+builder.Services.AddHostedService<EvoAPI.Infrastructure.Services.NteNotificationBackgroundService>();
+
+// SMS consent capture (post-login opt-in screen for techs; TFV compliance)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IUserConsentRepository,
+    EvoAPI.Infrastructure.Repositories.UserConsentRepository>();
+
+// Performance upload/dashboard (employee + zone Excel snapshots)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPerformanceRepository,
+    EvoAPI.Infrastructure.Repositories.PerformanceRepository>();
 
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
@@ -182,6 +268,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireClaim("accesslevel", "ADMIN"));
+    options.AddPolicy("AttackPointsOnly", policy => policy.RequireClaim("function", "Admin - Attack Points"));
+    options.AddPolicy("PerformanceOnly", policy => policy.RequireClaim("function", "Admin - Performance"));
+    options.AddPolicy("SkillLevelOnly", policy => policy.RequireClaim("function", "Admin - Skill Level"));
+    options.AddPolicy("CompanyAdminOnly", policy => policy.RequireClaim("function", "Admin - Company"));
+    options.AddPolicy("ServiceItemsOnly", policy => policy.RequireClaim("function", "Admin - Service Items"));
     options.AddPolicy("UserAdminOnly", policy => 
     {
         policy.RequireClaim("accesslevel", "ADMIN");

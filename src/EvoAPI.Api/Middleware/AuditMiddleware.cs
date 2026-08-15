@@ -27,19 +27,25 @@ public class AuditMiddleware
         }
 
         var stopwatch = Stopwatch.StartNew();
-        
+
         Exception? exception = null;
         string requestContent = "";
-        
+        string responseContent = "";
+
+        // Buffer the response body so it can be captured for error details
+        var originalResponseBody = context.Response.Body;
+        using var responseBuffer = new MemoryStream();
+        context.Response.Body = responseBuffer;
+
         try
         {
             // Only capture request content for API endpoints (not for static files)
-            if ((context.Request.Method == "POST" || context.Request.Method == "PUT") && 
+            if ((context.Request.Method == "POST" || context.Request.Method == "PUT") &&
                 path != null && path.StartsWith("/api/"))
             {
                 requestContent = await CaptureRequestContent(context);
             }
-            
+
             await _next(context);
         }
         catch (Exception ex)
@@ -50,15 +56,54 @@ public class AuditMiddleware
         finally
         {
             stopwatch.Stop();
-            
+
+            // Restore the original stream and flush the buffered response to the client
+            context.Response.Body = originalResponseBody;
             try
             {
-                await LogAuditEntry(context, auditService, stopwatch.Elapsed, exception, requestContent);
+                if (context.Response.StatusCode >= 400)
+                {
+                    responseContent = ReadResponseContent(responseBuffer);
+                }
+
+                responseBuffer.Position = 0;
+                await responseBuffer.CopyToAsync(originalResponseBody);
+            }
+            catch (Exception copyEx)
+            {
+                _logger.LogError(copyEx, "Failed to write buffered response to client");
+            }
+
+            try
+            {
+                await LogAuditEntry(context, auditService, stopwatch.Elapsed, exception, requestContent, responseContent);
             }
             catch (Exception logEx)
             {
                 _logger.LogError(logEx, "Failed to log audit entry");
             }
+        }
+    }
+
+    private string ReadResponseContent(MemoryStream responseBuffer)
+    {
+        try
+        {
+            responseBuffer.Position = 0;
+            using var reader = new StreamReader(responseBuffer, Encoding.UTF8, leaveOpen: true);
+            var content = reader.ReadToEnd();
+
+            if (content.Length > 5000)
+            {
+                content = content.Substring(0, 5000) + "... [truncated]";
+            }
+
+            return content;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to capture response content");
+            return "";
         }
     }
 
@@ -109,23 +154,49 @@ public class AuditMiddleware
         }
     }
 
-    private async Task LogAuditEntry(HttpContext context, IAuditService auditService, TimeSpan elapsed, Exception? exception, string requestContent)
+    private async Task LogAuditEntry(HttpContext context, IAuditService auditService, TimeSpan elapsed, Exception? exception, string requestContent, string responseContent)
     {
         var methodName = GetActionName(context);
         var description = $"Web Service - EvoAPI - {methodName}";
-        
+
+        var isError = exception != null || context.Response.StatusCode >= 400;
+
+        // On errors, capture everything available: status, exception, error response body, and request body
+        string detail;
+        if (isError)
+        {
+            var parts = new List<string> { $"HTTP {context.Response.StatusCode} {context.Request.Method} {context.Request.Path}{context.Request.QueryString}" };
+            if (exception != null)
+            {
+                parts.Add($"Exception: {exception}");
+            }
+            if (!string.IsNullOrEmpty(responseContent))
+            {
+                parts.Add($"Response: {responseContent}");
+            }
+            if (!string.IsNullOrEmpty(requestContent))
+            {
+                parts.Add($"Request: {requestContent}");
+            }
+            detail = string.Join(" | ", parts);
+        }
+        else
+        {
+            detail = requestContent;
+        }
+
         var auditEntry = new AuditEntry
         {
-            Username = context.User.FindFirst("username")?.Value ?? 
+            Username = context.User.FindFirst("username")?.Value ??
                       context.User.FindFirst("unique_name")?.Value ?? "Anonymous",
             Name = GetUserFullName(context),
             Description = description,
-            Detail = exception?.ToString() ?? requestContent,
+            Detail = detail,
             ResponseTime = elapsed.TotalSeconds.ToString("0.00"),
             IPAddress = GetClientIPAddress(context),
             UserAgent = context.Request.Headers["User-Agent"].ToString(),
             MachineName = Environment.MachineName,
-            IsError = exception != null || context.Response.StatusCode >= 400
+            IsError = isError
         };
 
         if (auditEntry.IsError)

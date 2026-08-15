@@ -121,18 +121,27 @@ namespace EvoAPI.Api.Controllers
 
         private AuditEntry CreateAuditEntry(string description, object? detail = null, string? responseTime = null)
         {
+            Console.WriteLine($"[AUDIT DEBUG] CreateAuditEntry called - description: {description}");
+            Console.WriteLine($"[AUDIT DEBUG] detail object is null: {detail == null}");
+            
             var detailString = "";
             if (detail != null)
             {
                 try
                 {
                     detailString = JsonSerializer.Serialize(detail);
+                    Console.WriteLine($"[AUDIT DEBUG] Serialized detail length: {detailString.Length}");
+                    Console.WriteLine($"[AUDIT DEBUG] Serialized detail: {detailString}");
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Console.WriteLine($"[AUDIT DEBUG] Serialization failed: {ex.Message}");
                     detailString = detail.ToString() ?? "";
                 }
             }
+            
+            Console.WriteLine($"[AUDIT DEBUG] Final detail string length: {detailString.Length}");
+            Console.WriteLine($"[AUDIT DEBUG] Final detail string: {detailString}");
             
             return new AuditEntry
             {

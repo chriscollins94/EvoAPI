@@ -73,13 +73,13 @@ public class ReportsController : BaseController
 
     [HttpGet("receipts")]
     [AdminOnly]
-    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport()
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetReceiptsReport([FromQuery] int? days = 365)
     {
         var stopwatch = Stopwatch.StartNew();
         
         try
         {
-            var dataTable = await _dataService.GetReceiptsDashboardAsync();
+            var dataTable = await _dataService.GetReceiptsDashboardAsync(days);
             var reportData = ConvertDataTableToReceiptsReport(dataTable);
             
             stopwatch.Stop();
@@ -107,6 +107,41 @@ public class ReportsController : BaseController
         }
     }
 
+    [HttpGet("receipts/tech")]
+    public async Task<ActionResult<ApiResponse<List<ReceiptsReportDto>>>> GetTechReceiptsReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        
+        try
+        {
+            var dataTable = await _dataService.GetTechReceiptsDashboardAsync(UserId);
+            var reportData = ConvertDataTableToReceiptsReport(dataTable);
+            
+            stopwatch.Stop();
+            
+            await LogAuditAsync("GetTechReceiptsReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            
+            return Ok(new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = true,
+                Message = "Tech receipts data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetTechReceiptsReport", ex);
+            
+            return StatusCode(500, new ApiResponse<List<ReceiptsReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve tech receipts data"
+            });
+        }
+    }
+
     [HttpGet("tech-detail")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<TechDetailReportDto>>>> GetTechDetailReport()
@@ -115,17 +150,79 @@ public class ReportsController : BaseController
         
         try
         {
-            var dataTable = await _dataService.GetTechDetailDashboardAsync();
+            // Pass current UserId to enable zone/region-based filtering
+            var dataTable = await _dataService.GetTechDetailDashboardAsync(UserId);
             var reportData = ConvertDataTableToTechDetailReport(dataTable);
+            
+            // Check if user is Regional Facility Manager first (takes priority)
+            var managedRegionsTable = await _dataService.ExecuteQueryAsync(
+                "SELECT reg_id, reg_description FROM region WHERE u_id = @UserId ORDER BY reg_description",
+                new Dictionary<string, object> { { "@UserId", UserId } }
+            );
+            
+            var managedRegions = new List<string>();
+            var regionZones = new List<string>();
+            
+            foreach (System.Data.DataRow row in managedRegionsTable.Rows)
+            {
+                managedRegions.Add(row["reg_description"]?.ToString() ?? "");
+            }
+            
+            // If user is RFM, get all zones in their managed regions
+            if (managedRegions.Count > 0)
+            {
+                var zonesInRegionTable = await _dataService.ExecuteQueryAsync(
+                    @"SELECT z.z_number 
+                      FROM zone z
+                      INNER JOIN region r ON z.reg_id = r.reg_id
+                      WHERE r.u_id = @UserId
+                      ORDER BY z.z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in zonesInRegionTable.Rows)
+                {
+                    regionZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
+            
+            // If not RFM, check if they're Zone Facility Manager
+            var managedZones = new List<string>();
+            if (managedRegions.Count == 0)
+            {
+                var managedZonesTable = await _dataService.ExecuteQueryAsync(
+                    "SELECT z_id, z_number FROM zone WHERE u_id = @UserId ORDER BY z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in managedZonesTable.Rows)
+                {
+                    managedZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
             
             stopwatch.Stop();
             
-            await LogAuditAsync("GetTechDetailReport", $"Retrieved {reportData.Count} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var filterMessage = "Showing all technicians";
+            if (managedRegions.Count > 0)
+            {
+                var regionText = string.Join(", ", managedRegions);
+                var zonesText = regionZones.Count > 0 ? $" (zones: {string.Join(", ", regionZones)})" : "";
+                filterMessage = $"Showing technicians in your region(s): {regionText}{zonesText}";
+            }
+            else if (managedZones.Count > 0)
+            {
+                filterMessage = $"Showing technicians in your zone(s): {string.Join(", ", managedZones)}";
+            }
+            
+            await LogAuditAsync("GetTechDetailReport", $"Retrieved {reportData.Count} records - {filterMessage}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechDetailReportDto>>
             {
                 Success = true,
-                Message = "Tech detail report data retrieved successfully",
+                Message = (managedRegions.Count > 0 || managedZones.Count > 0)
+                    ? $"Tech detail report data retrieved successfully. {filterMessage}"
+                    : "Tech detail report data retrieved successfully",
                 Data = reportData,
                 Count = reportData.Count
             });
@@ -198,8 +295,56 @@ public class ReportsController : BaseController
         
         try
         {
-            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate);
+            // Pass current UserId to enable zone/region-based filtering
+            var dataTable = await _dataService.GetTechActivityDashboardAsync(startDate, endDate, UserId);
             var reportData = ConvertDataTableToTechActivityReport(dataTable);
+            
+            // Check if user is Regional Facility Manager first (takes priority)
+            var managedRegionsTable = await _dataService.ExecuteQueryAsync(
+                "SELECT reg_id, reg_description FROM region WHERE u_id = @UserId ORDER BY reg_description",
+                new Dictionary<string, object> { { "@UserId", UserId } }
+            );
+            
+            var managedRegions = new List<string>();
+            var regionZones = new List<string>();
+            
+            foreach (System.Data.DataRow row in managedRegionsTable.Rows)
+            {
+                managedRegions.Add(row["reg_description"]?.ToString() ?? "");
+            }
+            
+            // If user is RFM, get all zones in their managed regions
+            if (managedRegions.Count > 0)
+            {
+                var zonesInRegionTable = await _dataService.ExecuteQueryAsync(
+                    @"SELECT z.z_number 
+                      FROM zone z
+                      INNER JOIN region r ON z.reg_id = r.reg_id
+                      WHERE r.u_id = @UserId
+                      ORDER BY z.z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in zonesInRegionTable.Rows)
+                {
+                    regionZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
+            
+            // If not RFM, check if they're Zone Facility Manager
+            var managedZones = new List<string>();
+            if (managedRegions.Count == 0)
+            {
+                var managedZonesTable = await _dataService.ExecuteQueryAsync(
+                    "SELECT z_id, z_number FROM zone WHERE u_id = @UserId ORDER BY z_number",
+                    new Dictionary<string, object> { { "@UserId", UserId } }
+                );
+                
+                foreach (System.Data.DataRow row in managedZonesTable.Rows)
+                {
+                    managedZones.Add(row["z_number"]?.ToString() ?? "");
+                }
+            }
             
             stopwatch.Stop();
             
@@ -207,12 +352,26 @@ public class ReportsController : BaseController
                 $"from {startDate.Value:yyyy-MM-dd} to {endDate.Value:yyyy-MM-dd}" : 
                 "for last 90 days (default)";
             
-            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+            var filterMessage = "Showing all technicians";
+            if (managedRegions.Count > 0)
+            {
+                var regionText = string.Join(", ", managedRegions);
+                var zonesText = regionZones.Count > 0 ? $" (zones: {string.Join(", ", regionZones)})" : "";
+                filterMessage = $"Showing technicians in your region(s): {regionText}{zonesText}";
+            }
+            else if (managedZones.Count > 0)
+            {
+                filterMessage = $"Showing technicians in your zone(s): {string.Join(", ", managedZones)}";
+            }
+            
+            await LogAuditAsync("GetTechActivityReport", $"Retrieved {reportData.Count} records {dateRangeInfo} - {filterMessage}", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
             
             return Ok(new ApiResponse<List<TechActivityReportDto>>
             {
                 Success = true,
-                Message = "Tech activity report data retrieved successfully",
+                Message = (managedRegions.Count > 0 || managedZones.Count > 0)
+                    ? $"Tech activity report data retrieved successfully. {filterMessage}"
+                    : "Tech activity report data retrieved successfully",
                 Data = reportData,
                 Count = reportData.Count
             });
@@ -385,6 +544,45 @@ public class ReportsController : BaseController
             {
                 Success = false,
                 Message = "Failed to retrieve active service requests data"
+            });
+        }
+    }
+
+    [HttpGet("pending-tech-info")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<PendingTechInfoReportDto>>>> GetPendingTechInfo([FromQuery] string mode = "current")
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var isHistoric = string.Equals(mode, "historic", StringComparison.OrdinalIgnoreCase);
+            var dataTable = isHistoric
+                ? await _dataService.GetPendingTechInfoHistoricAsync()
+                : await _dataService.GetPendingTechInfoCurrentAsync();
+            var reportData = ConvertDataTableToPendingTechInfo(dataTable);
+
+            stopwatch.Stop();
+
+            await LogAuditAsync("GetPendingTechInfo", $"Retrieved {reportData.Count} {(isHistoric ? "historic" : "current")} records", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<PendingTechInfoReportDto>>
+            {
+                Success = true,
+                Message = "Pending tech info data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetPendingTechInfo", ex);
+
+            return StatusCode(500, new ApiResponse<List<PendingTechInfoReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve pending tech info data"
             });
         }
     }
@@ -783,7 +981,31 @@ public class ReportsController : BaseController
                 IsActive = ConvertToInt(row["u_active"]) == 1
             });
         }
-        
+
+        return result;
+    }
+
+    private static List<PendingTechInfoReportDto> ConvertDataTableToPendingTechInfo(DataTable dataTable)
+    {
+        var result = new List<PendingTechInfoReportDto>();
+        var hasMinutes = dataTable.Columns.Contains("ssc_minutesinpriorstatus");
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new PendingTechInfoReportDto
+            {
+                SrId = ConvertToInt(row["sr_id"]),
+                RequestNumber = CleanString(row["sr_requestnumber"]),
+                InsertDateTime = ConvertToDateTime(row["wo_insertdatetime"]) ?? DateTime.MinValue,
+                StartDateTime = ConvertToDateTime(row["wo_startdatetime"]),
+                TechFirstName = CleanString(row["u_firstname"]),
+                TechLastName = CleanString(row["u_lastname"]),
+                Trade = CleanString(row["t_trade"]),
+                CompanyName = CleanString(row["c_name"]),
+                MinutesInPriorStatus = hasMinutes ? ConvertToNullableInt(row["ssc_minutesinpriorstatus"]) : null
+            });
+        }
+
         return result;
     }
 
@@ -922,6 +1144,17 @@ public class ReportsController : BaseController
         return 0m;
     }
 
+    private static decimal? ConvertToNullableDecimal(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+
+        if (decimal.TryParse(value.ToString(), out var result))
+            return result;
+
+        return null;
+    }
+
     private static DateTime? ConvertToDateTime(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -936,6 +1169,129 @@ public class ReportsController : BaseController
     private static string CleanString(object value)
     {
         return value?.ToString()?.Trim() ?? string.Empty;
+    }
+
+    #endregion
+
+    #region Service Request Report
+
+    [HttpGet("service-request")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<List<ServiceRequestReportDto>>>> GetServiceRequestReport(
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var start = startDate ?? new DateTime(DateTime.Now.Year, 1, 1);
+            var end = endDate ?? new DateTime(DateTime.Now.Year + 1, 1, 1);
+
+            var dataTable = await _dataService.GetServiceRequestReportAsync(start, end);
+            var reportData = ConvertDataTableToServiceRequestReport(dataTable);
+
+            stopwatch.Stop();
+            await LogAuditAsync("GetServiceRequestReport", $"Retrieved {reportData.Count} records ({start:yyyy-MM-dd} to {end:yyyy-MM-dd})", stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<List<ServiceRequestReportDto>>
+            {
+                Success = true,
+                Message = "Service request report data retrieved successfully",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetServiceRequestReport", ex);
+
+            return StatusCode(500, new ApiResponse<List<ServiceRequestReportDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve service request report data"
+            });
+        }
+    }
+
+    private static List<ServiceRequestReportDto> ConvertDataTableToServiceRequestReport(DataTable dataTable)
+    {
+        var result = new List<ServiceRequestReportDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            result.Add(new ServiceRequestReportDto
+            {
+                CallCenter = CleanString(row["Call Center"]),
+                CallCenterPortalName = CleanString(row["cc_portalname"]),
+                CallCenterPortalUrl = CleanString(row["cc_portalurl"]),
+                CallCenterPortalCredentials = CleanString(row["cc_portalcredentials"]),
+                Company = CleanString(row["Company"]),
+                CompanyPortalName = CleanString(row["c_portalname"]),
+                CompanyPortalUrl = CleanString(row["c_portalurl"]),
+                CompanyPortalCredentials = CleanString(row["c_portalcredentials"]),
+                ParentTrade = CleanString(row["Parent Trade"]),
+                Trade = CleanString(row["Trade"]),
+                ServiceRequestNumber = CleanString(row["Service Request #"]),
+                Created = ConvertToDateTime(row["Created"]),
+                PrimaryTech = CleanString(row["Primary Tech"]),
+                AdditionalTechs = CleanString(row["Additional Techs"]),
+                PrimaryWoStart = ConvertToDateTime(row["Primary WO Start"]),
+                PrimaryWoEnd = ConvertToDateTime(row["Primary WO End"]),
+                InvoiceNumber = CleanString(row["Invoice Number"]),
+                Status = CleanString(row["Status"]),
+                TotalDue = ConvertToNullableDecimal(row["Total Due"]),
+                SummaryOfWorkCompleted = CleanString(row["Summary of Work Completed"]),
+                Location = CleanString(row["l_location"]),
+                Address1 = CleanString(row["a_address1"]),
+                City = CleanString(row["a_city"]),
+                State = CleanString(row["a_state"]),
+                Zip = CleanString(row["a_zip"]),
+                NoteCreatedBy = CleanString(row["Note Created By"]),
+                NoteCreated = ConvertToDateTime(row["Note Created"]),
+                MostRecentNote = CleanString(row["Most Recent Note"]),
+                ServiceItemCount = ConvertToInt(row["Service Item Count"]),
+                ServiceItems = CleanString(row["Service Items"])
+            });
+        }
+
+        return result;
+    }
+
+    #endregion
+
+    #region Portal Info
+
+    [HttpGet("portal-info")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<PortalInfoReportDto>>> GetPortalInfoReport()    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var data = await _dataService.GetPortalInfoReportAsync();
+            stopwatch.Stop();
+
+            await LogAuditAsync("GetPortalInfoReport", null, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<PortalInfoReportDto>
+            {
+                Success = true,
+                Message = "Portal info report retrieved successfully",
+                Data = data
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetPortalInfoReport", ex);
+
+            return StatusCode(500, new ApiResponse<PortalInfoReportDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve portal info report"
+            });
+        }
     }
 
     #endregion

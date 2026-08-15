@@ -11,6 +11,9 @@ public class CallCenterDto
     public string? TempId { get; set; }
     public string? Note { get; set; }
     public int Attack { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalName { get; set; }
+    public string? PortalCredentials { get; set; }
 }
 
 public class UpdateCallCenterRequest
@@ -22,6 +25,9 @@ public class UpdateCallCenterRequest
     public string? TempId { get; set; }
     public string? Note { get; set; }
     public int Attack { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalName { get; set; }
+    public string? PortalCredentials { get; set; }
 }
 
 public class CreateCallCenterRequest
@@ -31,6 +37,9 @@ public class CreateCallCenterRequest
     public bool Active { get; set; }
     public string? Note { get; set; }
     public int Attack { get; set; }
+    public string? PortalUrl { get; set; }
+    public string? PortalName { get; set; }
+    public string? PortalCredentials { get; set; }
 }
 
 // Attack Point Note DTOs

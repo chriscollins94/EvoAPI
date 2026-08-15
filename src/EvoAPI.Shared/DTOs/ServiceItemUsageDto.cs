@@ -9,8 +9,12 @@ namespace EvoAPI.Shared.DTOs
         public DateTime? DateDue { get; set; }
         public string CompanyName { get; set; } = string.Empty;
         public string LocationName { get; set; } = string.Empty;
+        public string? Trade { get; set; }
+        public string? Tech { get; set; }
         public decimal TotalQuantity { get; set; }
         public decimal AverageCost { get; set; }
         public decimal TotalCost { get; set; }
+        public string? Status { get; set; }
+        public string? StatusColor { get; set; }
     }
 }

@@ -46,6 +46,10 @@ public class AuditService : IAuditService
     {
         try
         {
+            Console.WriteLine($"[AUDIT DEBUG] WriteToDatabase called");
+            Console.WriteLine($"[AUDIT DEBUG] Detail from AuditEntry: '{auditEntry.Detail}'");
+            Console.WriteLine($"[AUDIT DEBUG] Detail length: {auditEntry.Detail?.Length ?? 0}");
+            
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             if (string.IsNullOrEmpty(connectionString))
             {
@@ -64,10 +68,14 @@ public class AuditService : IAuditService
             using var command = new SqlCommand(sql, connection);
             command.CommandTimeout = 5; // 5 second command timeout
             
+            var detailParam = auditEntry.Detail ?? string.Empty;
+            Console.WriteLine($"[AUDIT DEBUG] About to add @Detail parameter with value: '{detailParam}'");
+            Console.WriteLine($"[AUDIT DEBUG] @Detail parameter length: {detailParam.Length}");
+            
             command.Parameters.AddWithValue("@Username", auditEntry.Username ?? string.Empty);
             command.Parameters.AddWithValue("@Name", auditEntry.Name ?? string.Empty);
             command.Parameters.AddWithValue("@Description", auditEntry.Description ?? string.Empty);
-            command.Parameters.AddWithValue("@Detail", auditEntry.Detail ?? string.Empty);
+            command.Parameters.AddWithValue("@Detail", detailParam);
             command.Parameters.AddWithValue("@ResponseTime", auditEntry.ResponseTime ?? string.Empty);
             command.Parameters.AddWithValue("@IPAddress", auditEntry.IPAddress ?? string.Empty);
             command.Parameters.AddWithValue("@UserAgent", auditEntry.UserAgent ?? string.Empty);
@@ -77,10 +85,12 @@ public class AuditService : IAuditService
             await connection.OpenAsync();
             
             var rowsAffected = await command.ExecuteNonQueryAsync();
+            Console.WriteLine($"[AUDIT DEBUG] Rows affected: {rowsAffected}");
             
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[AUDIT DEBUG] Exception in WriteToDatabase: {ex.Message}");
             _logger.LogError(ex, "Failed to write audit entry to database. Connection string: {ConnectionString}", 
                 _configuration.GetConnectionString("DefaultConnection")?.Replace("Password=", "Password=***"));
             // Don't rethrow - we don't want audit failures to break the application

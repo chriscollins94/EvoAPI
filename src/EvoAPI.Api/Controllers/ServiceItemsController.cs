@@ -32,17 +32,18 @@ namespace EvoAPI.Api.Controllers
             [FromQuery] string? filterStatus = null,
             [FromQuery] int? filterTradeParent = null,
             [FromQuery] int? filterServiceItemType = null,
+            [FromQuery] int? filterUserId = null,
             [FromQuery] int limit = 10000)
         {
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                var serviceItems = await _serviceItemRepository.GetServiceItemsAsync(filterText, filterStatus, filterTradeParent, filterServiceItemType, limit);
+                var serviceItems = await _serviceItemRepository.GetServiceItemsAsync(filterText, filterStatus, filterTradeParent, filterServiceItemType, limit, filterUserId);
                 stopwatch.Stop();
 
                 await LogAuditAsync(
                     "GetServiceItems",
-                    new { filterText, filterStatus, filterTradeParent, count = serviceItems.Count },
+                    new { filterText, filterStatus, filterTradeParent, filterUserId, count = serviceItems.Count },
                     stopwatch.Elapsed.TotalSeconds.ToString("0.00")
                 );
 

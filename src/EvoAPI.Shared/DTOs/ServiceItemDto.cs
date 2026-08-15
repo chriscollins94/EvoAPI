@@ -31,6 +31,8 @@ namespace EvoAPI.Shared.DTOs
         public string? sim_manufacturer { get; set; }
         public string? t_trade { get; set; }
         public string? sit_serviceitemtype { get; set; }
+        public string? tech { get; set; }
+        public int? techUserId { get; set; }
         
         // Usage statistics
         public int? UsageCount { get; set; }

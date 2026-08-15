@@ -25,6 +25,64 @@ public class DataService : IDataService
         _googleMapsService = googleMapsService;
     }
 
+    public async Task<ConfigSettingDto?> GetConfigSettingAsync(string identifier)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    cs_id,
+                    cs_type,
+                    cs_identifier,
+                    cs_value,
+                    cs_insertdatetime,
+                    cs_modifieddatetime,
+                    cs_description
+                FROM ConfigSetting
+                WHERE cs_identifier = @identifier";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.AddWithValue("@identifier", identifier);
+                await connection.OpenAsync();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        stopwatch.Stop();
+                        return new ConfigSettingDto
+                        {
+                            CsId = reader.GetInt32(0),
+                            CsType = reader.IsDBNull(1) ? null : reader.GetString(1),
+                            CsIdentifier = reader.GetString(2),
+                            CsValue = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            CsInsertDateTime = reader.GetDateTime(4),
+                            CsModifiedDateTime = reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                            CsDescription = reader.IsDBNull(6) ? null : reader.GetString(6)
+                        };
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting config setting {Identifier}", identifier);
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetWorkOrdersAsync(int numberOfDays)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -51,6 +109,7 @@ public class DataService : IDataService
                         ss.ss_statussecondary AS SecondaryStatus,
                         ss.ss_color           AS StatusColor,
                         p.p_priority          AS Priority,
+                        p.p_color             AS PriorityColor,
                         u.u_firstname         AS AssignedFirstName,
                         u.u_lastname          AS AssignedLastName,
                         l.l_location          AS Location,
@@ -58,11 +117,13 @@ public class DataService : IDataService
                         a.a_city              AS City,
                         a.a_state             AS State,
                         a.a_zip               AS Zip,
-                        z.z_number            AS Zone,
+                        z.z_acronym           AS Zone,
                         u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
+                        ISNULL(sr.sr_811required, 0) AS Is811Required,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
+                        ISNULL(CAST(sr.sr_quickbooks_docnumber AS varchar(20)), '') AS InvoiceNumber,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -84,9 +145,10 @@ public class DataService : IDataService
                     LEFT JOIN role r ON r.r_id = xur.r_id
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
-                    WHERE 
+                    WHERE
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
+                        AND c.c_name NOT IN ('Metro Pipe Program 2')
                         AND (r.r_role = 'Technician' or r.r_role is null)
                )
                 SELECT
@@ -104,6 +166,7 @@ public class DataService : IDataService
                     SecondaryStatus,
                     StatusColor,
                     Priority,
+                    PriorityColor,
                     AssignedFirstName,
                     AssignedLastName,
                     Location,
@@ -115,7 +178,9 @@ public class DataService : IDataService
                     CreatedBy,
                     Escalated,
                     ScheduleLock,
-                    ActionableNote
+                    Is811Required,
+                    ActionableNote,
+                    InvoiceNumber
                 FROM RankedOrders
                 ORDER BY sr_id desc;";
 
@@ -179,6 +244,7 @@ public class DataService : IDataService
                         ss.ss_statussecondary AS SecondaryStatus,
                         ss.ss_color           AS StatusColor,
                         p.p_priority          AS Priority,
+                        p.p_color             AS PriorityColor,
                         u.u_firstname         AS AssignedFirstName,
                         u.u_lastname          AS AssignedLastName,
                         l.l_location          AS Location,
@@ -186,7 +252,7 @@ public class DataService : IDataService
                         a.a_city              AS City,
                         a.a_state             AS State,
                         a.a_zip               AS Zip,
-                        z.z_number            AS Zone,
+                        z.z_acronym           AS Zone,
                             u_createdby.u_firstname + ' ' + u_createdby.u_lastname AS CreatedBy,
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
@@ -231,6 +297,7 @@ public class DataService : IDataService
                     TotalDue,
                     Status,
                     Priority,
+                    PriorityColor,
                     SecondaryStatus,
                     StatusColor,
                     AssignedFirstName,
@@ -646,7 +713,10 @@ public class DataService : IDataService
                     cc_active as Active,
                     cc_tempid as TempId,
                     cc_note as Note,
-                    cc_attack as Attack
+                    cc_attack as Attack,
+                    cc_portalurl as PortalUrl,
+                    cc_portalname as PortalName,
+                    cc_portalcredentials as PortalCredentials
                 FROM dbo.CallCenter
                 ORDER BY cc_name";
 
@@ -696,6 +766,9 @@ public class DataService : IDataService
                     cc_tempid = @TempId,
                     cc_note = @Note,
                     cc_attack = @Attack,
+                    cc_portalurl = @PortalUrl,
+                    cc_portalname = @PortalName,
+                    cc_portalcredentials = @PortalCredentials,
                     cc_modifieddatetime = GETDATE()
                 WHERE cc_id = @Id";
 
@@ -707,7 +780,10 @@ public class DataService : IDataService
                 { "@Active", request.Active },
                 { "@TempId", request.TempId ?? (object)DBNull.Value },
                 { "@Note", request.Note ?? (object)DBNull.Value },
-                { "@Attack", request.Attack }
+                { "@Attack", request.Attack },
+                { "@PortalUrl", request.PortalUrl ?? (object)DBNull.Value },
+                { "@PortalName", request.PortalName ?? (object)DBNull.Value },
+                { "@PortalCredentials", request.PortalCredentials ?? (object)DBNull.Value }
             };
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -767,9 +843,9 @@ public class DataService : IDataService
         {
             const string sql = @"
                 INSERT INTO dbo.CallCenter 
-                (o_id, cc_name, cc_active, cc_tempid, cc_note, cc_attack, cc_insertdatetime, cc_modifieddatetime)
+                (o_id, cc_name, cc_active, cc_tempid, cc_note, cc_attack, cc_portalurl, cc_portalname, cc_portalcredentials, cc_insertdatetime, cc_modifieddatetime)
                 VALUES 
-                (@OId, @Name, @Active, @TempId, @Note, @Attack, GETDATE(), GETDATE());
+                (@OId, @Name, @Active, @TempId, @Note, @Attack, @PortalUrl, @PortalName, @PortalCredentials, GETDATE(), GETDATE());
                 
                 SELECT SCOPE_IDENTITY() as NewId;";
 
@@ -780,7 +856,10 @@ public class DataService : IDataService
                 { "@Active", request.Active },
                 { "@TempId", (object)DBNull.Value },
                 { "@Note", request.Note ?? (object)DBNull.Value },
-                { "@Attack", request.Attack }
+                { "@Attack", request.Attack },
+                { "@PortalUrl", request.PortalUrl ?? (object)DBNull.Value },
+                { "@PortalName", request.PortalName ?? (object)DBNull.Value },
+                { "@PortalCredentials", request.PortalCredentials ?? (object)DBNull.Value }
             };
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -1891,7 +1970,10 @@ public class DataService : IDataService
                     a.a_address2 as Address2,
                     a.a_city as City,
                     a.a_state as State,
-                    a.a_zip as Zip
+                    a.a_zip as Zip,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration
                 FROM dbo.[User] u
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
@@ -1950,9 +2032,13 @@ public class DataService : IDataService
                     u.u_active as Active,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     u.z_id as ZoneId,
                     z.z_number as ZoneNumber,
                     z.z_description as ZoneName,
@@ -2173,12 +2259,12 @@ public class DataService : IDataService
             {
                 var addressRequest = new CreateAddressRequest
                 {
-                    Address1 = request.Address1,
-                    Address2 = request.Address2,
-                    City = request.City,
-                    State = request.State,
-                    Zip = request.Zip,
-                    Active = true
+                    AAddress1 = request.Address1,
+                    AAddress2 = request.Address2,
+                    ACity = request.City,
+                    AState = request.State,
+                    AZip = request.Zip,
+                    AtId = 1
                 };
                 addressId = await CreateAddressAsync(addressRequest);
             }
@@ -2188,19 +2274,23 @@ public class DataService : IDataService
                 INSERT INTO dbo.[User] (
                     o_id, a_id, u_insertdatetime, u_username, u_password, u_firstname, u_lastname,
                     u_employeenumber, u_email, u_phonemobile, u_phonehome, u_phonedesk, u_extension,
-                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_note, u_picture, z_id
+                    u_active, u_directoryonly, u_daysavailablepto, u_daysavailablevacation, u_guaranteedhours, u_note, u_picture, z_id,
+                    uc_id_shirt, uc_id_jacket, upw_id, upl_id,
+                    u_licensenumber, u_licensestate, u_licenseexpiration
                 )
                 OUTPUT INSERTED.u_id
                 VALUES (
                     1, @AddressId, GETDATE(), @Username, @Password, @FirstName, @LastName,
                     @EmployeeNumber, @Email, @PhoneMobile, @PhoneHome, @PhoneDesk, @Extension,
-                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @Note, @Picture, @ZoneId
+                    @Active, @DirectoryOnly, @DaysAvailablePTO, @DaysAvailableVacation, @GuaranteedHours, @Note, @Picture, @ZoneId,
+                    @ShirtSizeId, @JacketSizeId, @PantsWaistId, @PantsLengthId,
+                    @LicenseNumber, @LicenseState, @LicenseExpiration
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
-            
+
             using var command = new SqlCommand(userSql, connection);
             command.Parameters.AddWithValue("@AddressId", addressId ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Username", request.Username);
@@ -2217,9 +2307,17 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@GuaranteedHours", request.GuaranteedHours ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Picture", request.Picture ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ShirtSizeId", request.ShirtSizeId.HasValue && request.ShirtSizeId.Value > 0 ? (object)request.ShirtSizeId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? (object)request.JacketSizeId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@PantsWaistId", request.PantsWaistId.HasValue && request.PantsWaistId.Value > 0 ? (object)request.PantsWaistId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@PantsLengthId", request.PantsLengthId.HasValue && request.PantsLengthId.Value > 0 ? (object)request.PantsLengthId.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseNumber", request.LicenseNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseState", request.LicenseState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseExpiration", request.LicenseExpiration.HasValue ? (object)request.LicenseExpiration.Value : DBNull.Value);
 
             var userId = (int)await command.ExecuteScalarAsync();
 
@@ -2272,26 +2370,25 @@ public class DataService : IDataService
                 {
                     var addressRequest = new UpdateAddressRequest
                     {
-                        Id = addressId.Value,
-                        Address1 = request.Address1,
-                        Address2 = request.Address2,
-                        City = request.City,
-                        State = request.State,
-                        Zip = request.Zip,
-                        Active = true
+                        AAddress1 = request.Address1,
+                        AAddress2 = request.Address2,
+                        ACity = request.City,
+                        AState = request.State,
+                        AZip = request.Zip,
+                        AtId = 1
                     };
-                    await UpdateAddressAsync(addressRequest);
+                    await UpdateEmployeeAddressAsync(addressId.Value, addressRequest);
                 }
                 else
                 {
                     var addressRequest = new CreateAddressRequest
                     {
-                        Address1 = request.Address1,
-                        Address2 = request.Address2,
-                        City = request.City,
-                        State = request.State,
-                        Zip = request.Zip,
-                        Active = true
+                        AAddress1 = request.Address1,
+                        AAddress2 = request.Address2,
+                        ACity = request.City,
+                        AState = request.State,
+                        AZip = request.Zip,
+                        AtId = 1
                     };
                     addressId = await CreateAddressAsync(addressRequest);
                 }
@@ -2316,9 +2413,17 @@ public class DataService : IDataService
                     u_directoryonly = @DirectoryOnly,
                     u_daysavailablepto = @DaysAvailablePTO,
                     u_daysavailablevacation = @DaysAvailableVacation,
+                    u_guaranteedhours = @GuaranteedHours,
                     u_note = @Note,
                     u_picture = @Picture,
-                    z_id = @ZoneId";
+                    z_id = @ZoneId,
+                    uc_id_shirt = @ShirtSizeId,
+                    uc_id_jacket = @JacketSizeId,
+                    upw_id = @PantsWaistId,
+                    upl_id = @PantsLengthId,
+                    u_licensenumber = @LicenseNumber,
+                    u_licensestate = @LicenseState,
+                    u_licenseexpiration = @LicenseExpiration";
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2347,9 +2452,17 @@ public class DataService : IDataService
             command.Parameters.AddWithValue("@DirectoryOnly", request.DirectoryOnly);
             command.Parameters.AddWithValue("@DaysAvailablePTO", request.DaysAvailablePTO ?? 0);
             command.Parameters.AddWithValue("@DaysAvailableVacation", request.DaysAvailableVacation ?? 0);
+            command.Parameters.AddWithValue("@GuaranteedHours", request.GuaranteedHours.HasValue ? (object)request.GuaranteedHours.Value : DBNull.Value);
             command.Parameters.AddWithValue("@Note", request.Note ?? "");
             command.Parameters.AddWithValue("@Picture", request.Picture ?? "");
             command.Parameters.AddWithValue("@ZoneId", request.ZoneId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ShirtSizeId", request.ShirtSizeId.HasValue && request.ShirtSizeId.Value > 0 ? request.ShirtSizeId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@JacketSizeId", request.JacketSizeId.HasValue && request.JacketSizeId.Value > 0 ? request.JacketSizeId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PantsWaistId", request.PantsWaistId.HasValue && request.PantsWaistId.Value > 0 ? request.PantsWaistId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@PantsLengthId", request.PantsLengthId.HasValue && request.PantsLengthId.Value > 0 ? request.PantsLengthId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseNumber", request.LicenseNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseState", request.LicenseState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@LicenseExpiration", request.LicenseExpiration.HasValue ? (object)request.LicenseExpiration.Value : DBNull.Value);
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -2458,12 +2571,12 @@ public class DataService : IDataService
         try
         {
             const string sql = @"
-                INSERT INTO dbo.Address (
-                    a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
+                INSERT INTO address (
+                    o_id, at_id, a_insertdatetime, a_address1, a_address2, a_city, a_state, a_zip, a_active
                 )
                 OUTPUT INSERTED.a_id
                 VALUES (
-                    GETDATE(), @Address1, @Address2, @City, @State, @Zip, @Active
+                    1, @AtId, GETDATE(), @AAddress1, @AAddress2, @ACity, @AState, @AZip, 1
                 )";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2471,12 +2584,12 @@ public class DataService : IDataService
             await connection.OpenAsync();
             
             using var command = new SqlCommand(sql, connection);
-            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@AtId", request.AtId);
+            command.Parameters.AddWithValue("@AAddress1", request.AAddress1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AAddress2", request.AAddress2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ACity", request.ACity ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AState", request.AState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AZip", request.AZip ?? (object)DBNull.Value);
 
             var addressId = (int)await command.ExecuteScalarAsync();
             
@@ -2509,22 +2622,23 @@ public class DataService : IDataService
         }
     }
 
-    public async Task<bool> UpdateAddressAsync(UpdateAddressRequest request)
+    // Simple update for employee address management (returns bool)
+    private async Task<bool> UpdateEmployeeAddressAsync(int addressId, UpdateAddressRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             const string sql = @"
-                UPDATE dbo.Address 
+                UPDATE address 
                 SET 
+                    at_id = @AtId,
                     a_modifieddatetime = GETDATE(),
-                    a_address1 = @Address1,
-                    a_address2 = @Address2,
-                    a_city = @City,
-                    a_state = @State,
-                    a_zip = @Zip,
-                    a_active = @Active
+                    a_address1 = @AAddress1,
+                    a_address2 = @AAddress2,
+                    a_city = @ACity,
+                    a_state = @AState,
+                    a_zip = @AZip
                 WHERE a_id = @AddressId";
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -2532,13 +2646,13 @@ public class DataService : IDataService
             await connection.OpenAsync();
             
             using var command = new SqlCommand(sql, connection);
-            command.Parameters.AddWithValue("@AddressId", request.Id);
-            command.Parameters.AddWithValue("@Address1", request.Address1 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@City", request.City ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@State", request.State ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Zip", request.Zip ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@AddressId", addressId);
+            command.Parameters.AddWithValue("@AtId", request.AtId);
+            command.Parameters.AddWithValue("@AAddress1", request.AAddress1 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AAddress2", request.AAddress2 ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@ACity", request.ACity ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AState", request.AState ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@AZip", request.AZip ?? (object)DBNull.Value);
 
             var rowsAffected = await command.ExecuteNonQueryAsync();
             
@@ -2546,8 +2660,8 @@ public class DataService : IDataService
             await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "UpdateAddress",
-                Detail = $"Updated address with ID {request.Id}",
+                Description = "UpdateEmployeeAddress",
+                Detail = $"Updated employee address with ID {addressId}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
@@ -2560,13 +2674,13 @@ public class DataService : IDataService
             await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "UpdateAddress",
+                Description = "UpdateEmployeeAddress",
                 Detail = ex.ToString(),
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
             
-            _logger.LogError(ex, "Error updating address with ID {AddressId}", request.Id);
+            _logger.LogError(ex, "Error updating employee address with ID {AddressId}", addressId);
             throw;
         }
     }
@@ -2594,6 +2708,7 @@ public class DataService : IDataService
                     u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
@@ -2606,6 +2721,9 @@ public class DataService : IDataService
                     a.a_city as City,
                     a.a_state as State,
                     a.a_zip as Zip,
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -2716,6 +2834,7 @@ public class DataService : IDataService
                     u.u_directoryonly as DirectoryOnly,
                     u.u_daysavailablepto as DaysAvailablePTO,
                     u.u_daysavailablevacation as DaysAvailableVacation,
+                    u.u_guaranteedhours as GuaranteedHours,
                     u.u_note as Note,
                     u.u_vehiclenumber as VehicleNumber,
                     u.u_picture as Picture,
@@ -2728,6 +2847,20 @@ public class DataService : IDataService
                     a.a_city as City,
                     a.a_state as State,
                     a.a_zip as Zip,
+                    -- Clothing Size IDs and Text
+                    u.uc_id_shirt as ShirtSizeId,
+                    u.uc_id_jacket as JacketSizeId,
+                    uc_shirt.uc_clothingsize as ShirtSize,
+                    uc_jacket.uc_clothingsize as JacketSize,
+                    -- Pants Size IDs and Text
+                    u.upw_id as PantsWaistId,
+                    u.upl_id as PantsLengthId,
+                    upw.upw_size as PantsWaistSize,
+                    upl.upl_size as PantsLengthSize,
+                    -- License Information
+                    u.u_licensenumber as LicenseNumber,
+                    u.u_licensestate as LicenseState,
+                    u.u_licenseexpiration as LicenseExpiration,
                     -- Role information (nullable since LEFT JOIN)
                     xur.r_id as RoleId,
                     r.r_role as RoleName,
@@ -2736,14 +2869,25 @@ public class DataService : IDataService
                     xutg.xutg_id as UserTradeGeneralId,
                     xutg.tg_id as TradeGeneralId,
                     tg.tg_trade as Trade,
-                    tg.tg_type as TradeType
+                    tg.tg_type as TradeType,
+                    -- Facility Manager flags
+                    CASE WHEN zfm.z_id IS NOT NULL THEN 1 ELSE 0 END as IsZoneFacilityManager,
+                    CASE WHEN rfm.reg_id IS NOT NULL THEN 1 ELSE 0 END as IsRegionFacilityManager
                 FROM dbo.[User] u
                 LEFT JOIN dbo.Zone z ON u.z_id = z.z_id
                 LEFT JOIN dbo.Address a ON u.a_id = a.a_id
+                LEFT JOIN dbo.userclothing uc_shirt ON u.uc_id_shirt = uc_shirt.uc_id
+                LEFT JOIN dbo.userclothing uc_jacket ON u.uc_id_jacket = uc_jacket.uc_id
+                LEFT JOIN dbo.UserPantsWaist upw ON u.upw_id = upw.upw_id
+                LEFT JOIN dbo.UserPantsLength upl ON u.upl_id = upl.upl_id
                 LEFT JOIN dbo.XRefUserRole xur ON u.u_id = xur.u_id
                 LEFT JOIN dbo.Role r ON xur.r_id = r.r_id
                 LEFT JOIN dbo.xrefUserTradeGeneral xutg ON u.u_id = xutg.u_id
                 LEFT JOIN dbo.TradeGeneral tg ON xutg.tg_id = tg.tg_id
+                -- Check if this user manages any zone
+                LEFT JOIN dbo.Zone zfm ON u.u_id = zfm.u_id
+                -- Check if this user manages any region
+                LEFT JOIN dbo.Region rfm ON u.u_id = rfm.u_id
                 ORDER BY u.u_firstname, u.u_lastname, u.u_username, r.r_role, tg.tg_type, tg.tg_trade";
             
             var result = await ExecuteQueryAsync(sql);
@@ -2905,6 +3049,489 @@ public class DataService : IDataService
             
             _logger.LogError(ex, "Failed to update employee trade generals for user {UserId}", userId);
             throw;
+        }
+    }
+
+    public async Task<DataTable> GetBacklogItemsAsync(bool includeInactive = false)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var sql = $@"
+                {GetBacklogSelectSql()}
+                WHERE (@includeInactive = 1 OR bi.bi_active = 1)
+                ORDER BY
+                    CASE bi.bi_priority
+                        WHEN 'Critical' THEN 1
+                        WHEN 'High' THEN 2
+                        WHEN 'Medium' THEN 3
+                        WHEN 'Low' THEN 4
+                        ELSE 5
+                    END,
+                    bi.bi_date DESC,
+                    bi.bi_id DESC;";
+
+            var result = await ExecuteQueryAsync(sql, new Dictionary<string, object>
+            {
+                { "@includeInactive", includeInactive ? 1 : 0 }
+            });
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItems",
+                Detail = $"Retrieved backlog items. IncludeInactive: {includeInactive}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItems",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to retrieve backlog items");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetBacklogItemByIdAsync(int backlogItemId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var sql = $@"
+                {GetBacklogSelectSql()}
+                WHERE bi.bi_id = @backlogItemId;";
+
+            var result = await ExecuteQueryAsync(sql, new Dictionary<string, object>
+            {
+                { "@backlogItemId", backlogItemId }
+            });
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItemById",
+                Detail = $"Retrieved backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetBacklogItemById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to retrieve backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateBacklogItemAsync(CreateBacklogItemRequest request, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var history = AppendHistoryEntry(null, username, new[] { "Item created." });
+
+            const string sql = @"
+                INSERT INTO backlogitem
+                (
+                    bi_code,
+                    bi_version,
+                    bi_title,
+                    bi_source,
+                    bi_author,
+                    bi_date,
+                    bi_category,
+                    bi_type,
+                    bi_priority,
+                    bi_status,
+                    bi_effort,
+                    bi_desc,
+                    bi_notes,
+                    bi_detail_markdown,
+                    bi_history,
+                    bi_active,
+                    bi_u_id_createdby,
+                    bi_u_id_lastupdatedby,
+                    bi_insertdatetime,
+                    bi_lastupdated
+                )
+                VALUES
+                (
+                    @Code,
+                    @Version,
+                    @Title,
+                    @Source,
+                    @Author,
+                    @Date,
+                    @Category,
+                    @Type,
+                    @Priority,
+                    @Status,
+                    @Effort,
+                    @Desc,
+                    @Notes,
+                    @DetailMarkdown,
+                    @History,
+                    @Active,
+                    @CreatedByUserId,
+                    @LastUpdatedByUserId,
+                    GETUTCDATE(),
+                    GETUTCDATE()
+                );
+
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Version", ToDbValue(request.Version));
+            command.Parameters.AddWithValue("@Title", request.Title.Trim());
+            command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
+            command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
+            command.Parameters.AddWithValue("@Date", ToDbDateValue(request.Date));
+            command.Parameters.AddWithValue("@Category", ToDbValue(request.Category));
+            command.Parameters.AddWithValue("@Type", string.IsNullOrWhiteSpace(request.Type) ? "Feature" : request.Type.Trim());
+            command.Parameters.AddWithValue("@Priority", string.IsNullOrWhiteSpace(request.Priority) ? "Medium" : request.Priority.Trim());
+            command.Parameters.AddWithValue("@Status", string.IsNullOrWhiteSpace(request.Status) ? "New" : request.Status.Trim());
+            command.Parameters.AddWithValue("@Effort", ToDbValue(request.Effort));
+            command.Parameters.AddWithValue("@Desc", ToDbValue(request.Desc));
+            command.Parameters.AddWithValue("@Notes", ToDbValue(request.Notes));
+            command.Parameters.AddWithValue("@DetailMarkdown", ToDbValue(request.DetailMarkdown));
+            command.Parameters.AddWithValue("@History", history);
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@CreatedByUserId", userId > 0 ? userId : DBNull.Value);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateBacklogItem",
+                Detail = $"Created backlog item '{request.Code} - {request.Title}'",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to create backlog item {Code} - {Title}", request.Code, request.Title);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateBacklogItemAsync(int backlogItemId, UpdateBacklogItemRequest request, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var existingData = await GetBacklogItemByIdAsync(backlogItemId);
+            if (existingData.Rows.Count == 0)
+            {
+                return false;
+            }
+
+            var row = existingData.Rows[0];
+            var changes = new List<string>();
+
+            AddChange(changes, "Code", row["code"]?.ToString(), request.Code);
+            AddChange(changes, "Version", row["version"]?.ToString(), request.Version);
+            AddChange(changes, "Title", row["title"]?.ToString(), request.Title);
+            AddChange(changes, "Source", row["source"]?.ToString(), request.Source);
+            AddChange(changes, "Author", row["author"]?.ToString(), request.Author);
+            AddChange(changes, "Date", row["date"]?.ToString(), request.Date);
+            AddChange(changes, "Category", row["category"]?.ToString(), request.Category);
+            AddChange(changes, "Type", row["type"]?.ToString(), request.Type);
+            AddChange(changes, "Priority", row["priority"]?.ToString(), request.Priority);
+            AddChange(changes, "Status", row["status"]?.ToString(), request.Status);
+            AddChange(changes, "Effort", row["effort"]?.ToString(), request.Effort);
+            AddChange(changes, "Summary", row["desc"]?.ToString(), request.Desc);
+            AddChange(changes, "Notes", row["notes"]?.ToString(), request.Notes);
+            AddChange(changes, "Detail", row["detailMarkdown"]?.ToString(), request.DetailMarkdown);
+
+            var existingActive = row["active"] != DBNull.Value && (row["active"]?.ToString() == "True" || row["active"]?.ToString() == "1");
+            if (existingActive != request.Active)
+            {
+                changes.Add($"Active changed: {existingActive} -> {request.Active}");
+            }
+
+            var history = row["history"] == DBNull.Value ? null : row["history"]?.ToString();
+            if (changes.Count > 0)
+            {
+                history = AppendHistoryEntry(history, username, changes);
+            }
+
+            const string sql = @"
+                UPDATE backlogitem
+                SET
+                    bi_code = @Code,
+                    bi_version = @Version,
+                    bi_title = @Title,
+                    bi_source = @Source,
+                    bi_author = @Author,
+                    bi_date = @Date,
+                    bi_category = @Category,
+                    bi_type = @Type,
+                    bi_priority = @Priority,
+                    bi_status = @Status,
+                    bi_effort = @Effort,
+                    bi_desc = @Desc,
+                    bi_notes = @Notes,
+                    bi_detail_markdown = @DetailMarkdown,
+                    bi_history = @History,
+                    bi_active = @Active,
+                    bi_u_id_lastupdatedby = @LastUpdatedByUserId,
+                    bi_lastupdated = GETUTCDATE()
+                WHERE bi_id = @BacklogItemId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@BacklogItemId", backlogItemId);
+            command.Parameters.AddWithValue("@Code", request.Code.Trim());
+            command.Parameters.AddWithValue("@Version", ToDbValue(request.Version));
+            command.Parameters.AddWithValue("@Title", request.Title.Trim());
+            command.Parameters.AddWithValue("@Source", ToDbValue(request.Source));
+            command.Parameters.AddWithValue("@Author", ToDbValue(request.Author));
+            command.Parameters.AddWithValue("@Date", ToDbDateValue(request.Date));
+            command.Parameters.AddWithValue("@Category", ToDbValue(request.Category));
+            command.Parameters.AddWithValue("@Type", string.IsNullOrWhiteSpace(request.Type) ? "Feature" : request.Type.Trim());
+            command.Parameters.AddWithValue("@Priority", string.IsNullOrWhiteSpace(request.Priority) ? "Medium" : request.Priority.Trim());
+            command.Parameters.AddWithValue("@Status", string.IsNullOrWhiteSpace(request.Status) ? "New" : request.Status.Trim());
+            command.Parameters.AddWithValue("@Effort", ToDbValue(request.Effort));
+            command.Parameters.AddWithValue("@Desc", ToDbValue(request.Desc));
+            command.Parameters.AddWithValue("@Notes", ToDbValue(request.Notes));
+            command.Parameters.AddWithValue("@DetailMarkdown", ToDbValue(request.DetailMarkdown));
+            command.Parameters.AddWithValue("@History", ToDbValue(history));
+            command.Parameters.AddWithValue("@Active", request.Active);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateBacklogItem",
+                Detail = $"Updated backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to update backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteBacklogItemAsync(int backlogItemId, int userId, string username)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var existingData = await GetBacklogItemByIdAsync(backlogItemId);
+            if (existingData.Rows.Count == 0)
+            {
+                return false;
+            }
+
+            var row = existingData.Rows[0];
+            var history = AppendHistoryEntry(row["history"] == DBNull.Value ? null : row["history"]?.ToString(), username, new[] { "Item archived." });
+
+            const string sql = @"
+                UPDATE backlogitem
+                SET
+                    bi_active = 0,
+                    bi_history = @History,
+                    bi_u_id_lastupdatedby = @LastUpdatedByUserId,
+                    bi_lastupdated = GETUTCDATE()
+                WHERE bi_id = @BacklogItemId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("@BacklogItemId", backlogItemId);
+            command.Parameters.AddWithValue("@History", history);
+            command.Parameters.AddWithValue("@LastUpdatedByUserId", userId > 0 ? userId : DBNull.Value);
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteBacklogItem",
+                Detail = $"Archived backlog item {backlogItemId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteBacklogItem",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Failed to archive backlog item {BacklogItemId}", backlogItemId);
+            throw;
+        }
+    }
+
+    private static string GetBacklogSelectSql()
+    {
+        return @"
+            SELECT
+                bi.bi_id AS backlogItemId,
+                bi.bi_code AS code,
+                bi.bi_version AS version,
+                bi.bi_title AS title,
+                bi.bi_source AS source,
+                bi.bi_author AS author,
+                CASE WHEN bi.bi_date IS NULL THEN NULL ELSE CONVERT(VARCHAR(10), bi.bi_date, 23) END AS [date],
+                bi.bi_category AS category,
+                bi.bi_type AS [type],
+                bi.bi_priority AS priority,
+                bi.bi_status AS status,
+                bi.bi_effort AS effort,
+                bi.bi_desc AS [desc],
+                bi.bi_notes AS notes,
+                bi.bi_detail_markdown AS detailMarkdown,
+                bi.bi_history AS history,
+                bi.bi_active AS active,
+                CONVERT(VARCHAR(16), bi.bi_insertdatetime, 120) AS insertDateTime,
+                CASE WHEN bi.bi_lastupdated IS NULL THEN NULL ELSE CONVERT(VARCHAR(16), bi.bi_lastupdated, 120) END AS lastUpdated,
+                bi.bi_u_id_lastupdatedby AS lastUpdatedByUserId
+            FROM backlogitem bi";
+    }
+
+    private static object ToDbValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
+    }
+
+    private static object ToDbDateValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DBNull.Value;
+        }
+
+        return DateTime.TryParse(value, out var parsedDate)
+            ? parsedDate.Date
+            : DBNull.Value;
+    }
+
+    private static string AppendHistoryEntry(string? existingHistory, string username, IEnumerable<string> lines)
+    {
+        var historyLines = lines.Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+        if (historyLines.Count == 0)
+        {
+            return existingHistory ?? string.Empty;
+        }
+
+        var entry = $"## {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC - {username}\n{string.Join("\n", historyLines.Select(line => $"- {line.Trim()}"))}";
+
+        if (string.IsNullOrWhiteSpace(existingHistory))
+        {
+            return entry;
+        }
+
+        return $"{existingHistory.Trim()}\n\n{entry}";
+    }
+
+    private static void AddChange(List<string> changes, string fieldName, string? oldValue, string? newValue)
+    {
+        var existingValue = string.IsNullOrWhiteSpace(oldValue) ? "(empty)" : oldValue.Trim();
+        var updatedValue = string.IsNullOrWhiteSpace(newValue) ? "(empty)" : newValue.Trim();
+
+        if (!string.Equals(existingValue, updatedValue, StringComparison.Ordinal))
+        {
+            changes.Add($"{fieldName} changed: {existingValue} -> {updatedValue}");
         }
     }
 
@@ -3383,181 +4010,178 @@ public class DataService : IDataService
         {
             const string sql = @"
             -- Ultra-Optimized Version with Temp Tables
-                    DECLARE @CutoffDate DATETIME = DATEADD(DAY, -730, GETDATE());
-                    DECLARE @FutureDate DATETIME = DATEADD(DAY, 180, GETDATE());
+            DECLARE @CutoffDate DATETIME = DATEADD(DAY, -730, GETDATE());
+            DECLARE @FutureDate DATETIME = DATEADD(DAY, 180, GETDATE());
 
-                    -- Create temp tables with proper filtering
-                    IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
-                    IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
-                    IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
+            -- Create temp tables with proper filtering
+            IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
+            IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
+            IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
 
-                    -- First, get the base set of work orders we care about
-                    SELECT DISTINCT wo.wo_id
-                    INTO #BaseData
-                    FROM servicerequest sr WITH (NOLOCK)
-                    INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
-                    INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
-                    INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
-                    WHERE sr.s_id NOT IN (9, 6)
-                    AND c.c_name NOT IN ('Metro Pipe Program')
-                    AND (wo.wo_startdatetime BETWEEN @CutoffDate AND @FutureDate OR wo.wo_startdatetime IS NULL);
+            -- Base set: ALL qualifying work orders
+            SELECT DISTINCT wo.wo_id
+            INTO #BaseData
+            FROM servicerequest sr WITH (NOLOCK)
+            INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+            INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+            INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+            WHERE sr.s_id NOT IN (9, 6)
+            AND c.c_name NOT IN ('Metro Pipe Program')
+            AND (wo.wo_startdatetime BETWEEN @CutoffDate AND @FutureDate OR wo.wo_startdatetime IS NULL);
 
-                    CREATE CLUSTERED INDEX IX_BaseData ON #BaseData(wo_id);
+            CREATE CLUSTERED INDEX IX_BaseData ON #BaseData(wo_id);
 
-                    -- Get latest notes only for relevant work orders
-                    SELECT won.wo_id, MAX(won.won_insertdatetime) as latest_note_datetime
-                    INTO #WorkOrderNotes
-                    FROM WorkOrderNote won WITH (NOLOCK)
-                    WHERE won.wo_id IN (SELECT wo_id FROM #BaseData)
-                    GROUP BY won.wo_id;
+            -- Get latest notes only for relevant work orders
+            SELECT won.wo_id, MAX(won.won_insertdatetime) as latest_note_datetime
+            INTO #WorkOrderNotes
+            FROM WorkOrderNote won WITH (NOLOCK)
+            WHERE won.wo_id IN (SELECT wo_id FROM #BaseData)
+            GROUP BY won.wo_id;
 
-                    CREATE CLUSTERED INDEX IX_WON ON #WorkOrderNotes(wo_id);
+            CREATE CLUSTERED INDEX IX_WON ON #WorkOrderNotes(wo_id);
 
-                    -- Get latest status changes only for relevant work orders  
-                    SELECT ssc.wo_id, MAX(ssc.ssc_insertdatetime) as latest_status_datetime
-                    INTO #StatusChanges
-                    FROM StatusSecondaryChange ssc WITH (NOLOCK)
-                    WHERE ssc.wo_id IN (SELECT wo_id FROM #BaseData)
-                    GROUP BY ssc.wo_id;
+            -- Get latest status changes only for relevant work orders  
+            SELECT ssc.wo_id, MAX(ssc.ssc_insertdatetime) as latest_status_datetime
+            INTO #StatusChanges
+            FROM StatusSecondaryChange ssc WITH (NOLOCK)
+            WHERE ssc.wo_id IN (SELECT wo_id FROM #BaseData)
+            GROUP BY ssc.wo_id;
 
-                    CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
+            CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
 
-                    -- Main query using pre-filtered data
-                    WITH ranked_results AS (
-                        SELECT sr.sr_id, 
-                            sr.sr_insertdatetime, 
-                            sr.sr_totaldue,
-                            sr.sr_requestnumber,
-                            sr.sr_datenextstep,
-                            sr.sr_actionablenote,
-                            sr.sr_escalated,
-                            wo.wo_startdatetime,
-                            z.z_number + '-' + z.z_acronym zone, 
-                            cc.cc_name,
-                            c.c_name,
-                            p.p_priority,
-                            ss.ss_statussecondary,
-                            t.t_trade,
+            -- Main query using pre-filtered data
+            WITH ranked_results AS (
+                -- Zone-based admin assignment (commercial + residential, all WOs go through this path)
+                SELECT sr.sr_id,
+                    sr.sr_insertdatetime, 
+                    sr.sr_totaldue,
+                    sr.sr_requestnumber,
+                    sr.sr_datenextstep,
+                    sr.sr_actionablenote,
+                    sr.sr_escalated,
+                    wo.wo_startdatetime,
+                    z.z_number + '-' + z.z_acronym AS zone, 
+                    cc.cc_name,
+                    c.c_name,
+                    p.p_priority,
+                    ss.ss_statussecondary,
+                    t.t_trade,
+                    CASE 
+                        WHEN won.latest_note_datetime IS NULL THEN NULL
+                        ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
+                    END as hours_since_last_note,
+                    ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
+                    cc.cc_attack as AttackCallCenter,
+                    p.p_attack as AttackPriority, 
+                    ss.ss_attack as AttackStatusSecondary,
+                    ISNULL((
+                        SELECT TOP 1 aps_attack
+                        FROM AttackPointStatus WITH (NOLOCK)
+                        WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
+                        ORDER BY aps_daysinstatus DESC, aps_id DESC
+                    ), 0) as AttackDaysInStatus,
+                    ISNULL((
+                        SELECT TOP 1 
                             CASE 
-                                WHEN won.latest_note_datetime IS NULL THEN NULL
-                                ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
-                            END as hours_since_last_note,
-                            ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
-                            cc.cc_attack as AttackCallCenter,
-                            p.p_attack as AttackPriority, 
-                            ss.ss_attack as AttackStatusSecondary,
-                            -- Inline attack point calculations
-                            ISNULL((
-                                SELECT TOP 1 aps_attack
-                                FROM AttackPointStatus WITH (NOLOCK)
-                                WHERE ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) >= aps_daysinstatus
-                                ORDER BY aps_daysinstatus DESC, aps_id DESC
-                            ), 0) as AttackDaysInStatus,
-                            ISNULL((
-                                SELECT TOP 1 
-                                    CASE 
-                                        WHEN won.latest_note_datetime IS NULL THEN apn_attack
-                                        WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
-                                            CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
-                                        ELSE apn_attack
-                                    END
-                                FROM AttackPointNote WITH (NOLOCK)
-                                WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
-                                OR (won.latest_note_datetime IS NOT NULL 
-                                    AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
-                                    AND apn_id > 1)
-                                ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
-                            ), 0) as AttackHoursSinceLastNote,
-                            ISNULL((
-                                SELECT TOP 1 apad_attack
-                                FROM AttackPointActionableDate WITH (NOLOCK)
-                                WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
-                                OR (sr.sr_datenextstep IS NOT NULL 
-                                    AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
-                                    AND apad_id > 1)
-                                ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
-                            ), 0) as AttackActionableDate,
-                            admin_user.u_id as admin_u_id,
-                            admin_user.u_firstname as admin_firstname,
-                            admin_user.u_lastname as admin_lastname,
-                            CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated
-                        FROM servicerequest sr WITH (NOLOCK)
-                        INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
-                        INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id -- Use filtered base
-                        INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
-                        INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
-                        INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
-                        LEFT JOIN xrefWorkOrderUser xwou WITH (NOLOCK) ON xwou.wo_id = wo.wo_id 
-                            AND (sr.sr_escalated IS NOT NULL OR xwou.wo_id IS NOT NULL)
-                        LEFT JOIN [user] u WITH (NOLOCK) ON xwou.u_id = u.u_id
-                        INNER JOIN location l WITH (NOLOCK) ON sr.l_id = l.l_id
-                        INNER JOIN address a WITH (NOLOCK) ON l.a_id = a.a_id
-                        INNER JOIN tax WITH (NOLOCK) ON LEFT(a.a_zip,5) = tax.tax_zip
-                        INNER JOIN ZoneMicro zm WITH (NOLOCK) ON tax.zm_id = zm.zm_id
-                        INNER JOIN zone z WITH (NOLOCK) ON CASE 
-                            WHEN cc.cc_name = 'Residential' THEN (SELECT z_id FROM zone WHERE z_acronym = 'Residential')
-                            ELSE zm.z_id 
-                        END = z.z_id
-                        INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
-                        INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
-                        LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
-                        INNER JOIN xrefadminzonestatussecondary xazss WITH (NOLOCK) ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
-                        INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
-                        LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
-                        LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
-                        WHERE sr.s_id NOT IN (9, 6)
-                        AND c.c_name NOT IN ('Metro Pipe Program')
-                    ),
-                    final_with_attack_points AS (
-                        SELECT *,
-                            (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
-                            AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
-                            CASE 
-                                WHEN is_escalated = 1 THEN NULL
-                                WHEN cc_name = 'Administrative' THEN NULL
-                                ELSE ROW_NUMBER() OVER (
-                                    PARTITION BY admin_u_id
-                                    ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus + 
-                                            AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
-                                )
-                            END as rn_non_escalated
-                        FROM ranked_results
-                    )
-                    SELECT sr_id, 
-                        sr_insertdatetime, 
-                        sr_totaldue,
-                        sr_requestnumber,
-                        sr_datenextstep,
-                        sr_actionablenote,
-                        sr_escalated,
-                        wo_startdatetime,
-                        zone, 
-                        admin_u_id,
-                        admin_firstname,
-                        admin_lastname,
-                        cc_name,
-                        c_name,
-                        p_priority,
-                        ss_statussecondary,
-                        t_trade, 
-                        hours_since_last_note,
-                        days_in_current_status,
-                        AttackCallCenter,
-                        AttackPriority, 
-                        AttackStatusSecondary,
-                        AttackHoursSinceLastNote,
-                        AttackDaysInStatus,
-                        AttackActionableDate,
-                        AttackPoints,
-                        is_escalated
-                    FROM final_with_attack_points
-                    WHERE (rn_non_escalated <= @TopCount) OR (is_escalated = 1)
-                    ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
+                                WHEN won.latest_note_datetime IS NULL THEN apn_attack
+                                WHEN CAST(wo.wo_startdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE) >= 
+                                    CAST(GETDATE() AT TIME ZONE 'Central Standard Time' AS DATE) THEN 0
+                                ELSE apn_attack
+                            END
+                        FROM AttackPointNote WITH (NOLOCK)
+                        WHERE (won.latest_note_datetime IS NULL AND apn_id = 1)
+                        OR (won.latest_note_datetime IS NOT NULL 
+                            AND DATEDIFF(HOUR, won.latest_note_datetime, GETDATE()) >= apn_hours
+                            AND apn_id > 1)
+                        ORDER BY CASE WHEN won.latest_note_datetime IS NULL THEN 0 ELSE apn_hours END DESC
+                    ), 0) as AttackHoursSinceLastNote,
+                    ISNULL((
+                        SELECT TOP 1 apad_attack
+                        FROM AttackPointActionableDate WITH (NOLOCK)
+                        WHERE (sr.sr_datenextstep IS NULL AND apad_id = 1)
+                        OR (sr.sr_datenextstep IS NOT NULL 
+                            AND DATEDIFF(DAY, GETDATE(), sr.sr_datenextstep) <= apad_days
+                            AND apad_id > 1)
+                        ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
+                    ), 0) as AttackActionableDate,
+                    admin_user.u_id as admin_u_id,
+                    admin_user.u_firstname as admin_firstname,
+                    admin_user.u_lastname as admin_lastname,
+                    CASE WHEN sr.sr_escalated IS NOT NULL THEN 1 ELSE 0 END as is_escalated
+                FROM servicerequest sr WITH (NOLOCK)
+                INNER JOIN workorder wo WITH (NOLOCK) ON sr.wo_id_primary = wo.wo_id
+                INNER JOIN #BaseData bd ON wo.wo_id = bd.wo_id
+                INNER JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+                INNER JOIN Company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                INNER JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
+                CROSS APPLY (
+                    SELECT TOP 1 xwou.u_id
+                    FROM xrefWorkOrderUser xwou WITH (NOLOCK)
+                    WHERE xwou.wo_id = wo.wo_id
+                    ORDER BY xwou.xwou_id ASC
+                ) pt
+                INNER JOIN [user] u WITH (NOLOCK) ON pt.u_id = u.u_id
+                INNER JOIN zone z WITH (NOLOCK) ON u.z_id = z.z_id
+                INNER JOIN statussecondary ss WITH (NOLOCK) ON wo.ss_id = ss.ss_id
+                INNER JOIN Priority p WITH (NOLOCK) ON sr.p_id = p.p_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
+                INNER JOIN xrefadminzonestatussecondary xazss WITH (NOLOCK) ON z.z_id = xazss.z_id AND ss.ss_id = xazss.ss_id
+                INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
+                LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
+                LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
+                WHERE sr.s_id NOT IN (9, 6)
+                AND c.c_name NOT IN ('Metro Pipe Program')
+            ),
+            final_with_attack_points AS (
+                SELECT *,
+                    (AttackPriority + AttackStatusSecondary + AttackDaysInStatus +
+                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
+                    CASE
+                        WHEN is_escalated = 1 THEN NULL
+                        WHEN cc_name = 'Administrative' THEN NULL
+                        ELSE ROW_NUMBER() OVER (
+                            PARTITION BY admin_u_id
+                            ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus +
+                                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
+                        )
+                    END as rn_non_escalated
+                FROM ranked_results
+            )
+            SELECT sr_id,
+                sr_insertdatetime,
+                sr_totaldue,
+                sr_requestnumber,
+                sr_datenextstep,
+                sr_actionablenote,
+                sr_escalated,
+                wo_startdatetime,
+                zone,
+                admin_u_id,
+                admin_firstname,
+                admin_lastname,
+                cc_name,
+                c_name,
+                p_priority,
+                ss_statussecondary,
+                t_trade,
+                hours_since_last_note,
+                days_in_current_status,
+                AttackCallCenter,
+                AttackPriority,
+                AttackStatusSecondary,
+                AttackHoursSinceLastNote,
+                AttackDaysInStatus,
+                AttackActionableDate,
+                AttackPoints,
+                is_escalated
+            FROM final_with_attack_points
+            WHERE ((rn_non_escalated <= @TopCount) OR (is_escalated = 1))
+            ORDER BY ISNULL(admin_u_id, -1), is_escalated DESC, AttackPoints DESC;
 
-                    -- Clean up
-                    DROP TABLE #BaseData;
-                    DROP TABLE #WorkOrderNotes;
-                    DROP TABLE #StatusChanges;
+            -- Clean up
+            DROP TABLE #BaseData;
+            DROP TABLE #WorkOrderNotes;
+            DROP TABLE #StatusChanges;
             ";
 
             
@@ -3728,7 +4352,204 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetReceiptsDashboardAsync()
+    public async Task<DataTable> GetReceiptsDashboardAsync(int? days = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var dateFilter = (days.HasValue && days.Value > 0)
+                ? $"AND att.att_insertdatetime >= DATEADD(day, -{days.Value}, GETDATE())"
+                : string.Empty;
+
+            var sql = $@"
+
+                SELECT 
+                    cc.cc_name,
+                    c.c_name,
+                    rt.rt_receipttype ,
+                    supplier.c_name as supplier,
+                    att.att_company as supplierEntered,
+                    sr.sr_requestnumber,
+                    wou.u_firstname ,
+                    wou.u_lastname ,
+                    u_submittedby.u_firstname + ' ' + u_submittedby.u_lastname as submittedBy,
+                    att.att_receiptamount ,
+                    att.att_insertdatetime ,
+                    att.att_filename ,
+                    att.att_description ,
+                    att.att_comment ,
+                    att.att_path ,
+                    sr.sr_id ,
+                    sr.wo_id_primary as wo_id,
+                    att.att_id ,
+                    att.att_extension,
+                    t.t_id,
+                    t.t_trade
+                FROM attachment att with(nolock)
+                LEFT JOIN receipttype rt with(nolock) on att.rt_id = rt.rt_id
+                LEFT JOIN servicerequest sr with(nolock) on att.sr_id = sr.sr_id
+                LEFT JOIN trade t with(nolock) on sr.t_id = t.t_id
+                LEFT JOIN xrefWorkOrderUser xwou with(nolock) on sr.wo_id_primary = xwou.wo_id 
+                LEFT JOIN [user] wou with(nolock) on xwou.u_id = wou.u_id
+                LEFT JOIN [user] u_submittedby with(nolock) on att.u_id_submittedby = u_submittedby.u_id
+                LEFT JOIN xrefCompanyCallCenter xccc with(nolock) on sr.xccc_id = xccc.xccc_id
+                LEFT JOIN company c with(nolock) on xccc.c_id = c.c_id
+                LEFT JOIN company supplier with(nolock) on att.c_id = supplier.c_id
+                LEFT JOIN callcenter cc with(nolock) on xccc.cc_id = cc.cc_id
+                WHERE att_receipt = 1
+                {dateFilter}
+                ORDER BY att_id desc
+";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetReceiptsDashboard",
+                Detail = $"Retrieved {result.Rows.Count} receipt records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetReceiptsDashboard",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving receipts dashboard data");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetServiceRequestReportAsync(DateTime startDate, DateTime endDate)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+select 
+       cc.cc_name 'Call Center', cc.cc_portalname, cc.cc_portalurl, cc.cc_portalcredentials
+       , c.c_name Company, c.c_portalname, c.c_portalurl, c.c_portalcredentials
+       , t_parent.t_trade 'Parent Trade', t.t_trade Trade,
+       sr.sr_requestnumber 'Service Request #', sr.sr_insertdatetime Created,
+
+       u.u_firstname + ' ' + u.u_lastname 'Primary Tech',
+       ISNULL((
+           select STRING_AGG(u2.u_firstname + ' ' + u2.u_lastname, ', ') 
+           from workorder wo2 with(nolock)
+           join xrefworkorderuser xwou2 with(nolock) on xwou2.wo_id = wo2.wo_id
+           join [user] u2 with(nolock) on u2.u_id = xwou2.u_id
+           where wo2.sr_id = sr.sr_id
+             and u2.u_id <> xwou.u_id
+       ), '') 'Additional Techs',
+
+       wo.wo_startdatetime 'Primary WO Start', wo.wo_enddatetime 'Primary WO End',
+       sr.sr_quickbooks_docnumber 'Invoice Number', s.s_status 'Status', sr.sr_totaldue 'Total Due',
+       REPLACE(REPLACE(sr.sr_summaryworkcompleted, CHAR(13), ''), CHAR(10), '') 'Summary of Work Completed',
+       l.l_location, a.a_address1, a.a_city, a.a_state, a.a_zip,
+       wonote.won_user 'Note Created By', wonote.won_insertdatetime 'Note Created',
+       REPLACE(REPLACE(REPLACE(wonote.won_note, CHAR(13), ''), CHAR(10), ''), char(9), '') 'Most Recent Note',
+
+       ISNULL((
+           select COUNT(distinct xwosi.si_id)
+           from workorder wo2 with(nolock)
+           join xrefworkorderserviceitem xwosi with(nolock) on xwosi.wo_id = wo2.wo_id
+           where wo2.sr_id = sr.sr_id
+       ), 0) 'Service Item Count',
+
+       ISNULL((
+           select STRING_AGG(si.si_name, ' | ')
+           from (
+               select distinct xwosi.si_id
+               from workorder wo2 with(nolock)
+               join xrefworkorderserviceitem xwosi with(nolock) on xwosi.wo_id = wo2.wo_id
+               where wo2.sr_id = sr.sr_id
+           ) si_distinct
+           join serviceitem si with(nolock) on si.si_id = si_distinct.si_id
+       ), '') 'Service Items'
+
+from status s, trade t, trade t_parent, servicerequest sr with(nolock),
+     xrefcompanycallcenter xccc, location l with(nolock), callcenter cc, company c,
+     address a with(nolock), xrefworkorderuser xwou with(nolock), [user] u with(nolock), workorder wo with(nolock)
+
+left join (
+    select max(won_id) as maxid, wo_id 
+    from workordernote 
+    where won_user <> 'System Generated' 
+    group by wo_id
+) as won on wo.wo_id = won.wo_id
+left join workordernote wonote with(nolock) on wonote.won_id = won.maxid
+
+where 1=1
+and sr.sr_insertdatetime >= @startDate
+and sr.sr_insertdatetime < @endDate
+and sr.t_id = t.t_id
+and sr.s_id = s.s_id
+and sr.wo_id_primary = wo.wo_id
+and wo.sr_id = sr.sr_id
+and sr.xccc_id = xccc.xccc_id
+and xccc.cc_id = cc.cc_id
+and xccc.c_id = c.c_id
+and sr.l_id = l.l_id
+and l.a_id = a.a_id
+and wo.wo_id = xwou.wo_id
+and u.u_id = xwou.u_id
+and t.t_id_parent = t_parent.t_id
+
+order by sr.sr_insertdatetime
+";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@startDate", startDate },
+                { "@endDate", endDate }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetServiceRequestReport",
+                Detail = $"Retrieved {result.Rows.Count} service request records ({startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetServiceRequestReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service request report data");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTechReceiptsDashboardAsync(int userId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -3770,17 +4591,19 @@ FROM DailyTechSummary;
                 LEFT JOIN company supplier with(nolock) on att.c_id = supplier.c_id
                 LEFT JOIN callcenter cc with(nolock) on xccc.cc_id = cc.cc_id
                 WHERE att_receipt = 1
+                AND att.u_id_submittedby = @UserId
                 ORDER BY att_id desc
 ";
 
-            var result = await ExecuteQueryAsync(sql);
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
             
             stopwatch.Stop();
             await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "GetReceiptsDashboard",
-                Detail = $"Retrieved {result.Rows.Count} receipt records",
+                Description = "GetTechReceiptsDashboard",
+                Detail = $"Retrieved {result.Rows.Count} receipt records for user {userId}",
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
@@ -3793,18 +4616,18 @@ FROM DailyTechSummary;
             await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
             {
                 Name = "DataService",
-                Description = "GetReceiptsDashboard",
+                Description = "GetTechReceiptsDashboard",
                 Detail = ex.ToString(),
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
             
-            _logger.LogError(ex, "Error retrieving receipts dashboard data");
+            _logger.LogError(ex, "Error retrieving tech receipts dashboard data");
             throw;
         }
     }
 
-    public async Task<DataTable> GetTechDetailDashboardAsync()
+    public async Task<DataTable> GetTechDetailDashboardAsync(int? userId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -3817,6 +4640,32 @@ FROM DailyTechSummary;
             }
 
             var sql = @"
+                -- First, determine if user is Regional Facility Manager or Zone Facility Manager
+                -- RFM takes priority over ZFM
+                DECLARE @ManagedZones TABLE (z_id INT);
+                DECLARE @IsRFM BIT = 0;
+                
+                IF @UserId IS NOT NULL
+                BEGIN
+                    -- Check if user is Regional Facility Manager
+                    IF EXISTS (SELECT 1 FROM region WHERE u_id = @UserId)
+                    BEGIN
+                        SET @IsRFM = 1;
+                        -- Get all zones in the user's managed region(s)
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z.z_id 
+                        FROM zone z
+                        INNER JOIN region r ON z.reg_id = r.reg_id
+                        WHERE r.u_id = @UserId;
+                    END
+                    ELSE
+                    BEGIN
+                        -- User is not RFM, check if they're Zone Facility Manager
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z_id FROM zone WHERE u_id = @UserId;
+                    END
+                END;
+
                 WITH RankedPerformance AS (
                     SELECT 
                         u.u_id, 
@@ -3833,7 +4682,12 @@ FROM DailyTechSummary;
                         ROW_NUMBER() OVER (PARTITION BY perf.u_id ORDER BY perf.perf_insertdatetime DESC) AS rn
                     FROM performance perf
                     JOIN [user] u ON perf.u_id = u.u_id
-                    WHERE u.u_active = 1
+                    WHERE u.u_active = 1 and u.u_id not in (43)
+                    -- Filter by managed zones if user is a Zone Facility Manager
+                    AND (
+                        NOT EXISTS (SELECT 1 FROM @ManagedZones)  -- No managed zones = show all
+                        OR u.z_id IN (SELECT z_id FROM @ManagedZones)  -- Has managed zones = filter by them
+                    )
                 )
                 SELECT 
                     rp.u_id, 
@@ -3856,7 +4710,6 @@ FROM DailyTechSummary;
                 LEFT JOIN address a ON rp.a_id = a.a_id  -- Join with address table if a_id exists
                 LEFT JOIN zone z ON rp.z_id = z.z_id     -- Join with zone table if z_id exists
                 WHERE rp.rn = 1
-                    AND rp.u_id NOT IN (SELECT DISTINCT u_id FROM zone WHERE u_id IS NOT NULL)  -- Exclude zone managers
                 ORDER BY z.z_number, rp.u_lastname, rp.u_firstname;
             ";
 
@@ -3866,6 +4719,17 @@ FROM DailyTechSummary;
                 using (var command = new SqlCommand(sql, connection))
                 {
                     command.CommandTimeout = 60;
+                    
+                    // Add userId parameter
+                    if (userId.HasValue)
+                    {
+                        command.Parameters.AddWithValue("@UserId", userId.Value);
+                    }
+                    else
+                    {
+                        command.Parameters.AddWithValue("@UserId", DBNull.Value);
+                    }
+                    
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();
                     adapter.Fill(dataTable);
@@ -3875,7 +4739,7 @@ FROM DailyTechSummary;
                     {
                         Name = "DataService",
                         Description = "GetTechDetailDashboard",
-                        Detail = $"Retrieved {dataTable.Rows.Count} tech detail records",
+                        Detail = $"Retrieved {dataTable.Rows.Count} tech detail records (userId: {(userId.HasValue ? userId.Value.ToString() : "all")})",
                         ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                         MachineName = Environment.MachineName
                     });
@@ -3976,7 +4840,7 @@ FROM DailyTechSummary;
         }
     }
 
-    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null)
+    public async Task<DataTable> GetTechActivityDashboardAsync(DateTime? startDate = null, DateTime? endDate = null, int? userId = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         
@@ -3988,7 +4852,32 @@ FROM DailyTechSummary;
             var effectiveStartDate = startDate ?? DateTime.Now.AddDays(-90);
             var effectiveEndDate = endDate ?? DateTime.Now;
             
-            const string sql = @"
+            var sql = @"
+                -- Determine if user is Regional Facility Manager or Zone Facility Manager
+                DECLARE @ManagedZones TABLE (z_id INT);
+                DECLARE @IsRFM BIT = 0;
+                
+                IF @UserId IS NOT NULL
+                BEGIN
+                    -- Check if user is Regional Facility Manager
+                    IF EXISTS (SELECT 1 FROM region WHERE u_id = @UserId)
+                    BEGIN
+                        SET @IsRFM = 1;
+                        -- Get all zones in the user's managed region(s)
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z.z_id 
+                        FROM zone z
+                        INNER JOIN region r ON z.reg_id = r.reg_id
+                        WHERE r.u_id = @UserId;
+                    END
+                    ELSE
+                    BEGIN
+                        -- User is not RFM, check if they're Zone Facility Manager
+                        INSERT INTO @ManagedZones (z_id)
+                        SELECT z_id FROM zone WHERE u_id = @UserId;
+                    END
+                END;
+
                 SELECT 
                     tt.tt_id,
                     ttt.ttt_id,
@@ -4038,6 +4927,11 @@ FROM DailyTechSummary;
                 WHERE tt.tt_begin >= @StartDate 
                     AND tt.tt_begin <= @EndDate
                     AND ttt.ttt_id NOT IN (1)
+                    -- Filter by managed zones if user is a ZFM or RFM
+                    AND (
+                        NOT EXISTS (SELECT 1 FROM @ManagedZones)  -- No managed zones = show all
+                        OR u.z_id IN (SELECT z_id FROM @ManagedZones)  -- Has managed zones = filter by them
+                    )
                 ORDER BY tt.tt_id DESC;
             ";
 
@@ -4048,6 +4942,17 @@ FROM DailyTechSummary;
                 {
                     command.Parameters.AddWithValue("@StartDate", effectiveStartDate);
                     command.Parameters.AddWithValue("@EndDate", effectiveEndDate);
+                    
+                    // Add userId parameter
+                    if (userId.HasValue)
+                    {
+                        command.Parameters.AddWithValue("@UserId", userId.Value);
+                    }
+                    else
+                    {
+                        command.Parameters.AddWithValue("@UserId", DBNull.Value);
+                    }
+                    
                     command.CommandTimeout = 60;
                     var adapter = new SqlDataAdapter(command);
                     var dataTable = new DataTable();
@@ -4225,6 +5130,143 @@ FROM DailyTechSummary;
             });
             
             _logger.LogError(ex, "Error retrieving active service requests data");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetPendingTechInfoCurrentAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            // Work orders currently in secondary status 37 (Pending Tech Info Basic)
+            const string sql = @"
+                select wo.sr_id, sr.sr_requestnumber, u.u_firstname, u.u_lastname, wo.wo_insertdatetime, t.t_trade, c.c_name, wo.wo_startdatetime
+                from servicerequest sr, workorder wo, statussecondary ss, xrefworkorderuser xwou, [user] u, trade t, xrefcompanycallcenter xccc, company c
+                where ss.ss_id = 37
+                and wo.sr_id = sr.sr_id
+                and sr.xccc_id = xccc.xccc_id
+                and xccc.c_id = c.c_id
+                and wo.ss_id = ss.ss_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and sr.t_id = t.t_id
+                order by wo.wo_insertdatetime desc
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetPendingTechInfoCurrent",
+                        Detail = $"Retrieved {dataTable.Rows.Count} pending tech info current records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfoCurrent",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving pending tech info current data");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetPendingTechInfoHistoricAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            }
+
+            // Work orders that have passed through secondary status 37 (Pending Tech Info Basic),
+            // with time spent in that status from statussecondarychange
+            const string sql = @"
+                select wo.sr_id, sr.sr_requestnumber, u.u_firstname, u.u_lastname, wo.wo_insertdatetime, t.t_trade, c.c_name, wo.wo_startdatetime, ssc.ssc_minutesinpriorstatus
+                from servicerequest sr, workorder wo, statussecondarychange ssc, xrefworkorderuser xwou, [user] u, trade t, xrefcompanycallcenter xccc, company c
+                where ssc.ss_id_prior = 37
+                and wo.sr_id = sr.sr_id
+                and sr.xccc_id = xccc.xccc_id
+                and xccc.c_id = c.c_id
+                and wo.wo_id = ssc.wo_id
+                and wo.wo_id = xwou.wo_id
+                and xwou.u_id = u.u_id
+                and sr.t_id = t.t_id
+                order by wo.wo_insertdatetime desc
+            ";
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    command.CommandTimeout = 60;
+                    var adapter = new SqlDataAdapter(command);
+                    var dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "GetPendingTechInfoHistoric",
+                        Detail = $"Retrieved {dataTable.Rows.Count} pending tech info historic records",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+
+                    return dataTable;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetPendingTechInfoHistoric",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving pending tech info historic data");
             throw;
         }
     }
@@ -4985,6 +6027,213 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<DataTable> GetAttachmentsByCallCenterAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    att_id,
+                    att_insertdatetime,
+                    att_filename,
+                    att_description,
+                    att_active,
+                    att_receipt,
+                    att_public,
+                    att_signoff,
+                    att_submittedby,
+                    att_receiptamount,
+                    att_extension,
+                    cc_id
+                FROM attachment 
+                WHERE cc_id = @cc_id
+                ORDER BY att_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cc_id"] = ccId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByCallCenter",
+                Detail = $"Retrieved {result.Rows.Count} attachments for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentsByCallCenter",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachments for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAttachmentDescriptionAsync(int attId, string description)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE attachment 
+                SET att_description = @description, att_modifieddatetime = GETUTCDATE()
+                WHERE att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId,
+                ["@description"] = description ?? string.Empty
+            };
+
+            await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttachmentDescription",
+                Detail = $"Updated attachment {attId} description",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttachmentDescription",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating attachment {AttId} description", attId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteAttachmentAsync(int attId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM attachment 
+                WHERE att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId
+            };
+
+            await ExecuteNonQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttachment",
+                Detail = $"Deleted attachment {attId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting attachment {AttId}", attId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable?> GetAttachmentByIdAsync(int attId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.att_id, a.att_filename, a.att_extension, a.att_description, 
+                    a.att_insertdatetime, a.att_modifieddatetime, a.att_active,
+                    a.att_receipt, a.att_public, a.att_signoff, a.att_submittedby,
+                    a.att_receiptamount, a.sr_id, a.cc_id,
+                    cc.cc_name, cc.cc_id
+                FROM attachment a
+                LEFT JOIN CallCenter cc ON a.cc_id = cc.cc_id
+                WHERE a.att_id = @att_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@att_id"] = attId
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentById",
+                Detail = $"Retrieved attachment {attId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAttachmentById",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving attachment {AttId}", attId);
+            throw;
+        }
+    }
+
     public async Task<DataTable> GetPendingTechInfoAsync(int userId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5505,6 +6754,65 @@ FROM DailyTechSummary;
             return result;
             
         return 0;
+    }
+
+    private static DateTime ConvertToDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return DateTime.MinValue;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return DateTime.MinValue;
+    }
+
+    private static DateTime? ConvertToNullableDateTime(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (DateTime.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
+    private static int? ConvertToNullableInt(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (int.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
+    private static decimal? ConvertToNullableDecimal(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return null;
+        
+        if (decimal.TryParse(value.ToString(), out var result))
+            return result;
+            
+        return null;
+    }
+
+    private static bool ConvertToBool(object value)
+    {
+        if (value == null || value == DBNull.Value)
+            return false;
+        
+        if (bool.TryParse(value.ToString(), out var result))
+            return result;
+        
+        // Handle bit values (0/1)
+        if (int.TryParse(value.ToString(), out var intResult))
+            return intResult != 0;
+            
+        return false;
     }
 
     public async Task<List<UserFleetmaticsDto>> GetUsersForFleetmaticsSyncAsync()
@@ -6177,6 +7485,41 @@ FROM DailyTechSummary;
                 }
             }
 
+            // Check if work order belongs to a high-volume company
+            if (actualWoId.HasValue && actualWoId.Value > 0)
+            {
+                const string checkHighVolumeSql = @"
+                    SELECT COUNT(1)
+                    FROM workorder wo
+                    INNER JOIN servicerequest sr ON wo.sr_id = sr.sr_id
+                    INNER JOIN xrefCompanyCallCenter xccc ON sr.xccc_id = xccc.xccc_id
+                    INNER JOIN company c ON xccc.c_id = c.c_id
+                    WHERE wo.wo_id = @wo_id
+                      AND c.c_id IN (SELECT cs_value FROM configsetting WHERE cs_identifier = 'HighVolumeCompanyID')";
+
+                using var checkHighVolumeCommand = new SqlCommand(checkHighVolumeSql, connection);
+                checkHighVolumeCommand.Parameters.Add("@wo_id", System.Data.SqlDbType.Int).Value = actualWoId.Value;
+
+                var isHighVolume = (int)(await checkHighVolumeCommand.ExecuteScalarAsync() ?? 0) > 0;
+
+                if (isHighVolume)
+                {
+                    _logger.LogWarning("Attempted to insert time tracking detail for high-volume company work order {WoId} for user {UserId}", 
+                        actualWoId, userId);
+                    
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "InsertTimeTrackingDetail - High Volume Company Rejected",
+                        Detail = $"User {userId} attempted to create time tracking detail for high-volume company work order {actualWoId}",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+                    
+                    return false;
+                }
+            }
+
             // Retrieve Fleetmatics GPS coordinates
             decimal? latFleetmatics = null;
             decimal? lonFleetmatics = null;
@@ -6403,12 +7746,17 @@ FROM DailyTechSummary;
         {
             var companies = new List<CompanyListDto>();
             const string sql = @"
-                SELECT 
+                SELECT
                     xccc.xccc_id,
                     xccc.c_id as company_id,
                     xccc.cc_id as callcenter_id,
                     c.c_name as company_name,
-                    xccc.xccc_active
+                    xccc.xccc_active,
+                    xccc.xccc_note,
+                    xccc.xccc_tripcharge,
+                    xccc.xccc_ivrrequestnumber,
+                    xccc.xccc_nteguidance,
+                    xccc.xccc_agencies
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 WHERE xccc.cc_id = @callCenterId
@@ -6429,7 +7777,12 @@ FROM DailyTechSummary;
                             CompanyId = reader.GetInt32(1),
                             CallCenterId = reader.GetInt32(2),
                             CompanyName = reader.GetString(3),
-                            Active = reader.GetBoolean(4)
+                            Active = reader.GetBoolean(4),
+                            Note = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            TripCharge = reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                            IvrRequestNumber = !reader.IsDBNull(7) && reader.GetBoolean(7),
+                            NteGuidance = !reader.IsDBNull(8) && reader.GetBoolean(8),
+                            Agencies = reader.IsDBNull(9) ? null : reader.GetString(9)
                         });
                     }
                 }
@@ -6494,16 +7847,23 @@ FROM DailyTechSummary;
                     xccc.xccc_firmquote,
                     xccc.xccc_invoicedateshow,
                     xccc.xccc_ivrrequestnumber,
+                    xccc.xccc_collectpaymentonsite,
                     xccc.xccc_clientrep,
                     xccc.xccc_licenserep,
                     xccc.xccc_invoiceextratext,
                     xccc.xccc_note,
+                    c.c_portalurl,
+                    c.c_portalname,
+                    c.c_portalcredentials,
                     xccc.xccc_insertdatetime,
                     xccc.xccc_modifieddatetime,
                     br.br_description,
                     br.br_roundtominute,
                     t.terms_description,
-                    t.terms_numberofdays
+                    t.terms_numberofdays,
+                    xccc.xccc_markuptriggeramount,
+                    xccc.xccc_nteguidance,
+                    xccc.xccc_agencies
                 FROM xrefCompanyCallCenter xccc
                 INNER JOIN Company c ON xccc.c_id = c.c_id
                 INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
@@ -6531,22 +7891,30 @@ FROM DailyTechSummary;
                             BillableRuleId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
                             TermsId = reader.IsDBNull(7) ? null : reader.GetInt32(7),
                             TaxExempt = reader.GetBoolean(8),
-                            MinimumLaborChargeMinutes = reader.GetInt32(9),
-                            MarkupPercentage = reader.GetInt32(10),
-                            MarkupPercentageSupplier = reader.GetInt32(11),
+                            MinimumLaborChargeMinutes = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                            MarkupPercentage = reader.IsDBNull(10) ? 0 : reader.GetDecimal(10),
+                            MarkupPercentageSupplier = reader.IsDBNull(11) ? 0 : reader.GetDecimal(11),
                             Active = reader.GetBoolean(12),
                             FirmQuote = reader.GetBoolean(13),
                             InvoiceDateShow = reader.GetBoolean(14),
                             IvrRequestNumber = reader.GetBoolean(15),
-                            ClientRepresentative = reader.IsDBNull(16) ? null : reader.GetString(16),
-                            LicenseRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
-                            InvoiceExtraText = reader.IsDBNull(18) ? null : reader.GetString(18),
-                            Note = reader.IsDBNull(19) ? null : reader.GetString(19),
-                            InsertDateTime = reader.GetDateTime(20),
-                            ModifiedDateTime = reader.IsDBNull(21) ? null : reader.GetDateTime(21),
-                            BillableRuleDescription = reader.IsDBNull(22) ? null : reader.GetString(22),
-                            TermsDescription = reader.IsDBNull(24) ? null : reader.GetString(24),
-                            TermsNumberOfDays = reader.IsDBNull(25) ? 0 : reader.GetInt32(25)
+                            CollectPaymentOnSite = !reader.IsDBNull(16) && reader.GetBoolean(16),
+                            ClientRepresentative = reader.IsDBNull(17) ? null : reader.GetString(17),
+                            LicenseRepresentative = reader.IsDBNull(18) ? null : reader.GetString(18),
+                            InvoiceExtraText = reader.IsDBNull(19) ? null : reader.GetString(19),
+                            Note = reader.IsDBNull(20) ? null : reader.GetString(20),
+                            PortalUrl = reader.IsDBNull(21) ? null : reader.GetString(21),
+                            PortalName = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            PortalCredentials = reader.IsDBNull(23) ? null : reader.GetString(23),
+                            InsertDateTime = reader.GetDateTime(24),
+                            ModifiedDateTime = reader.IsDBNull(25) ? null : reader.GetDateTime(25),
+                            BillableRuleDescription = reader.IsDBNull(26) ? null : reader.GetString(26),
+                            BillableRuleRoundToMinute = reader.IsDBNull(27) ? null : reader.GetInt32(27),
+                            TermsDescription = reader.IsDBNull(28) ? null : reader.GetString(28),
+                            TermsNumberOfDays = reader.IsDBNull(29) ? 0 : reader.GetInt32(29),
+                            MarkupTriggerAmount = reader.IsDBNull(30) ? null : reader.GetDecimal(30),
+                            NteGuidance = !reader.IsDBNull(31) && reader.GetBoolean(31),
+                            Agencies = reader.IsDBNull(32) ? null : reader.GetString(32)
                         };
                     }
                 }
@@ -6556,7 +7924,7 @@ FROM DailyTechSummary;
             {
                 // Get Materials Markup
                 const string markupSql = @"
-                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime, mm_modifieddatetime
+                    SELECT mm_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational, mm_insertdatetime, mm_modifieddatetime
                     FROM MaterialsMarkup
                     WHERE xccc_id = @xcccId
                     ORDER BY mm_from";
@@ -6576,10 +7944,11 @@ FROM DailyTechSummary;
                                 XcccId = xcccId,
                                 FromPrice = reader.GetInt32(1),
                                 ToPrice = reader.GetInt32(2),
-                                MarkupPercentage = reader.GetInt32(3),
-                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-                                InsertDateTime = reader.GetDateTime(5),
-                                ModifiedDateTime = reader.IsDBNull(6) ? null : reader.GetDateTime(6)
+                                MarkupPercentage = reader.GetDecimal(3),
+                                MarkupHighQuantity = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
+                                MarkupFoundational = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
+                                InsertDateTime = reader.GetDateTime(6),
+                                ModifiedDateTime = reader.IsDBNull(7) ? null : reader.GetDateTime(7)
                             });
                         }
                     }
@@ -6685,36 +8054,56 @@ FROM DailyTechSummary;
                     xccc_minimumlaborchargeinminutes = @minimumlaborcharge,
                     xccc_markuppercentage = @markuppercentage,
                     xccc_markuppercentagesupplier = @markuppercentagesupplier,
+                    xccc_markuptriggeramount = @markuptriggeramount,
                     xccc_active = @active,
                     xccc_firmquote = @firmquote,
                     xccc_invoicedateshow = @invoicedateshow,
                     xccc_ivrrequestnumber = @ivrrequestnumber,
+                    xccc_collectpaymentonsite = @collectpaymentonsite,
+                    xccc_nteguidance = @nteguidance,
                     xccc_clientrep = @clientrep,
                     xccc_licenserep = @licenserep,
+                    xccc_agencies = @agencies,
                     xccc_invoiceextratext = @invoiceextratext,
                     xccc_note = @note,
                     xccc_modifieddatetime = GETDATE()
-                WHERE xccc_id = @xcccId";
+                WHERE xccc_id = @xcccId;
+                
+                UPDATE Company
+                SET
+                    c_name = @cname,
+                    c_portalurl = @portalurl,
+                    c_portalname = @portalname,
+                    c_portalcredentials = @portalcredentials
+                WHERE c_id = (SELECT c_id FROM xrefCompanyCallCenter WHERE xccc_id = @xcccId)";
 
             using (var connection = new SqlConnection(connectionString))
             using (var command = new SqlCommand(sql, connection))
             {
                 command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
+                command.Parameters.Add("@cname", SqlDbType.VarChar, 200).Value = request.CompanyName?.Trim() ?? string.Empty;
                 command.Parameters.Add("@tripcharge", SqlDbType.Decimal).Value = request.TripCharge.HasValue ? (object)request.TripCharge.Value : DBNull.Value;
                 command.Parameters.Add("@billableRuleId", SqlDbType.Int).Value = request.BillableRuleId.HasValue ? (object)request.BillableRuleId.Value : DBNull.Value;
                 command.Parameters.Add("@termsId", SqlDbType.Int).Value = request.TermsId.HasValue ? (object)request.TermsId.Value : DBNull.Value;
                 command.Parameters.Add("@taxexempt", SqlDbType.Bit).Value = request.TaxExempt;
                 command.Parameters.Add("@minimumlaborcharge", SqlDbType.Int).Value = request.MinimumLaborChargeMinutes;
-                command.Parameters.Add("@markuppercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Int).Value = request.MarkupPercentageSupplier;
+                command.Parameters.Add("@markuppercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markuppercentagesupplier", SqlDbType.Decimal).Value = request.MarkupPercentageSupplier;
+                command.Parameters.Add("@markuptriggeramount", SqlDbType.Decimal).Value = request.MarkupTriggerAmount.HasValue ? (object)request.MarkupTriggerAmount.Value : DBNull.Value;
                 command.Parameters.Add("@active", SqlDbType.Bit).Value = request.Active;
                 command.Parameters.Add("@firmquote", SqlDbType.Bit).Value = request.FirmQuote;
                 command.Parameters.Add("@invoicedateshow", SqlDbType.Bit).Value = request.InvoiceDateShow;
                 command.Parameters.Add("@ivrrequestnumber", SqlDbType.Bit).Value = request.IvrRequestNumber;
+                command.Parameters.Add("@collectpaymentonsite", SqlDbType.Bit).Value = request.CollectPaymentOnSite;
+                command.Parameters.Add("@nteguidance", SqlDbType.Bit).Value = request.NteGuidance;
                 command.Parameters.Add("@clientrep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.ClientRepresentative) ? (object)request.ClientRepresentative : DBNull.Value;
                 command.Parameters.Add("@licenserep", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.LicenseRepresentative) ? (object)request.LicenseRepresentative : DBNull.Value;
+                command.Parameters.Add("@agencies", SqlDbType.VarChar, 1000).Value = !string.IsNullOrEmpty(request.Agencies) ? (object)request.Agencies : DBNull.Value;
                 command.Parameters.Add("@invoiceextratext", SqlDbType.VarChar, 4000).Value = !string.IsNullOrEmpty(request.InvoiceExtraText) ? (object)request.InvoiceExtraText : DBNull.Value;
                 command.Parameters.Add("@note", SqlDbType.VarChar, 8000).Value = !string.IsNullOrEmpty(request.Note) ? (object)request.Note : DBNull.Value;
+                command.Parameters.Add("@portalurl", SqlDbType.VarChar, 100).Value = !string.IsNullOrEmpty(request.PortalUrl) ? (object)request.PortalUrl : DBNull.Value;
+                command.Parameters.Add("@portalname", SqlDbType.VarChar, 50).Value = !string.IsNullOrEmpty(request.PortalName) ? (object)request.PortalName : DBNull.Value;
+                command.Parameters.Add("@portalcredentials", SqlDbType.VarChar, 200).Value = !string.IsNullOrEmpty(request.PortalCredentials) ? (object)request.PortalCredentials : DBNull.Value;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
@@ -6748,6 +8137,326 @@ FROM DailyTechSummary;
         }
     }
 
+    public async Task<int?> CreateCompanyAsync(string companyName)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var trimmedName = (companyName ?? string.Empty).Trim();
+        if (trimmedName.Length == 0)
+        {
+            return null;
+        }
+        if (trimmedName.Length > 50)
+        {
+            trimmedName = trimmedName.Substring(0, 50);
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+            int newCId;
+
+            const string insertCompanySql = @"
+                INSERT INTO Company (c_name, c_active)
+                VALUES (@c_name, 1);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var command = new SqlCommand(insertCompanySql, connection, transaction))
+            {
+                command.Parameters.Add("@c_name", SqlDbType.VarChar, 50).Value = trimmedName;
+                var result = await command.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                {
+                    await transaction.RollbackAsync();
+                    return null;
+                }
+                newCId = Convert.ToInt32(result);
+            }
+
+            const string seedPrioritiesSql = @"
+                INSERT INTO xrefCompanyPriority (c_id, p_id, xcp_priority, xcp_arrivaltimeinhours)
+                SELECT @c_id, p_id, p_priority, p_arrivaltimeinhours
+                FROM Priority";
+
+            using (var command = new SqlCommand(seedPrioritiesSql, connection, transaction))
+            {
+                command.Parameters.Add("@c_id", SqlDbType.Int).Value = newCId;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompany",
+                Detail = $"Created company '{trimmedName}' (c_id {newCId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newCId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating company '{CompanyName}'", trimmedName);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompany",
+                Detail = $"Error creating company '{trimmedName}': {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<List<CompanyWithCallCentersDto>> GetCompaniesWithCallCentersAsync()
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var companies = new Dictionary<int, CompanyWithCallCentersDto>();
+
+        const string sql = @"
+            SELECT c.c_id, c.c_name, c.c_active,
+                   xccc.xccc_id, xccc.cc_id, cc.cc_name, xccc.xccc_active
+            FROM Company c
+            LEFT JOIN xrefCompanyCallCenter xccc ON xccc.c_id = c.c_id
+            LEFT JOIN CallCenter cc ON cc.cc_id = xccc.cc_id
+            ORDER BY c.c_name, cc.cc_name";
+
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(sql, connection);
+        await connection.OpenAsync();
+        using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var cId = reader.GetInt32(0);
+            if (!companies.TryGetValue(cId, out var company))
+            {
+                company = new CompanyWithCallCentersDto
+                {
+                    CId = cId,
+                    CompanyName = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    Active = !reader.IsDBNull(2) && reader.GetBoolean(2),
+                    CallCenters = new List<CompanyCallCenterPairingDto>()
+                };
+                companies[cId] = company;
+            }
+
+            if (!reader.IsDBNull(3))
+            {
+                company.CallCenters.Add(new CompanyCallCenterPairingDto
+                {
+                    XcccId = reader.GetInt32(3),
+                    CcId = reader.GetInt32(4),
+                    CcName = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
+                    Active = !reader.IsDBNull(6) && reader.GetBoolean(6)
+                });
+            }
+        }
+
+        return companies.Values.ToList();
+    }
+
+    public async Task<int?> AssignCompanyToCallCenterAsync(int cId, int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string existsSql = @"
+                SELECT TOP 1 xccc_id FROM xrefCompanyCallCenter
+                WHERE c_id = @c_id AND cc_id = @cc_id";
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            using (var checkCmd = new SqlCommand(existsSql, connection))
+            {
+                checkCmd.Parameters.Add("@c_id", SqlDbType.Int).Value = cId;
+                checkCmd.Parameters.Add("@cc_id", SqlDbType.Int).Value = ccId;
+                var existing = await checkCmd.ExecuteScalarAsync();
+                if (existing != null && existing != DBNull.Value)
+                {
+                    return Convert.ToInt32(existing);
+                }
+            }
+
+            const string insertSql = @"
+                INSERT INTO xrefCompanyCallCenter (c_id, cc_id, xccc_active, br_id)
+                VALUES (@c_id, @cc_id, 1, 0);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int newXcccId;
+            using (var insertCmd = new SqlCommand(insertSql, connection))
+            {
+                insertCmd.Parameters.Add("@c_id", SqlDbType.Int).Value = cId;
+                insertCmd.Parameters.Add("@cc_id", SqlDbType.Int).Value = ccId;
+                var result = await insertCmd.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                {
+                    return null;
+                }
+                newXcccId = Convert.ToInt32(result);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignCompanyToCallCenter",
+                Detail = $"Assigned c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newXcccId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning c_id {CId} to cc_id {CcId}", cId, ccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignCompanyToCallCenter",
+                Detail = $"Error assigning c_id {cId} to cc_id {ccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<(bool Success, string? ErrorMessage, int CId, int CcId, string CompanyName, string CallCenterName)> UnassignCompanyFromCallCenterAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            int cId = 0, ccId = 0;
+            string companyName = string.Empty;
+            string callCenterName = string.Empty;
+
+            const string lookupSql = @"
+                SELECT xccc.c_id, xccc.cc_id, c.c_name, cc.cc_name
+                FROM xrefCompanyCallCenter xccc
+                INNER JOIN Company c ON c.c_id = xccc.c_id
+                INNER JOIN CallCenter cc ON cc.cc_id = xccc.cc_id
+                WHERE xccc.xccc_id = @xccc_id";
+
+            using (var lookupCmd = new SqlCommand(lookupSql, connection))
+            {
+                lookupCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                using var reader = await lookupCmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    return (false, "Pairing not found", 0, 0, string.Empty, string.Empty);
+                }
+                cId = reader.GetInt32(0);
+                ccId = reader.GetInt32(1);
+                companyName = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                callCenterName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+            }
+
+            const string fkCheckSql = @"
+                SELECT
+                    (SELECT COUNT(*) FROM MaterialsMarkup WHERE xccc_id = @xccc_id) AS markup_count,
+                    (SELECT COUNT(*) FROM LaborRate WHERE xccc_id = @xccc_id) AS trade_count,
+                    (SELECT COUNT(*) FROM CheckList WHERE xccc_id = @xccc_id) AS checklist_count,
+                    (SELECT COUNT(*) FROM Attachment WHERE xccc_id = @xccc_id) AS attachment_count";
+
+            int markupCount = 0, tradeCount = 0, checklistCount = 0, attachmentCount = 0;
+
+            using (var checkCmd = new SqlCommand(fkCheckSql, connection))
+            {
+                checkCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                using var reader = await checkCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    markupCount = reader.GetInt32(0);
+                    tradeCount = reader.GetInt32(1);
+                    checklistCount = reader.GetInt32(2);
+                    attachmentCount = reader.GetInt32(3);
+                }
+            }
+
+            if (markupCount + tradeCount + checklistCount + attachmentCount > 0)
+            {
+                var parts = new List<string>();
+                if (markupCount > 0) parts.Add($"{markupCount} materials markup");
+                if (tradeCount > 0) parts.Add($"{tradeCount} trade(s)");
+                if (checklistCount > 0) parts.Add($"{checklistCount} checklist(s)");
+                if (attachmentCount > 0) parts.Add($"{attachmentCount} attachment(s)");
+                var msg = $"Cannot unassign — pairing has " + string.Join(", ", parts) + ". Remove those first.";
+                return (false, msg, cId, ccId, companyName, callCenterName);
+            }
+
+            const string deleteSql = "DELETE FROM xrefCompanyCallCenter WHERE xccc_id = @xccc_id";
+            int rowsAffected;
+            using (var deleteCmd = new SqlCommand(deleteSql, connection))
+            {
+                deleteCmd.Parameters.Add("@xccc_id", SqlDbType.Int).Value = xcccId;
+                rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UnassignCompanyFromCallCenter",
+                Detail = $"Unassigned xccc_id {xcccId} (c_id {cId}, cc_id {ccId})",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return (rowsAffected > 0, null, cId, ccId, companyName, callCenterName);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error unassigning xccc_id {XcccId}", xcccId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UnassignCompanyFromCallCenter",
+                Detail = $"Error unassigning xccc_id {xcccId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
     public async Task<int?> CreateMaterialsMarkupAsync(CreateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -6760,8 +8469,8 @@ FROM DailyTechSummary;
         try
         {
             const string sql = @"
-                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_insertdatetime)
-                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, GETDATE());
+                INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational, mm_insertdatetime)
+                VALUES (@xcccId, @fromPrice, @toPrice, @markupPercentage, @markupHighQuantity, @markupFoundational, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             using (var connection = new SqlConnection(connectionString))
@@ -6770,8 +8479,9 @@ FROM DailyTechSummary;
                 command.Parameters.Add("@xcccId", SqlDbType.Int).Value = request.XcccId;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
-                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Decimal).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Decimal).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var newId = (int?)await command.ExecuteScalarAsync();
@@ -6781,7 +8491,7 @@ FROM DailyTechSummary;
                 {
                     Name = "DataService",
                     Description = "CreateMaterialsMarkup",
-                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    Detail = $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%, foundational {request.MarkupFoundational}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
@@ -6801,6 +8511,115 @@ FROM DailyTechSummary;
                 ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                 MachineName = Environment.MachineName
             });
+            throw;
+        }
+    }
+
+    public async Task<UpdateMaterialsMarkupRequest> GetMaterialsMarkupByIdAsync(int mmId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    mm_from,
+                    mm_to,
+                    mm_markup,
+                    mm_markuphighquantity,
+                    mm_markupfoundational
+                FROM MaterialsMarkup
+                WHERE mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = mmId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        return new UpdateMaterialsMarkupRequest
+                        {
+                            MmId = mmId,
+                            FromPrice = reader.GetInt32(0),
+                            ToPrice = reader.GetInt32(1),
+                            MarkupPercentage = reader.GetDecimal(2),
+                            MarkupHighQuantity = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4)
+                        };
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving materials markup mm_id {MmId}", mmId);
+            throw;
+        }
+    }
+
+    public async Task<(UpdateMaterialsMarkupRequest? MarkupData, string? CompanyName)> GetMaterialsMarkupWithCompanyByIdAsync(int mmId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    mm.mm_from,
+                    mm.mm_to,
+                    mm.mm_markup,
+                    mm.mm_markuphighquantity,
+                    mm.mm_markupfoundational,
+                    c.c_name
+                FROM MaterialsMarkup mm
+                INNER JOIN xrefCompanyCallCenter xccc ON mm.xccc_id = xccc.xccc_id
+                INNER JOIN company c ON xccc.c_id = c.c_id
+                WHERE mm.mm_id = @mmId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@mmId", SqlDbType.Int).Value = mmId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var markupData = new UpdateMaterialsMarkupRequest
+                        {
+                            MmId = mmId,
+                            FromPrice = reader.GetInt32(0),
+                            ToPrice = reader.GetInt32(1),
+                            MarkupPercentage = reader.GetDecimal(2),
+                            MarkupHighQuantity = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
+                            MarkupFoundational = reader.IsDBNull(4) ? 0 : reader.GetDecimal(4)
+                        };
+                        var companyName = reader.IsDBNull(5) ? null : reader.GetString(5);
+                        return (markupData, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving materials markup with company mm_id {MmId}", mmId);
             throw;
         }
     }
@@ -6835,11 +8654,12 @@ FROM DailyTechSummary;
 
             const string sql = @"
                 UPDATE MaterialsMarkup
-                SET 
+                SET
                     mm_from = @fromPrice,
                     mm_to = @toPrice,
                     mm_markup = @markupPercentage,
                     mm_markuphighquantity = @markupHighQuantity,
+                    mm_markupfoundational = @markupFoundational,
                     mm_modifieddatetime = GETDATE()
                 WHERE mm_id = @mmId";
 
@@ -6849,8 +8669,9 @@ FROM DailyTechSummary;
                 command.Parameters.Add("@mmId", SqlDbType.Int).Value = request.MmId;
                 command.Parameters.Add("@fromPrice", SqlDbType.Int).Value = request.FromPrice;
                 command.Parameters.Add("@toPrice", SqlDbType.Int).Value = request.ToPrice;
-                command.Parameters.Add("@markupPercentage", SqlDbType.Int).Value = request.MarkupPercentage;
-                command.Parameters.Add("@markupHighQuantity", SqlDbType.Int).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupPercentage", SqlDbType.Decimal).Value = request.MarkupPercentage;
+                command.Parameters.Add("@markupHighQuantity", SqlDbType.Decimal).Value = request.MarkupHighQuantity;
+                command.Parameters.Add("@markupFoundational", SqlDbType.Decimal).Value = request.MarkupFoundational;
 
                 await connection.OpenAsync();
                 var rowsAffected = await command.ExecuteNonQueryAsync();
@@ -6860,7 +8681,7 @@ FROM DailyTechSummary;
                 {
                     Name = "DataService",
                     Description = "UpdateMaterialsMarkup",
-                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%",
+                    Detail = $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}%, markup {request.MarkupPercentage}%, high quantity {request.MarkupHighQuantity}%, foundational {request.MarkupFoundational}%",
                     ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
                     MachineName = Environment.MachineName
                 });
@@ -6977,8 +8798,8 @@ FROM DailyTechSummary;
 
                 // Step 3: Copy materials markup from template
                 const string insertSql = @"
-                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity)
-                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity
+                    INSERT INTO MaterialsMarkup (xccc_id, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational)
+                    SELECT @xcccId, mm_from, mm_to, mm_markup, mm_markuphighquantity, mm_markupfoundational
                     FROM MaterialsMarkup
                     WHERE xccc_id = @templateId";
 
@@ -7018,5 +8839,7377 @@ FROM DailyTechSummary;
         }
     }
 
+    // Company Priority methods
+    public async Task<List<CompanyPriorityDto>> GetCompanyPrioritiesAsync(int companyId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // Match old interface behavior: Load ALL priorities, then merge with company-specific data
+            // This ensures all 9 priorities appear even if not in xrefCompanyPriority yet
+            const string sql = @"
+                SELECT 
+                    ISNULL(xcp.xcp_id, 0) AS xcp_id,
+                    @companyId AS c_id,
+                    p.p_id,
+                    p.p_priority,
+                    ISNULL(xcp.xcp_priority, '') AS xcp_priority,
+                    ISNULL(xcp.xcp_arrivaltimeinhours, p.p_arrivaltimeinhours) AS xcp_arrivaltimeinhours,
+                    ISNULL(p.p_order, 999) AS p_order
+                FROM Priority p
+                LEFT JOIN xrefCompanyPriority xcp ON p.p_id = xcp.p_id AND xcp.c_id = @companyId
+                ORDER BY ISNULL(p.p_order, 999)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@companyId", SqlDbType.Int).Value = companyId;
+                await connection.OpenAsync();
+
+                var priorities = new List<CompanyPriorityDto>();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        priorities.Add(new CompanyPriorityDto
+                        {
+                            XcpId = reader.GetInt32(0), // Will be 0 if not in xrefCompanyPriority
+                            CompanyId = reader.GetInt32(1),
+                            PriorityId = reader.GetInt32(2),
+                            PriorityName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                            CompanySpecificName = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                            ArrivalTimeInHours = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
+                            PriorityOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6)
+                        });
+                    }
+                }
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "GetCompanyPriorities",
+                    Detail = $"Retrieved {priorities.Count} priorities (all system priorities merged with company-specific data) for company c_id {companyId}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return priorities;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving priorities for company c_id {CompanyId}", companyId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyPriorities",
+                Detail = $"Error retrieving priorities for company c_id {companyId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateCompanyPriorityAsync(UpdateCompanyPriorityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            string sql;
+            if (request.XcpId == 0)
+            {
+                // INSERT new record - priority doesn't exist in xrefCompanyPriority yet
+                sql = @"
+                    INSERT INTO xrefCompanyPriority (c_id, p_id, xcp_priority, xcp_arrivaltimeinhours, xcp_insertdatetime)
+                    VALUES (@companyId, @priorityId, @companySpecificName, @arrivalTimeInHours, GETDATE())";
+            }
+            else
+            {
+                // UPDATE existing record
+                sql = @"
+                    UPDATE xrefCompanyPriority
+                    SET 
+                        xcp_priority = @companySpecificName,
+                        xcp_arrivaltimeinhours = @arrivalTimeInHours,
+                        xcp_modifieddatetime = GETDATE()
+                    WHERE xcp_id = @xcpId";
+            }
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                if (request.XcpId == 0)
+                {
+                    command.Parameters.Add("@companyId", SqlDbType.Int).Value = request.CompanyId;
+                    command.Parameters.Add("@priorityId", SqlDbType.Int).Value = request.PriorityId;
+                }
+                else
+                {
+                    command.Parameters.Add("@xcpId", SqlDbType.Int).Value = request.XcpId;
+                }
+                
+                command.Parameters.Add("@companySpecificName", SqlDbType.VarChar, 50).Value = request.CompanySpecificName;
+                
+                var arrivalTimeParam = command.Parameters.Add("@arrivalTimeInHours", SqlDbType.Decimal);
+                arrivalTimeParam.Precision = 18;
+                arrivalTimeParam.Scale = 2;
+                arrivalTimeParam.Value = request.ArrivalTimeInHours;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                var action = request.XcpId == 0 ? "Inserted" : "Updated";
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "UpdateCompanyPriority",
+                    Detail = $"{action} company priority for c_id {request.CompanyId}, p_id {request.PriorityId}, name '{request.CompanySpecificName}', arrival time {request.ArrivalTimeInHours} hours",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company priority xcp_id {XcpId}", request.XcpId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyPriority",
+                Detail = $"Error updating company priority xcp_id {request.XcpId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    // User Attachment Type methods
+    public async Task<DataTable> GetAllUserAttachmentTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    uat_id,
+                    uat_insertdatetime,
+                    uat_modifieddatetime,
+                    uat_type
+                FROM dbo.userattachmenttype
+                ORDER BY uat_type";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserAttachmentTypes",
+                Detail = $"Retrieved {result.Rows.Count} user attachment types",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserAttachmentTypes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user attachment types");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserAttachmentTypeAsync(EvoAPI.Shared.DTOs.CreateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.userattachmenttype 
+                (uat_type, uat_insertdatetime, uat_modifieddatetime)
+                VALUES 
+                (@UatType, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UatType", request.uat_type }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserAttachmentType",
+                    Detail = $"Created new user attachment type '{request.uat_type}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserAttachmentType",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user attachment type {UatType}", request.uat_type);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserAttachmentTypeAsync(EvoAPI.Shared.DTOs.UpdateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.userattachmenttype 
+                SET 
+                    uat_type = @UatType,
+                    uat_modifieddatetime = GETDATE()
+                WHERE uat_id = @UatId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UatId", request.uat_id },
+                { "@UatType", request.uat_type }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserAttachmentType",
+                Detail = $"Updated user attachment type {request.uat_id} - {request.uat_type}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserAttachmentType",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user attachment type {UatId}", request.uat_id);
+            throw;
+        }
+    }
+
+    // User Clothing Size methods
+    public async Task<DataTable> GetAllUserClothingSizesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    uc_id,
+                    uc_insertdatetime,
+                    uc_modifieddatetime,
+                    uc_clothingsize
+                FROM dbo.UserClothing
+                ORDER BY uc_clothingsize";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserClothingSizes",
+                Detail = $"Retrieved {result.Rows.Count} user clothing sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserClothingSizes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user clothing sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserClothingSizeAsync(CreateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserClothing 
+                (uc_clothingsize, uc_insertdatetime, uc_modifieddatetime)
+                VALUES 
+                (@ClothingSize, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@ClothingSize", request.ClothingSize }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserClothingSize",
+                    Detail = $"Created new user clothing size '{request.ClothingSize}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserClothingSize",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user clothing size {ClothingSize}", request.ClothingSize);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserClothingSizeAsync(UpdateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserClothing
+                SET 
+                    uc_clothingsize = @ClothingSize,
+                    uc_modifieddatetime = GETDATE()
+                WHERE uc_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@ClothingSize", request.ClothingSize }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserClothingSize",
+                Detail = $"Updated user clothing size {request.Id} - {request.ClothingSize}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserClothingSize",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user clothing size {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // Service Item Rack methods
+    public async Task<DataTable> GetAllServiceItemRacksAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    sir_id,
+                    sir_insertdatetime,
+                    sir_modifieddatetime,
+                    sir_rack
+                FROM dbo.ServiceItemRack
+                ORDER BY sir_rack";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemRacks",
+                Detail = $"Retrieved {result.Rows.Count} service item racks",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemRacks",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service item racks");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateServiceItemRackAsync(CreateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.ServiceItemRack
+                (sir_rack, sir_insertdatetime, sir_modifieddatetime)
+                VALUES
+                (@Rack, GETDATE(), GETDATE());
+
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Rack", request.Rack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateServiceItemRack",
+                    Detail = $"Created new service item rack '{request.Rack}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateServiceItemRack",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating service item rack {Rack}", request.Rack);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceItemRackAsync(UpdateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.ServiceItemRack
+                SET
+                    sir_rack = @Rack,
+                    sir_modifieddatetime = GETDATE()
+                WHERE sir_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Rack", request.Rack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemRack",
+                Detail = $"Updated service item rack {request.Id} - {request.Rack}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemRack",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating service item rack {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // Service Item Facility methods
+    public async Task<DataTable> GetAllServiceItemFacilitiesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    sif_id,
+                    sif_insertdatetime,
+                    sif_modifieddatetime,
+                    sif_facility
+                FROM dbo.ServiceItemFacility
+                ORDER BY sif_facility";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemFacilities",
+                Detail = $"Retrieved {result.Rows.Count} service item facilities",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllServiceItemFacilities",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving service item facilities");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateServiceItemFacilityAsync(CreateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.ServiceItemFacility
+                (sif_facility, sif_insertdatetime, sif_modifieddatetime)
+                VALUES
+                (@Facility, GETDATE(), GETDATE());
+
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Facility", request.Facility }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateServiceItemFacility",
+                    Detail = $"Created new service item facility '{request.Facility}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateServiceItemFacility",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating service item facility {Facility}", request.Facility);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceItemFacilityAsync(UpdateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.ServiceItemFacility
+                SET
+                    sif_facility = @Facility,
+                    sif_modifieddatetime = GETDATE()
+                WHERE sif_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Facility", request.Facility }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemFacility",
+                Detail = $"Updated service item facility {request.Id} - {request.Facility}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateServiceItemFacility",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating service item facility {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Pants Waist methods
+    public async Task<DataTable> GetAllUserPantsWaistAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    upw_id,
+                    upw_insertdatetime,
+                    upw_modifieddatetime,
+                    upw_size,
+                    upw_sex
+                FROM dbo.UserPantsWaist
+                ORDER BY upw_size, upw_sex";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsWaist",
+                Detail = $"Retrieved {result.Rows.Count} user pants waist sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user pants waist sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserPantsWaistAsync(CreateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserPantsWaist 
+                (upw_size, upw_sex, upw_insertdatetime, upw_modifieddatetime)
+                VALUES 
+                (@Size, @Sex, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserPantsWaist",
+                    Detail = $"Created new user pants waist size '{request.Size}' ({request.Sex}) with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user pants waist size {Size}", request.Size);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserPantsWaistAsync(UpdateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserPantsWaist
+                SET 
+                    upw_size = @Size,
+                    upw_sex = @Sex,
+                    upw_modifieddatetime = GETDATE()
+                WHERE upw_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsWaist",
+                Detail = $"Updated user pants waist size {request.Id} - Size: {request.Size}, Sex: {request.Sex}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsWaist",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user pants waist size {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Pants Length methods
+    public async Task<DataTable> GetAllUserPantsLengthAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    upl_id,
+                    upl_insertdatetime,
+                    upl_modifieddatetime,
+                    upl_size,
+                    upl_sex
+                FROM dbo.UserPantsLength
+                ORDER BY upl_size, upl_sex";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsLength",
+                Detail = $"Retrieved {result.Rows.Count} user pants length sizes",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user pants length sizes");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserPantsLengthAsync(CreateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserPantsLength 
+                (upl_size, upl_sex, upl_insertdatetime, upl_modifieddatetime)
+                VALUES 
+                (@Size, @Sex, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserPantsLength",
+                    Detail = $"Created new user pants length size '{request.Size}' ({request.Sex}) with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user pants length size {Size}", request.Size);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserPantsLengthAsync(UpdateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserPantsLength
+                SET 
+                    upl_size = @Size,
+                    upl_sex = @Sex,
+                    upl_modifieddatetime = GETDATE()
+                WHERE upl_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Size", request.Size },
+                { "@Sex", request.Sex }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsLength",
+                Detail = $"Updated user pants length size {request.Id} - Size: {request.Size}, Sex: {request.Sex}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserPantsLength",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user pants length size {Id}", request.Id);
+            throw;
+        }
+    }
+    public async Task<DataTable> GetAllUserRelationshipsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ur_id,
+                    ur_insertdatetime,
+                    ur_modifieddatetime,
+                    ur_relationship
+                FROM dbo.UserRelationship
+                ORDER BY ur_relationship";
+
+            var result = await ExecuteQueryAsync(sql);
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserRelationships",
+                Detail = $"Retrieved {result.Rows.Count} user relationships",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllUserRelationships",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving user relationships");
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserRelationshipAsync(CreateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.UserRelationship 
+                (ur_relationship, ur_insertdatetime, ur_modifieddatetime)
+                VALUES 
+                (@Relationship, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Relationship", request.Relationship }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+            
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateUserRelationship",
+                    Detail = $"Created new user relationship '{request.Relationship}' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserRelationship",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating user relationship {Relationship}", request.Relationship);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserRelationshipAsync(UpdateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.UserRelationship
+                SET 
+                    ur_relationship = @Relationship,
+                    ur_modifieddatetime = GETDATE()
+                WHERE ur_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Relationship", request.Relationship }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserRelationship",
+                Detail = $"Updated user relationship {request.Id} - {request.Relationship}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserRelationship",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating user relationship {Id}", request.Id);
+            throw;
+        }
+    }
+
+    // User Emergency Contact methods
+    public async Task<Dictionary<int, List<UserEmergencyContactDto>>> GetAllEmergencyContactsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xuec.xuec_id,
+                    xuec.xuec_insertdatetime,
+                    xuec.xuec_modifieddatetime,
+                    xuec.u_id,
+                    xuec.ur_id,
+                    xuec.xuec_name,
+                    xuec.xuec_phone,
+                    ur.ur_relationship
+                FROM dbo.xrefUserEmergencyContact xuec
+                LEFT JOIN dbo.UserRelationship ur ON xuec.ur_id = ur.ur_id
+                ORDER BY xuec.u_id, xuec.xuec_id";
+
+            var dt = await ExecuteQueryAsync(sql);
+            
+            var result = new Dictionary<int, List<UserEmergencyContactDto>>();
+            foreach (DataRow row in dt.Rows)
+            {
+                var userId = Convert.ToInt32(row["u_id"]);
+                
+                if (!result.ContainsKey(userId))
+                {
+                    result[userId] = new List<UserEmergencyContactDto>();
+                }
+                
+                result[userId].Add(new UserEmergencyContactDto
+                {
+                    XuecId = Convert.ToInt32(row["xuec_id"]),
+                    UserId = userId,
+                    RelationshipId = row["ur_id"] != DBNull.Value ? Convert.ToInt32(row["ur_id"]) : null,
+                    RelationshipName = row["ur_relationship"] != DBNull.Value ? row["ur_relationship"].ToString() : null,
+                    Name = row["xuec_name"] != DBNull.Value ? row["xuec_name"].ToString() : null,
+                    Phone = row["xuec_phone"] != DBNull.Value ? row["xuec_phone"].ToString() : null,
+                    InsertDateTime = Convert.ToDateTime(row["xuec_insertdatetime"]),
+                    ModifiedDateTime = row["xuec_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["xuec_modifieddatetime"]) : null
+                });
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmergencyContacts",
+                Detail = $"Retrieved emergency contacts for {result.Count} users",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllEmergencyContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error getting all emergency contacts");
+            throw;
+        }
+    }
+
+    public async Task<List<UserEmergencyContactDto>> GetUserEmergencyContactsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xuec.xuec_id,
+                    xuec.xuec_insertdatetime,
+                    xuec.xuec_modifieddatetime,
+                    xuec.u_id,
+                    xuec.ur_id,
+                    xuec.xuec_name,
+                    xuec.xuec_phone,
+                    ur.ur_relationship
+                FROM dbo.xrefUserEmergencyContact xuec
+                LEFT JOIN dbo.UserRelationship ur ON xuec.ur_id = ur.ur_id
+                WHERE xuec.u_id = @UserId
+                ORDER BY xuec.xuec_id";
+
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<UserEmergencyContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new UserEmergencyContactDto
+                {
+                    XuecId = Convert.ToInt32(row["xuec_id"]),
+                    UserId = Convert.ToInt32(row["u_id"]),
+                    RelationshipId = row["ur_id"] != DBNull.Value ? Convert.ToInt32(row["ur_id"]) : null,
+                    RelationshipName = row["ur_relationship"] != DBNull.Value ? row["ur_relationship"].ToString() : null,
+                    Name = row["xuec_name"] != DBNull.Value ? row["xuec_name"].ToString() : null,
+                    Phone = row["xuec_phone"] != DBNull.Value ? row["xuec_phone"].ToString() : null,
+                    InsertDateTime = Convert.ToDateTime(row["xuec_insertdatetime"]),
+                    ModifiedDateTime = row["xuec_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["xuec_modifieddatetime"]) : null
+                });
+            }
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserEmergencyContacts",
+                Detail = $"Retrieved {result.Count} emergency contacts for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetUserEmergencyContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error getting emergency contacts for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateUserEmergencyContactAsync(int userId, CreateUserEmergencyContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.xrefUserEmergencyContact (xuec_insertdatetime, u_id, ur_id, xuec_name, xuec_phone)
+                VALUES (GETDATE(), @UserId, @RelationshipId, @Name, @Phone);
+                SELECT SCOPE_IDENTITY();";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@RelationshipId", request.RelationshipId.HasValue ? (object)request.RelationshipId.Value : DBNull.Value },
+                { "@Name", string.IsNullOrWhiteSpace(request.Name) ? DBNull.Value : (object)request.Name.Trim() },
+                { "@Phone", string.IsNullOrWhiteSpace(request.Phone) ? DBNull.Value : (object)request.Phone.Trim() }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+            var newId = result != null && result != DBNull.Value ? Convert.ToInt32(result) : (int?)null;
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserEmergencyContact",
+                Detail = $"Created emergency contact for user {userId} with ID {newId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating emergency contact for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateUserEmergencyContactAsync(int userId, UpdateUserEmergencyContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.xrefUserEmergencyContact
+                SET 
+                    ur_id = @RelationshipId,
+                    xuec_name = @Name,
+                    xuec_phone = @Phone,
+                    xuec_modifieddatetime = GETDATE()
+                WHERE xuec_id = @XuecId AND u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuecId", request.XuecId },
+                { "@UserId", userId },
+                { "@RelationshipId", request.RelationshipId.HasValue ? (object)request.RelationshipId.Value : DBNull.Value },
+                { "@Name", string.IsNullOrWhiteSpace(request.Name) ? DBNull.Value : (object)request.Name.Trim() },
+                { "@Phone", string.IsNullOrWhiteSpace(request.Phone) ? DBNull.Value : (object)request.Phone.Trim() }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserEmergencyContact",
+                Detail = $"Updated emergency contact {request.XuecId} for user {userId}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating emergency contact {XuecId} for user {UserId}", request.XuecId, userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteUserEmergencyContactAsync(int userId, int xuecId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.xrefUserEmergencyContact
+                WHERE xuec_id = @XuecId AND u_id = @UserId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuecId", xuecId },
+                { "@UserId", userId }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+            
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+            
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+            
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteUserEmergencyContact",
+                Detail = $"Deleted emergency contact {xuecId} for user {userId}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteUserEmergencyContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting emergency contact {XuecId} for user {UserId}", xuecId, userId);
+            throw;
+        }
+    }
+
+    // Employee Attachments methods
+    public async Task<List<EmployeeAttachmentDto>> GetEmployeeAttachmentsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xua.xua_id,
+                    xua.xua_insertdatetime,
+                    xua.xua_modifieddatetime,
+                    xua.u_id,
+                    xua.att_id,
+                    xua.uat_id,
+                    xua.xua_description,
+                    xua.xua_issuingauthority,
+                    xua.xua_dateexpires,
+                    a.att_filename,
+                    a.att_insertdatetime,
+                    uat.uat_type
+                FROM dbo.xrefuserattachment xua
+                INNER JOIN dbo.attachment a ON xua.att_id = a.att_id
+                INNER JOIN dbo.userattachmenttype uat ON xua.uat_id = uat.uat_id
+                WHERE xua.u_id = @UserId
+                ORDER BY xua.xua_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<EmployeeAttachmentDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new EmployeeAttachmentDto
+                {
+                    xua_id = ConvertToInt(row["xua_id"]),
+                    xua_insertdatetime = ConvertToDateTime(row["xua_insertdatetime"]),
+                    xua_modifieddatetime = ConvertToNullableDateTime(row["xua_modifieddatetime"]),
+                    u_id = ConvertToInt(row["u_id"]),
+                    att_id = ConvertToInt(row["att_id"]),
+                    uat_id = ConvertToInt(row["uat_id"]),
+                    xua_description = row["xua_description"]?.ToString() ?? string.Empty,
+                    xua_issuingauthority = row["xua_issuingauthority"]?.ToString() ?? string.Empty,
+                    xua_dateexpires = row["xua_dateexpires"]?.ToString() ?? string.Empty,
+                    att_filename = row["att_filename"]?.ToString() ?? string.Empty,
+                    att_insertdatetime = ConvertToDateTime(row["att_insertdatetime"]),
+                    uat_type = row["uat_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeAttachments",
+                Detail = $"Retrieved {result.Count} attachments for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetEmployeeAttachments",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving employee attachments for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateEmployeeAttachmentAsync(int userId, CreateEmployeeAttachmentRequest request, int attachmentId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.xrefuserattachment 
+                (u_id, att_id, uat_id, xua_description, xua_issuingauthority, xua_dateexpires, xua_insertdatetime, xua_modifieddatetime)
+                VALUES 
+                (@UserId, @AttId, @UatId, @Description, @IssuingAuthority, @DateExpires, GETDATE(), GETDATE());
+                
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@UserId", userId },
+                { "@AttId", attachmentId },
+                { "@UatId", request.uat_id },
+                { "@Description", request.description ?? string.Empty },
+                { "@IssuingAuthority", request.xua_issuingauthority ?? string.Empty },
+                { "@DateExpires", request.xua_dateexpires ?? "Not Applicable" }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
+            }
+
+            await connection.OpenAsync();
+            var result = await command.ExecuteScalarAsync();
+            int? xuaId = null;
+            if (result != null && int.TryParse(result.ToString(), out var id))
+            {
+                xuaId = id;
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployeeAttachment",
+                Detail = $"Created employee attachment {xuaId} for user {userId} with attachment {attachmentId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return xuaId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateEmployeeAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating employee attachment for user {UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateEmployeeAttachmentAsync(int userId, int xuaId, UpdateEmployeeAttachmentRequest request, int? newAttachmentId = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var sql = @"
+                UPDATE dbo.xrefuserattachment 
+                SET 
+                    xua_description = @Description,
+                    uat_id = @UatId,
+                    xua_issuingauthority = @IssuingAuthority,
+                    xua_dateexpires = @DateExpires,
+                    xua_modifieddatetime = GETDATE()";
+
+            // If new attachment provided, update att_id (orphan the old one)
+            if (newAttachmentId.HasValue)
+            {
+                sql += ", att_id = @NewAttId";
+            }
+
+            sql += @" 
+                WHERE xua_id = @XuaId AND u_id = @UserId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@XuaId", xuaId },
+                { "@UserId", userId },
+                { "@Description", request.description ?? string.Empty },
+                { "@UatId", request.uat_id },
+                { "@IssuingAuthority", request.xua_issuingauthority ?? string.Empty },
+                { "@DateExpires", request.xua_dateexpires ?? "Not Applicable" }
+            };
+
+            if (newAttachmentId.HasValue)
+            {
+                parameters.Add("@NewAttId", newAttachmentId.Value);
+            }
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+            using var command = new SqlCommand(sql, connection);
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeAttachment",
+                Detail = $"Updated employee attachment {xuaId} for user {userId}. Rows affected: {rowsAffected}. File replacement: {(newAttachmentId.HasValue ? "Yes" : "No")}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateEmployeeAttachment",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating employee attachment {XuaId} for user {UserId}", xuaId, userId);
+            throw;
+        }
+    }
+
+    public async Task<List<CertificationsLicensingReportDto>> GetCertificationsLicensingReportAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xua.xua_id,
+                    xua.u_id,
+                    CONCAT(u.u_firstname, ' ', u.u_lastname) AS EmployeeName,
+                    u.u_employeenumber AS EmployeeNumber,
+                    uat.uat_type AS AttachmentType,
+                    xua.xua_description AS Description,
+                    xua.xua_issuingauthority AS IssuingAuthority,
+                    xua.xua_dateexpires AS DateExpires,
+                    xua.xua_insertdatetime AS DateLoaded,
+                    a.att_filename AS AttachmentFilename,
+                    a.att_id AS AttachmentId
+                FROM dbo.xrefuserattachment xua
+                INNER JOIN dbo.[user] u ON xua.u_id = u.u_id
+                INNER JOIN dbo.attachment a ON xua.att_id = a.att_id
+                INNER JOIN dbo.userattachmenttype uat ON xua.uat_id = uat.uat_id
+                ORDER BY u.u_firstname, u.u_lastname, xua.xua_insertdatetime DESC";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CertificationsLicensingReportDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CertificationsLicensingReportDto
+                {
+                    xua_id = ConvertToInt(row["xua_id"]),
+                    u_id = ConvertToInt(row["u_id"]),
+                    EmployeeName = row["EmployeeName"]?.ToString() ?? string.Empty,
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString() ?? string.Empty,
+                    AttachmentType = row["AttachmentType"]?.ToString() ?? string.Empty,
+                    Description = row["Description"]?.ToString() ?? string.Empty,
+                    IssuingAuthority = row["IssuingAuthority"]?.ToString() ?? string.Empty,
+                    DateExpires = row["DateExpires"]?.ToString() ?? string.Empty,
+                    DateLoaded = ConvertToDateTime(row["DateLoaded"]),
+                    AttachmentFilename = row["AttachmentFilename"]?.ToString() ?? string.Empty,
+                    AttachmentId = ConvertToInt(row["AttachmentId"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCertificationsLicensingReport",
+                Detail = $"Retrieved {result.Count} certification and licensing records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCertificationsLicensingReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            throw;
+        }
+    }
+
+    public async Task<List<CertificationsLicensingReportDto>> GetTechCertificationsLicensingReportAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    xua.xua_id,
+                    xua.u_id,
+                    CONCAT(u.u_firstname, ' ', u.u_lastname) AS EmployeeName,
+                    u.u_employeenumber AS EmployeeNumber,
+                    uat.uat_type AS AttachmentType,
+                    xua.xua_description AS Description,
+                    xua.xua_issuingauthority AS IssuingAuthority,
+                    xua.xua_dateexpires AS DateExpires,
+                    xua.xua_insertdatetime AS DateLoaded,
+                    a.att_filename AS AttachmentFilename,
+                    a.att_id AS AttachmentId
+                FROM dbo.xrefuserattachment xua
+                INNER JOIN dbo.[user] u ON xua.u_id = u.u_id
+                INNER JOIN dbo.attachment a ON xua.att_id = a.att_id
+                INNER JOIN dbo.userattachmenttype uat ON xua.uat_id = uat.uat_id
+                WHERE xua.u_id = @UserId
+                ORDER BY u.u_firstname, u.u_lastname, xua.xua_insertdatetime DESC";
+
+            var parameters = new Dictionary<string, object> { { "@UserId", userId } };
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<CertificationsLicensingReportDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CertificationsLicensingReportDto
+                {
+                    xua_id = ConvertToInt(row["xua_id"]),
+                    u_id = ConvertToInt(row["u_id"]),
+                    EmployeeName = row["EmployeeName"]?.ToString() ?? string.Empty,
+                    EmployeeNumber = row["EmployeeNumber"]?.ToString() ?? string.Empty,
+                    AttachmentType = row["AttachmentType"]?.ToString() ?? string.Empty,
+                    Description = row["Description"]?.ToString() ?? string.Empty,
+                    IssuingAuthority = row["IssuingAuthority"]?.ToString() ?? string.Empty,
+                    DateExpires = row["DateExpires"]?.ToString() ?? string.Empty,
+                    DateLoaded = ConvertToDateTime(row["DateLoaded"]),
+                    AttachmentFilename = row["AttachmentFilename"]?.ToString() ?? string.Empty,
+                    AttachmentId = ConvertToInt(row["AttachmentId"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechCertificationsLicensingReport",
+                Detail = $"Retrieved {result.Count} certification and licensing records for user {userId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTechCertificationsLicensingReport",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving tech certifications and licensing report");
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Company Trades Management
+
+    public async Task<List<LaborRateDto>> GetCompanyTradesAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    lr.lr_id,
+                    lr.xccc_id,
+                    lr.t_id,
+                    t.t_trade AS TradeName,
+                    t.t_description AS TradeDescription,
+                    tp.t_trade AS ParentTradeName,
+                    t.t_nte AS TNte,
+                    lr.lr_descriptionoverride,
+                    lr.lr_nte,
+                    lr.lr_rateregular,
+                    lr.lr_rateovertime,
+                    lr.lr_rateholiday,
+                    lr.lr_ratespecial,
+                    lr.lr_ratescheduledafterhours,
+                    lr.lr_rateregulardiscount,
+                    lr.lr_rateregulardiscounthourslimit,
+                    lr.lr_ratehelper,
+                    lr.lr_ratehelperovertime,
+                    lr.lr_rateflat,
+                    lr.lr_flatorhourly,
+                    lr.lr_tripcharge,
+                    lr.lr_markup,
+                    lr.lr_note,
+                    lr.lr_insertdatetime,
+                    lr.lr_modifieddatetime,
+                    t.t_active
+                FROM dbo.LaborRate lr
+                INNER JOIN dbo.Trade t ON lr.t_id = t.t_id
+                LEFT JOIN dbo.Trade tp ON t.t_id_parent = tp.t_id
+                WHERE lr.xccc_id = @xcccId
+                ORDER BY ISNULL(tp.t_trade, ''), t.t_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<LaborRateDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new LaborRateDto
+                {
+                    LrId = ConvertToInt(row["lr_id"]),
+                    XcccId = ConvertToInt(row["xccc_id"]),
+                    TId = ConvertToInt(row["t_id"]),
+                    TradeName = row["TradeName"]?.ToString() ?? string.Empty,
+                    TradeDescription = row["TradeDescription"]?.ToString(),
+                    ParentTradeName = row["ParentTradeName"]?.ToString(),
+                    TNte = ConvertToNullableInt(row["TNte"]),
+                    LrDescriptionOverride = row["lr_descriptionoverride"]?.ToString(),
+                    LrNte = ConvertToNullableInt(row["lr_nte"]),
+                    LrRateRegular = ConvertToNullableDecimal(row["lr_rateregular"]),
+                    LrRateOvertime = ConvertToNullableDecimal(row["lr_rateovertime"]),
+                    LrRateHoliday = ConvertToNullableDecimal(row["lr_rateholiday"]),
+                    LrRateSpecial = ConvertToNullableDecimal(row["lr_ratespecial"]),
+                    LrRateScheduledAfterHours = ConvertToNullableDecimal(row["lr_ratescheduledafterhours"]),
+                    LrRateRegularDiscount = ConvertToNullableDecimal(row["lr_rateregulardiscount"]),
+                    LrRateRegularDiscountHoursLimit = ConvertToNullableDecimal(row["lr_rateregulardiscounthourslimit"]),
+                    LrRateHelper = ConvertToNullableDecimal(row["lr_ratehelper"]),
+                    LrRateHelperOvertime = ConvertToNullableDecimal(row["lr_ratehelperovertime"]),
+                    LrRateFlat = ConvertToNullableDecimal(row["lr_rateflat"]),
+                    LrFlatOrHourly = row["lr_flatorhourly"]?.ToString(),
+                    LrTripCharge = ConvertToNullableDecimal(row["lr_tripcharge"]),
+                    LrMarkup = ConvertToNullableDecimal(row["lr_markup"]),
+                    LrNote = row["lr_note"]?.ToString(),
+                    TActive = ConvertToBool(row["t_active"]),
+                    LrInsertDateTime = ConvertToDateTime(row["lr_insertdatetime"]),
+                    LrModifiedDateTime = ConvertToNullableDateTime(row["lr_modifieddatetime"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyTrades",
+                Detail = $"Retrieved {result.Count} labor rates for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyTrades",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving company trades for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CompanyTradeDto>> GetAvailableTradesForCompanyAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    t.t_id,
+                    t.t_id_parent,
+                    t.t_trade AS TradeName,
+                    t.t_description AS TradeDescription,
+                    tp.t_trade AS ParentTradeName,
+                    t.t_nte,
+                    t.t_parentonly,
+                    t.t_highvolume
+                FROM dbo.Trade t
+                LEFT JOIN dbo.Trade tp ON t.t_id_parent = tp.t_id
+                WHERE t.t_id_parent IS NOT NULL
+                  AND t.t_id NOT IN (
+                      SELECT t_id FROM dbo.LaborRate WHERE xccc_id = @xcccId
+                  )
+                ORDER BY ISNULL(tp.t_trade, ''), t.t_trade";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<CompanyTradeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CompanyTradeDto
+                {
+                    TId = ConvertToInt(row["t_id"]),
+                    TIdParent = ConvertToNullableInt(row["t_id_parent"]),
+                    TradeName = row["TradeName"]?.ToString() ?? string.Empty,
+                    TradeDescription = row["TradeDescription"]?.ToString(),
+                    ParentTradeName = row["ParentTradeName"]?.ToString(),
+                    TNte = ConvertToNullableInt(row["t_nte"]),
+                    TParentOnly = ConvertToBool(row["t_parentonly"]),
+                    THighVolume = ConvertToBool(row["t_highvolume"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAvailableTradesForCompany",
+                Detail = $"Retrieved {result.Count} available trades for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAvailableTradesForCompany",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving available trades for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListDto>> GetCompanyChecklistsAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    cl.cl_id,
+                    cl.xccc_id,
+                    cl.clt_id,
+                    cl.cl_name,
+                    cl.cl_publicforquote,
+                    cl.cl_publicforinvoice,
+                    cl.cl_active,
+                    clt.clt_type
+                FROM dbo.CheckList cl
+                LEFT JOIN dbo.CheckListType clt ON cl.clt_id = clt.clt_id
+                WHERE cl.xccc_id = @xcccId
+                ORDER BY cl.cl_name";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<CheckListDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListDto
+                {
+                    ClId = ConvertToInt(row["cl_id"]),
+                    XcccId = ConvertToInt(row["xccc_id"]),
+                    CltId = ConvertToInt(row["clt_id"]),
+                    ClName = row["cl_name"]?.ToString() ?? string.Empty,
+                    ClPublicForQuote = ConvertToBool(row["cl_publicforquote"]),
+                    ClPublicForInvoice = ConvertToBool(row["cl_publicforinvoice"]),
+                    ClActive = ConvertToBool(row["cl_active"]),
+                    CltType = row["clt_type"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklists",
+                Detail = $"Retrieved {result.Count} checklists for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListDto>> GetCompanyChecklistsWithQuestionsAsync(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // First get all checklists
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            
+            // Then get all questions for all checklists in one query
+            const string questionsSql = @"
+                SELECT 
+                    clq.clq_id,
+                    clq.cl_id,
+                    clq.clat_id,
+                    clq.clq_question,
+                    clq.clq_order,
+                    clq.clq_required,
+                    clq.clq_answervalues,
+                    clat.clat_type,
+                    clq.clq_skip_answer,
+                    clq.clq_skip_to_order
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                INNER JOIN dbo.CheckList cl ON clq.cl_id = cl.cl_id
+                WHERE cl.xccc_id = @xcccId
+                ORDER BY clq.cl_id, clq.clq_order";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId
+            };
+
+            var dt = await ExecuteQueryAsync(questionsSql, parameters);
+            
+            var questionsMap = new Dictionary<int, List<CheckListQuestionDto>>();
+            foreach (DataRow row in dt.Rows)
+            {
+                var clId = ConvertToInt(row["cl_id"]);
+                if (!questionsMap.ContainsKey(clId))
+                {
+                    questionsMap[clId] = new List<CheckListQuestionDto>();
+                }
+                questionsMap[clId].Add(new CheckListQuestionDto
+                {
+                    ClqId = ConvertToInt(row["clq_id"]),
+                    ClId = clId,
+                    ClatId = ConvertToInt(row["clat_id"]),
+                    ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                    ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                    ClqRequired = ConvertToBool(row["clq_required"]),
+                    ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                    ClatType = row["clat_type"]?.ToString(),
+                    ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                    ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
+                });
+            }
+
+            // Attach questions to checklists
+            foreach (var cl in checklists)
+            {
+                cl.Questions = questionsMap.ContainsKey(cl.ClId) ? questionsMap[cl.ClId] : new List<CheckListQuestionDto>();
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklistsWithQuestions",
+                Detail = $"Retrieved {checklists.Count} checklists with questions for xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return checklists;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyChecklistsWithQuestions",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists with questions for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListTypeDto>> GetCheckListTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"SELECT clt_id, clt_type FROM dbo.CheckListType ORDER BY clt_type";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CheckListTypeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListTypeDto
+                {
+                    CltId = ConvertToInt(row["clt_id"]),
+                    CltType = row["clt_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListTypes",
+                Detail = $"Retrieved {result.Count} checklist types",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListTypes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklist types");
+            throw;
+        }
+    }
+
+    public async Task<List<CheckListAnswerTypeDto>> GetCheckListAnswerTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"SELECT clat_id, clat_type FROM dbo.CheckListAnswerType ORDER BY clat_type";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<CheckListAnswerTypeDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new CheckListAnswerTypeDto
+                {
+                    ClatId = ConvertToInt(row["clat_id"]),
+                    ClatType = row["clat_type"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListAnswerTypes",
+                Detail = $"Retrieved {result.Count} checklist answer types",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCheckListAnswerTypes",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklist answer types");
+            throw;
+        }
+    }
+
+    public async Task<CheckListDto> CreateCheckListAsync(int xcccId, CreateCheckListRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.CheckList (xccc_id, clt_id, cl_name, cl_publicforquote, cl_publicforinvoice, cl_active, cl_insertdatetime)
+                VALUES (@xcccId, @cltId, @clName, @clPublicForQuote, @clPublicForInvoice, @clActive, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int clId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                command.Parameters.Add("@cltId", SqlDbType.Int).Value = request.CltId;
+                command.Parameters.Add("@clName", SqlDbType.VarChar, 50).Value = request.ClName;
+                command.Parameters.Add("@clPublicForQuote", SqlDbType.Bit).Value = request.ClPublicForQuote;
+                command.Parameters.Add("@clPublicForInvoice", SqlDbType.Bit).Value = request.ClPublicForInvoice;
+                command.Parameters.Add("@clActive", SqlDbType.Bit).Value = request.ClActive;
+
+                await connection.OpenAsync();
+                clId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the created checklist
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            var newChecklist = checklists.FirstOrDefault(c => c.ClId == clId);
+
+            if (newChecklist == null)
+            {
+                throw new Exception("Failed to retrieve newly created checklist");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckList",
+                Detail = $"Created checklist '{request.ClName}' with ID {clId} for xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newChecklist;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckList",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating checklist for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListDto?> UpdateCheckListAsync(int clId, UpdateCheckListRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.CheckList
+                SET cl_name = @clName,
+                    clt_id = @cltId,
+                    cl_publicforquote = @clPublicForQuote,
+                    cl_publicforinvoice = @clPublicForInvoice,
+                    cl_active = @clActive,
+                    cl_modifieddatetime = GETDATE()
+                WHERE cl_id = @clId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@clId"] = clId,
+                ["@clName"] = request.ClName,
+                ["@cltId"] = request.CltId,
+                ["@clPublicForQuote"] = request.ClPublicForQuote,
+                ["@clPublicForInvoice"] = request.ClPublicForInvoice,
+                ["@clActive"] = request.ClActive
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Get xccc_id to reload
+            const string getXcccSql = "SELECT xccc_id FROM dbo.CheckList WHERE cl_id = @clId";
+            var xcccParams = new Dictionary<string, object> { ["@clId"] = clId };
+            var xcccDt = await ExecuteQueryAsync(getXcccSql, xcccParams);
+            
+            if (xcccDt.Rows.Count == 0) return null;
+            
+            var xcccId = ConvertToInt(xcccDt.Rows[0]["xccc_id"]);
+            var checklists = await GetCompanyChecklistsAsync(xcccId);
+            var updatedChecklist = checklists.FirstOrDefault(c => c.ClId == clId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckList",
+                Detail = $"Updated checklist {clId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedChecklist;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckList",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating checklist {ClId}", clId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListQuestionDto> CreateCheckListQuestionAsync(int clId, CreateCheckListQuestionRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.CheckListQuestion (cl_id, clat_id, clq_question, clq_order, clq_required, clq_answervalues, clq_skip_answer, clq_skip_to_order, clq_insertdatetime)
+                VALUES (@clId, @clatId, @clqQuestion, @clqOrder, @clqRequired, @clqAnswerValues, @clqSkipAnswer, @clqSkipToOrder, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int clqId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@clId", SqlDbType.Int).Value = clId;
+                command.Parameters.Add("@clatId", SqlDbType.Int).Value = request.ClatId;
+                command.Parameters.Add("@clqQuestion", SqlDbType.VarChar, 800).Value = request.ClqQuestion;
+                command.Parameters.Add("@clqOrder", SqlDbType.Int).Value = (object?)request.ClqOrder ?? DBNull.Value;
+                command.Parameters.Add("@clqRequired", SqlDbType.Bit).Value = request.ClqRequired;
+                command.Parameters.Add("@clqAnswerValues", SqlDbType.VarChar, 8000).Value = (object?)request.ClqAnswerValues ?? DBNull.Value;
+                command.Parameters.Add("@clqSkipAnswer", SqlDbType.NVarChar, 500).Value = (object?)request.ClqSkipAnswer ?? DBNull.Value;
+                command.Parameters.Add("@clqSkipToOrder", SqlDbType.Int).Value = (object?)request.ClqSkipToOrder ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                clqId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the created question
+            const string getQuestionSql = @"
+                SELECT
+                    clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
+                    clq.clq_order, clq.clq_required, clq.clq_answervalues,
+                    clat.clat_type, clq.clq_skip_answer, clq.clq_skip_to_order
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                WHERE clq.clq_id = @clqId";
+
+            var qParams = new Dictionary<string, object> { ["@clqId"] = clqId };
+            var dt = await ExecuteQueryAsync(getQuestionSql, qParams);
+            
+            if (dt.Rows.Count == 0)
+            {
+                throw new Exception("Failed to retrieve newly created question");
+            }
+
+            var row = dt.Rows[0];
+            var question = new CheckListQuestionDto
+            {
+                ClqId = ConvertToInt(row["clq_id"]),
+                ClId = ConvertToInt(row["cl_id"]),
+                ClatId = ConvertToInt(row["clat_id"]),
+                ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                ClqRequired = ConvertToBool(row["clq_required"]),
+                ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                ClatType = row["clat_type"]?.ToString(),
+                ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
+            };
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckListQuestion",
+                Detail = $"Created question {clqId} for checklist {clId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return question;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCheckListQuestion",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating question for checklist {ClId}", clId);
+            throw;
+        }
+    }
+
+    public async Task<CheckListQuestionDto?> UpdateCheckListQuestionAsync(int clqId, UpdateCheckListQuestionRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.CheckListQuestion
+                SET clat_id = @clatId,
+                    clq_question = @clqQuestion,
+                    clq_order = @clqOrder,
+                    clq_required = @clqRequired,
+                    clq_answervalues = @clqAnswerValues,
+                    clq_skip_answer = @clqSkipAnswer,
+                    clq_skip_to_order = @clqSkipToOrder,
+                    clq_modifieddatetime = GETDATE()
+                WHERE clq_id = @clqId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@clqId"] = clqId,
+                ["@clatId"] = request.ClatId,
+                ["@clqQuestion"] = request.ClqQuestion,
+                ["@clqOrder"] = (object?)request.ClqOrder ?? DBNull.Value,
+                ["@clqRequired"] = request.ClqRequired,
+                ["@clqAnswerValues"] = (object?)request.ClqAnswerValues ?? DBNull.Value,
+                ["@clqSkipAnswer"] = (object?)request.ClqSkipAnswer ?? DBNull.Value,
+                ["@clqSkipToOrder"] = (object?)request.ClqSkipToOrder ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated question
+            const string getQuestionSql = @"
+                SELECT
+                    clq.clq_id, clq.cl_id, clq.clat_id, clq.clq_question,
+                    clq.clq_order, clq.clq_required, clq.clq_answervalues,
+                    clat.clat_type, clq.clq_skip_answer, clq.clq_skip_to_order
+                FROM dbo.CheckListQuestion clq
+                INNER JOIN dbo.CheckListAnswerType clat ON clq.clat_id = clat.clat_id
+                WHERE clq.clq_id = @clqId";
+
+            var qParams = new Dictionary<string, object> { ["@clqId"] = clqId };
+            var dt = await ExecuteQueryAsync(getQuestionSql, qParams);
+
+            if (dt.Rows.Count == 0) return null;
+
+            var row = dt.Rows[0];
+            var question = new CheckListQuestionDto
+            {
+                ClqId = ConvertToInt(row["clq_id"]),
+                ClId = ConvertToInt(row["cl_id"]),
+                ClatId = ConvertToInt(row["clat_id"]),
+                ClqQuestion = row["clq_question"]?.ToString() ?? string.Empty,
+                ClqOrder = ConvertToNullableInt(row["clq_order"]),
+                ClqRequired = ConvertToBool(row["clq_required"]),
+                ClqAnswerValues = row["clq_answervalues"]?.ToString(),
+                ClatType = row["clat_type"]?.ToString(),
+                ClqSkipAnswer = row["clq_skip_answer"]?.ToString(),
+                ClqSkipToOrder = ConvertToNullableInt(row["clq_skip_to_order"])
+            };
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckListQuestion",
+                Detail = $"Updated question {clqId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return question;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCheckListQuestion",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating question {ClqId}", clqId);
+            throw;
+        }
+    }
+
+    public async Task CloneCheckListsAsync(int sourceXcccId, int targetXcccId, List<int>? checklistIds = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // Get source checklists with questions
+            var sourceChecklists = await GetCompanyChecklistsWithQuestionsAsync(sourceXcccId);
+
+            if (checklistIds != null && checklistIds.Count > 0)
+            {
+                var idSet = new HashSet<int>(checklistIds);
+                sourceChecklists = sourceChecklists.Where(cl => idSet.Contains(cl.ClId)).ToList();
+            }
+            
+            foreach (var checklist in sourceChecklists)
+            {
+                // Create the checklist in the target company
+                var createRequest = new CreateCheckListRequest
+                {
+                    CltId = checklist.CltId,
+                    ClName = checklist.ClName,
+                    ClPublicForQuote = checklist.ClPublicForQuote,
+                    ClPublicForInvoice = checklist.ClPublicForInvoice,
+                    ClActive = checklist.ClActive
+                };
+
+                var newChecklist = await CreateCheckListAsync(targetXcccId, createRequest);
+
+                // Clone all questions
+                if (checklist.Questions != null)
+                {
+                    foreach (var question in checklist.Questions)
+                    {
+                        var questionRequest = new CreateCheckListQuestionRequest
+                        {
+                            ClatId = question.ClatId,
+                            ClqQuestion = question.ClqQuestion,
+                            ClqOrder = question.ClqOrder,
+                            ClqRequired = question.ClqRequired,
+                            ClqAnswerValues = question.ClqAnswerValues,
+                            ClqSkipAnswer = question.ClqSkipAnswer,
+                            ClqSkipToOrder = question.ClqSkipToOrder
+                        };
+
+                        await CreateCheckListQuestionAsync(newChecklist.ClId, questionRequest);
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CloneCheckLists",
+                Detail = $"Cloned {sourceChecklists.Count} checklists from xcccId {sourceXcccId} to {targetXcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CloneCheckLists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error cloning checklists from xcccId {Source} to {Target}", sourceXcccId, targetXcccId);
+            throw;
+        }
+    }
+
+    public async Task<LaborRateDto> CreateCompanyTradeAsync(int xcccId, CreateLaborRateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LrFlatOrHourly))
+            {
+                throw new ArgumentException("Flat/Hourly selection is required");
+            }
+
+            const string sql = @"
+                INSERT INTO dbo.LaborRate (
+                    xccc_id, t_id, lr_descriptionoverride, lr_nte,
+                    lr_rateregular, lr_rateovertime, lr_rateholiday, lr_ratespecial,
+                    lr_ratescheduledafterhours, lr_rateregulardiscount, lr_rateregulardiscounthourslimit,
+                    lr_ratehelper, lr_ratehelperovertime, lr_rateflat, lr_flatorhourly,
+                    lr_tripcharge, lr_markup, lr_note, lr_insertdatetime
+                ) VALUES (
+                    @xcccId, @tId, @lrDescriptionOverride, @lrNte,
+                    @lrRateRegular, @lrRateOvertime, @lrRateHoliday, @lrRateSpecial,
+                    @lrRateScheduledAfterHours, @lrRateRegularDiscount, @lrRateRegularDiscountHoursLimit,
+                    @lrRateHelper, @lrRateHelperOvertime, @lrRateFlat, @lrFlatOrHourly,
+                    @lrTripCharge, @lrMarkup, @lrNote, GETDATE()
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@xcccId"] = xcccId,
+                ["@tId"] = request.TId,
+                ["@lrDescriptionOverride"] = (object?)request.LrDescriptionOverride ?? DBNull.Value,
+                ["@lrNte"] = (object?)request.LrNte ?? DBNull.Value,
+                ["@lrRateRegular"] = (object?)request.LrRateRegular ?? DBNull.Value,
+                ["@lrRateOvertime"] = (object?)request.LrRateOvertime ?? DBNull.Value,
+                ["@lrRateHoliday"] = (object?)request.LrRateHoliday ?? DBNull.Value,
+                ["@lrRateSpecial"] = (object?)request.LrRateSpecial ?? DBNull.Value,
+                ["@lrRateScheduledAfterHours"] = (object?)request.LrRateScheduledAfterHours ?? DBNull.Value,
+                ["@lrRateRegularDiscount"] = (object?)request.LrRateRegularDiscount ?? DBNull.Value,
+                ["@lrRateRegularDiscountHoursLimit"] = (object?)request.LrRateRegularDiscountHoursLimit ?? DBNull.Value,
+                ["@lrRateHelper"] = (object?)request.LrRateHelper ?? DBNull.Value,
+                ["@lrRateHelperOvertime"] = (object?)request.LrRateHelperOvertime ?? DBNull.Value,
+                ["@lrRateFlat"] = (object?)request.LrRateFlat ?? DBNull.Value,
+                ["@lrFlatOrHourly"] = request.LrFlatOrHourly,
+                ["@lrTripCharge"] = (object?)request.LrTripCharge ?? DBNull.Value,
+                ["@lrMarkup"] = (object?)request.LrMarkup ?? DBNull.Value,
+                ["@lrNote"] = (object?)request.LrNote ?? DBNull.Value
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            var lrId = dt.Rows.Count > 0 ? ConvertToInt(dt.Rows[0][0]) : 0;
+
+            if (lrId == 0)
+            {
+                throw new Exception("Failed to create labor rate");
+            }
+
+            // Retrieve the newly created labor rate
+            var laborRates = await GetCompanyTradesAsync(xcccId);
+            var newLaborRate = laborRates.FirstOrDefault(lr => lr.LrId == lrId);
+
+            if (newLaborRate == null)
+            {
+                throw new Exception("Failed to retrieve newly created labor rate");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompanyTrade",
+                Detail = $"Created labor rate {lrId} for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newLaborRate;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCompanyTrade",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating labor rate for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<(LaborRateDto? LaborRate, string? CompanyName, string? TradeName)> GetLaborRateWithCompanyByIdAsync(int lrId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    lr.lr_id, lr.xccc_id, lr.t_id,
+                    t.t_trade, t.t_description,
+                    pt.t_trade AS parent_trade_name,
+                    t.t_nte,
+                    lr.lr_descriptionoverride, lr.lr_nte,
+                    lr.lr_rateregular, lr.lr_rateovertime, lr.lr_rateholiday, lr.lr_ratespecial,
+                    lr.lr_ratescheduledafterhours, lr.lr_rateregulardiscount, lr.lr_rateregulardiscounthourslimit,
+                    lr.lr_ratehelper, lr.lr_ratehelperovertime, lr.lr_rateflat, lr.lr_flatorhourly,
+                    lr.lr_tripcharge, lr.lr_markup, lr.lr_note,
+                    lr.lr_insertdatetime, lr.lr_modifieddatetime,
+                    c.c_name
+                FROM dbo.LaborRate lr
+                INNER JOIN dbo.Trade t ON lr.t_id = t.t_id
+                LEFT JOIN dbo.Trade pt ON t.t_id_parent = pt.t_id
+                INNER JOIN xrefCompanyCallCenter xccc ON lr.xccc_id = xccc.xccc_id
+                INNER JOIN company c ON xccc.c_id = c.c_id
+                WHERE lr.lr_id = @lrId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@lrId", SqlDbType.Int).Value = lrId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var laborRate = new LaborRateDto
+                        {
+                            LrId = reader.GetInt32(0),
+                            XcccId = reader.GetInt32(1),
+                            TId = reader.GetInt32(2),
+                            TradeName = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            TradeDescription = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            ParentTradeName = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            TNte = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                            LrDescriptionOverride = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            LrNte = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                            LrRateRegular = reader.IsDBNull(9) ? null : reader.GetDecimal(9),
+                            LrRateOvertime = reader.IsDBNull(10) ? null : reader.GetDecimal(10),
+                            LrRateHoliday = reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                            LrRateSpecial = reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                            LrRateScheduledAfterHours = reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                            LrRateRegularDiscount = reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+                            LrRateRegularDiscountHoursLimit = reader.IsDBNull(15) ? null : reader.GetDecimal(15),
+                            LrRateHelper = reader.IsDBNull(16) ? null : reader.GetDecimal(16),
+                            LrRateHelperOvertime = reader.IsDBNull(17) ? null : reader.GetDecimal(17),
+                            LrRateFlat = reader.IsDBNull(18) ? null : reader.GetDecimal(18),
+                            LrFlatOrHourly = reader.IsDBNull(19) ? null : reader.GetString(19),
+                            LrTripCharge = reader.IsDBNull(20) ? null : reader.GetDecimal(20),
+                            LrMarkup = reader.IsDBNull(21) ? null : reader.GetDecimal(21),
+                            LrNote = reader.IsDBNull(22) ? null : reader.GetString(22),
+                            LrInsertDateTime = reader.GetDateTime(23),
+                            LrModifiedDateTime = reader.IsDBNull(24) ? null : reader.GetDateTime(24)
+                        };
+                        var companyName = reader.IsDBNull(25) ? null : reader.GetString(25);
+                        var tradeName = reader.IsDBNull(3) ? null : reader.GetString(3);
+                        return (laborRate, companyName, tradeName);
+                    }
+                }
+            }
+
+            return (null, null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving labor rate with company lr_id {LrId}", lrId);
+            throw;
+        }
+    }
+
+    public async Task<List<string>> GetChecklistNamesByIdsAsync(int xcccId, List<int> checklistIds)
+    {
+        if (checklistIds == null || !checklistIds.Any())
+        {
+            return new List<string>();
+        }
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var idList = string.Join(",", checklistIds);
+            var sql = $@"
+                SELECT cl_name
+                FROM CheckList
+                WHERE xccc_id = @xcccId AND cl_id IN ({idList})
+                ORDER BY cl_name";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@xcccId", SqlDbType.Int).Value = xcccId;
+                await connection.OpenAsync();
+
+                var names = new List<string>();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        names.Add(reader.GetString(0));
+                    }
+                }
+                return names;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving checklist names for xcccId {XcccId}", xcccId);
+            throw;
+        }
+    }
+
+    public async Task<LaborRateDto?> UpdateCompanyTradeAsync(int xcccId, int lrId, UpdateLaborRateRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.LaborRate
+                SET lr_descriptionoverride = @lrDescriptionOverride,
+                    lr_nte = @lrNte,
+                    lr_rateregular = @lrRateRegular,
+                    lr_rateovertime = @lrRateOvertime,
+                    lr_rateholiday = @lrRateHoliday,
+                    lr_ratespecial = @lrRateSpecial,
+                    lr_ratescheduledafterhours = @lrRateScheduledAfterHours,
+                    lr_rateregulardiscount = @lrRateRegularDiscount,
+                    lr_rateregulardiscounthourslimit = @lrRateRegularDiscountHoursLimit,
+                    lr_ratehelper = @lrRateHelper,
+                    lr_ratehelperovertime = @lrRateHelperOvertime,
+                    lr_rateflat = @lrRateFlat,
+                    lr_flatorhourly = @lrFlatOrHourly,
+                    lr_tripcharge = @lrTripCharge,
+                    lr_markup = @lrMarkup,
+                    lr_note = @lrNote,
+                    lr_modifieddatetime = GETDATE()
+                WHERE lr_id = @lrId AND xccc_id = @xcccId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId,
+                ["@xcccId"] = xcccId,
+                ["@lrDescriptionOverride"] = (object?)request.LrDescriptionOverride ?? DBNull.Value,
+                ["@lrNte"] = (object?)request.LrNte ?? DBNull.Value,
+                ["@lrRateRegular"] = (object?)request.LrRateRegular ?? DBNull.Value,
+                ["@lrRateOvertime"] = (object?)request.LrRateOvertime ?? DBNull.Value,
+                ["@lrRateHoliday"] = (object?)request.LrRateHoliday ?? DBNull.Value,
+                ["@lrRateSpecial"] = (object?)request.LrRateSpecial ?? DBNull.Value,
+                ["@lrRateScheduledAfterHours"] = (object?)request.LrRateScheduledAfterHours ?? DBNull.Value,
+                ["@lrRateRegularDiscount"] = (object?)request.LrRateRegularDiscount ?? DBNull.Value,
+                ["@lrRateRegularDiscountHoursLimit"] = (object?)request.LrRateRegularDiscountHoursLimit ?? DBNull.Value,
+                ["@lrRateHelper"] = (object?)request.LrRateHelper ?? DBNull.Value,
+                ["@lrRateHelperOvertime"] = (object?)request.LrRateHelperOvertime ?? DBNull.Value,
+                ["@lrRateFlat"] = (object?)request.LrRateFlat ?? DBNull.Value,
+                ["@lrFlatOrHourly"] = (object?)request.LrFlatOrHourly ?? DBNull.Value,
+                ["@lrTripCharge"] = (object?)request.LrTripCharge ?? DBNull.Value,
+                ["@lrMarkup"] = (object?)request.LrMarkup ?? DBNull.Value,
+                ["@lrNote"] = (object?)request.LrNote ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated labor rate
+            var laborRates = await GetCompanyTradesAsync(xcccId);
+            var updatedLaborRate = laborRates.FirstOrDefault(lr => lr.LrId == lrId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyTrade",
+                Detail = $"Updated labor rate {lrId} for company xcccId {xcccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedLaborRate;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCompanyTrade",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating labor rate {LrId} for xcccId {XcccId}", lrId, xcccId);
+            throw;
+        }
+    }
+
+    public async Task<List<int>> GetTradeChecklistsAsync(int lrId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT cl_id
+                FROM dbo.xrefLaborRateCheckList
+                WHERE lr_id = @lrId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<int>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(ConvertToInt(row["cl_id"]));
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTradeChecklists",
+                Detail = $"Retrieved {result.Count} checklists for labor rate {lrId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTradeChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving checklists for labor rate {LrId}", lrId);
+            throw;
+        }
+    }
+
+    public async Task UpdateTradeChecklistsAsync(int lrId, List<int> checklistIds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            // Delete existing checklist associations
+            const string deleteSql = @"
+                DELETE FROM dbo.xrefLaborRateCheckList
+                WHERE lr_id = @lrId";
+
+            var deleteParams = new Dictionary<string, object>
+            {
+                ["@lrId"] = lrId
+            };
+
+            await ExecuteQueryAsync(deleteSql, deleteParams);
+
+            // Insert new checklist associations
+            if (checklistIds != null && checklistIds.Any())
+            {
+                foreach (var clId in checklistIds)
+                {
+                    const string insertSql = @"
+                        INSERT INTO dbo.xrefLaborRateCheckList (lr_id, cl_id, xlrcl_insertdatetime)
+                        VALUES (@lrId, @clId, GETDATE())";
+
+                    var insertParams = new Dictionary<string, object>
+                    {
+                        ["@lrId"] = lrId,
+                        ["@clId"] = clId
+                    };
+
+                    await ExecuteQueryAsync(insertSql, insertParams);
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTradeChecklists",
+                Detail = $"Updated checklists for labor rate {lrId} with {checklistIds?.Count ?? 0} checklists",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTradeChecklists",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating checklists for labor rate {LrId}", lrId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Contact Management
+
+    public async Task<List<ContactDto>> GetCompanyContactsAsync(int cId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax,
+                    c.con_insertdatetime,
+                    c.con_modifieddatetime
+                FROM contact c
+                INNER JOIN xrefcompanycontact xcc ON c.con_id = xcc.con_id
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE xcc.c_id = @cId
+                ORDER BY ct.ct_title, c.con_lastname, c.con_firstname";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cId"] = cId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<ContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactDto
+                {
+                    ConId = ConvertToInt(row["con_id"]),
+                    OId = ConvertToNullableInt(row["o_id"]),
+                    CtId = ConvertToInt(row["ct_id"]),
+                    CtTitle = row["ct_title"]?.ToString(),
+                    ConFirstname = row["con_firstname"]?.ToString(),
+                    ConLastname = row["con_lastname"]?.ToString(),
+                    ConEmail = row["con_email"]?.ToString(),
+                    ConPhone = row["con_phone"]?.ToString(),
+                    ConMobile = row["con_mobile"]?.ToString(),
+                    ConFax = row["con_fax"]?.ToString(),
+                    ConInsertDateTime = ConvertToDateTime(row["con_insertdatetime"]),
+                    ConModifiedDateTime = ConvertToNullableDateTime(row["con_modifieddatetime"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyContacts",
+                Detail = $"Retrieved {result.Count} contacts for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contacts for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<List<ContactTitleDto>> GetContactTitlesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    ct_id,
+                    o_id,
+                    ct_title,
+                    ct_insertdatetime,
+                    ct_modifieddatetime,
+                    ct_active
+                FROM contacttitle
+                WHERE ct_active = 1
+                ORDER BY ct_title";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<ContactTitleDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactTitleDto
+                {
+                    CtId = ConvertToInt(row["ct_id"]),
+                    OId = ConvertToNullableInt(row["o_id"]),
+                    CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                    CtInsertDateTime = ConvertToDateTime(row["ct_insertdatetime"]),
+                    CtModifiedDateTime = ConvertToNullableDateTime(row["ct_modifieddatetime"]),
+                    CtActive = ConvertToBool(row["ct_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetContactTitles",
+                Detail = $"Retrieved {result.Count} active contact titles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetContactTitles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contact titles");
+            throw;
+        }
+    }
+
+    public async Task<(ContactDto? Contact, string? CompanyName)> GetContactWithCompanyByIdAsync(int conId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id, c.o_id, c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname, c.con_lastname, c.con_email,
+                    c.con_phone, c.con_mobile, c.con_fax,
+                    c.con_insertdatetime, c.con_modifieddatetime,
+                    co.c_name
+                FROM contact c
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                INNER JOIN xrefcompanycontact xcc ON c.con_id = xcc.con_id
+                INNER JOIN company co ON xcc.c_id = co.c_id
+                WHERE c.con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var contact = new ContactDto
+                        {
+                            ConId = reader.GetInt32(0),
+                            OId = reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                            CtId = reader.GetInt32(2),
+                            CtTitle = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            ConFirstname = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            ConLastname = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            ConEmail = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            ConPhone = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            ConMobile = reader.IsDBNull(8) ? null : reader.GetString(8),
+                            ConFax = reader.IsDBNull(9) ? null : reader.GetString(9),
+                            ConInsertDateTime = reader.GetDateTime(10),
+                            ConModifiedDateTime = reader.IsDBNull(11) ? null : reader.GetDateTime(11)
+                        };
+                        var companyName = reader.IsDBNull(12) ? null : reader.GetString(12);
+                        return (contact, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving contact with company con_id {ConId}", conId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto> CreateContactAsync(int cId, CreateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            int conId;
+            
+            // Insert contact
+            const string insertContactSql = @"
+                INSERT INTO contact (
+                    o_id, ct_id, con_firstname, con_lastname, con_email,
+                    con_phone, con_mobile, con_fax, con_insertdatetime
+                ) VALUES (
+                    @oId, @ctId, @conFirstname, @conLastname, @conEmail,
+                    @conPhone, @conMobile, @conFax, GETDATE()
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertContactSql, connection))
+            {
+                command.Parameters.Add("@oId", SqlDbType.Int).Value = 1;
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@conFirstname", SqlDbType.VarChar, 50).Value = (object?)request.ConFirstname ?? DBNull.Value;
+                command.Parameters.Add("@conLastname", SqlDbType.VarChar, 50).Value = (object?)request.ConLastname ?? DBNull.Value;
+                command.Parameters.Add("@conEmail", SqlDbType.VarChar, 100).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@conPhone", SqlDbType.VarChar, 15).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@conMobile", SqlDbType.VarChar, 15).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@conFax", SqlDbType.VarChar, 15).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                conId = (int)await command.ExecuteScalarAsync();
+            }
+
+            if (conId == 0)
+            {
+                throw new Exception("Failed to create contact");
+            }
+
+            // Create xref entry
+            const string insertXrefSql = @"
+                INSERT INTO xrefcompanycontact (c_id, con_id, xccon_insertdatetime)
+                VALUES (@cId, @conId, GETDATE())";
+
+            var xrefParams = new Dictionary<string, object>
+            {
+                ["@cId"] = cId,
+                ["@conId"] = conId
+            };
+
+            await ExecuteQueryAsync(insertXrefSql, xrefParams);
+
+            // Retrieve the newly created contact
+            var contacts = await GetCompanyContactsAsync(cId);
+            var newContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            if (newContact == null)
+            {
+                throw new Exception("Failed to retrieve newly created contact");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateContact",
+                Detail = $"Created contact {conId} for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating contact for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> UpdateContactAsync(int conId, UpdateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            // Get c_id from xref table
+            const string getCIdSql = "SELECT c_id FROM xrefcompanycontact WHERE con_id = @conId";
+            int cId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCIdSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"Contact {conId} not found in xref table");
+                }
+                cId = (int)result;
+            }
+
+            const string sql = @"
+                UPDATE contact
+                SET ct_id = @ctId,
+                    con_firstname = @conFirstname,
+                    con_lastname = @conLastname,
+                    con_email = @conEmail,
+                    con_phone = @conPhone,
+                    con_mobile = @conMobile,
+                    con_fax = @conFax,
+                    con_modifieddatetime = GETDATE()
+                WHERE con_id = @conId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@conId"] = conId,
+                ["@ctId"] = request.CtId,
+                ["@conFirstname"] = (object?)request.ConFirstname ?? DBNull.Value,
+                ["@conLastname"] = (object?)request.ConLastname ?? DBNull.Value,
+                ["@conEmail"] = (object?)request.ConEmail ?? DBNull.Value,
+                ["@conPhone"] = (object?)request.ConPhone ?? DBNull.Value,
+                ["@conMobile"] = (object?)request.ConMobile ?? DBNull.Value,
+                ["@conFax"] = (object?)request.ConFax ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated contact
+            var contacts = await GetCompanyContactsAsync(cId);
+            var updatedContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateContact",
+                Detail = $"Updated contact {conId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Address Management
+
+    public async Task<List<AddressDto>> GetCompanyAddressesAsync(int cId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id,
+                    a.o_id,
+                    a.at_id,
+                    at.at_title,
+                    a.a_insertdatetime,
+                    a.a_modifieddatetime,
+                    a.a_description,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    a.a_latitude,
+                    a.a_longitude,
+                    a.a_picture,
+                    a.a_active,
+                    a.a_tempid
+                FROM address a
+                INNER JOIN xrefcompanyaddress xca ON a.a_id = xca.a_id
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                WHERE xca.c_id = @cId
+                ORDER BY at.at_title, a.a_address1";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@cId"] = cId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<AddressDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressDto
+                {
+                    AId = ConvertToInt(row["a_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtId = ConvertToInt(row["at_id"]),
+                    AtTitle = row["at_title"]?.ToString(),
+                    AInsertDateTime = ConvertToDateTime(row["a_insertdatetime"]),
+                    AModifiedDateTime = ConvertToNullableDateTime(row["a_modifieddatetime"]),
+                    ADescription = row["a_description"]?.ToString(),
+                    AAddress1 = row["a_address1"]?.ToString(),
+                    AAddress2 = row["a_address2"]?.ToString(),
+                    ACity = row["a_city"]?.ToString(),
+                    AState = row["a_state"]?.ToString(),
+                    AZip = row["a_zip"]?.ToString(),
+                    ALatitude = row["a_latitude"]?.ToString(),
+                    ALongitude = row["a_longitude"]?.ToString(),
+                    APicture = row["a_picture"]?.ToString(),
+                    AActive = ConvertToBool(row["a_active"]),
+                    ATempId = row["a_tempid"]?.ToString()
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyAddresses",
+                Detail = $"Retrieved {result.Count} addresses for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyAddresses",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving addresses for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<List<AddressTitleDto>> GetAddressTitlesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    at_id,
+                    o_id,
+                    at_insertdatetime,
+                    at_modifieddatetime,
+                    at_title,
+                    at_active
+                FROM addresstitle
+                WHERE at_active = 1
+                ORDER BY at_title";
+
+            var dt = await ExecuteQueryAsync(sql, new Dictionary<string, object>());
+            
+            var result = new List<AddressTitleDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressTitleDto
+                {
+                    AtId = ConvertToInt(row["at_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtInsertDateTime = ConvertToDateTime(row["at_insertdatetime"]),
+                    AtModifiedDateTime = ConvertToNullableDateTime(row["at_modifieddatetime"]),
+                    AtTitle = row["at_title"]?.ToString() ?? string.Empty,
+                    AtActive = ConvertToBool(row["at_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressTitles",
+                Detail = $"Retrieved {result.Count} active address titles",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAddressTitles",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving address titles");
+            throw;
+        }
+    }
+
+    public async Task<(AddressDto? Address, string? CompanyName)> GetAddressWithCompanyByIdAsync(int aId)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id, a.o_id, a.at_id,
+                    at.at_title,
+                    a.a_insertdatetime, a.a_modifieddatetime, a.a_description,
+                    a.a_address1, a.a_address2, a.a_city, a.a_state, a.a_zip,
+                    a.a_latitude, a.a_longitude, a.a_picture, a.a_active, a.a_tempid,
+                    co.c_name
+                FROM address a
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                INNER JOIN xrefcompanyaddress xca ON a.a_id = xca.a_id
+                INNER JOIN company co ON xca.c_id = co.c_id
+                WHERE a.a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        var address = new AddressDto
+                        {
+                            AId = reader.GetInt32(0),
+                            OId = reader.GetInt32(1),
+                            AtId = reader.GetInt32(2),
+                            AtTitle = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            AInsertDateTime = reader.GetDateTime(4),
+                            AModifiedDateTime = reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                            ADescription = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            AAddress1 = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            AAddress2 = reader.IsDBNull(8) ? null : reader.GetString(8),
+                            ACity = reader.IsDBNull(9) ? null : reader.GetString(9),
+                            AState = reader.IsDBNull(10) ? null : reader.GetString(10),
+                            AZip = reader.IsDBNull(11) ? null : reader.GetString(11),
+                            ALatitude = reader.IsDBNull(12) ? null : reader.GetString(12),
+                            ALongitude = reader.IsDBNull(13) ? null : reader.GetString(13),
+                            APicture = reader.IsDBNull(14) ? null : reader.GetString(14),
+                            AActive = reader.GetBoolean(15),
+                            ATempId = reader.IsDBNull(16) ? null : reader.GetString(16)
+                        };
+                        var companyName = reader.IsDBNull(17) ? null : reader.GetString(17);
+                        return (address, companyName);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving address with company a_id {AId}", aId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto> CreateAddressAsync(int cId, CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            int aId;
+            
+            // Insert address
+            const string insertAddressSql = @"
+                INSERT INTO address (
+                    o_id, at_id, a_description, a_address1, a_address2,
+                    a_city, a_state, a_zip, a_latitude, a_longitude,
+                    a_insertdatetime, a_active
+                ) VALUES (
+                    @oId, @atId, @aDescription, @aAddress1, @aAddress2,
+                    @aCity, @aState, @aZip, @aLatitude, @aLongitude,
+                    GETDATE(), 1
+                );
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertAddressSql, connection))
+            {
+                command.Parameters.Add("@oId", SqlDbType.Int).Value = 1;
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@aDescription", SqlDbType.VarChar, 150).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@aAddress1", SqlDbType.VarChar, 150).Value = (object?)request.AAddress1 ?? DBNull.Value;
+                command.Parameters.Add("@aAddress2", SqlDbType.VarChar, 150).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@aCity", SqlDbType.VarChar, 100).Value = (object?)request.ACity ?? DBNull.Value;
+                command.Parameters.Add("@aState", SqlDbType.VarChar, 50).Value = (object?)request.AState ?? DBNull.Value;
+                command.Parameters.Add("@aZip", SqlDbType.VarChar, 15).Value = (object?)request.AZip ?? DBNull.Value;
+                command.Parameters.Add("@aLatitude", SqlDbType.VarChar, 25).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@aLongitude", SqlDbType.VarChar, 25).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                aId = (int)await command.ExecuteScalarAsync();
+            }
+
+            if (aId == 0)
+            {
+                throw new Exception("Failed to create address");
+            }
+
+            // Create xref entry
+            const string insertXrefSql = @"
+                INSERT INTO xrefcompanyaddress (c_id, a_id, xca_insertdatetime)
+                VALUES (@cId, @aId, GETDATE())";
+
+            var xrefParams = new Dictionary<string, object>
+            {
+                ["@cId"] = cId,
+                ["@aId"] = aId
+            };
+
+            await ExecuteQueryAsync(insertXrefSql, xrefParams);
+
+            // Retrieve the newly created address
+            var addresses = await GetCompanyAddressesAsync(cId);
+            var newAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            if (newAddress == null)
+            {
+                throw new Exception("Failed to retrieve newly created address");
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = $"Created address {aId} for company c_id {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return newAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address for company c_id {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto?> UpdateAddressAsync(int aId, UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+        
+        try
+        {
+            // Get c_id from xref table
+            const string getCIdSql = "SELECT c_id FROM xrefcompanyaddress WHERE a_id = @aId";
+            int cId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCIdSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"Address {aId} not found in xref table");
+                }
+                cId = (int)result;
+            }
+
+            const string sql = @"
+                UPDATE address
+                SET at_id = @atId,
+                    a_description = @aDescription,
+                    a_address1 = @aAddress1,
+                    a_address2 = @aAddress2,
+                    a_city = @aCity,
+                    a_state = @aState,
+                    a_zip = @aZip,
+                    a_latitude = @aLatitude,
+                    a_longitude = @aLongitude,
+                    a_modifieddatetime = GETDATE()
+                WHERE a_id = @aId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@aId"] = aId,
+                ["@atId"] = request.AtId,
+                ["@aDescription"] = (object?)request.ADescription ?? DBNull.Value,
+                ["@aAddress1"] = (object?)request.AAddress1 ?? DBNull.Value,
+                ["@aAddress2"] = (object?)request.AAddress2 ?? DBNull.Value,
+                ["@aCity"] = (object?)request.ACity ?? DBNull.Value,
+                ["@aState"] = (object?)request.AState ?? DBNull.Value,
+                ["@aZip"] = (object?)request.AZip ?? DBNull.Value,
+                ["@aLatitude"] = (object?)request.ALatitude ?? DBNull.Value,
+                ["@aLongitude"] = (object?)request.ALongitude ?? DBNull.Value
+            };
+
+            await ExecuteQueryAsync(sql, parameters);
+
+            // Retrieve the updated address
+            var addresses = await GetCompanyAddressesAsync(cId);
+            var updatedAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = $"Updated address {aId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address {AId}", aId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Service Request Creation
+
+    public async Task<bool> ServiceRequestNumberExistsAsync(string requestNumber)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        if (string.IsNullOrWhiteSpace(requestNumber))
+        {
+            return false;
+        }
+
+        const string sql = "SELECT COUNT(1) FROM ServiceRequest WHERE sr_requestnumber = @requestNumber";
+
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@requestNumber", SqlDbType.VarChar, 100).Value = requestNumber.Trim();
+        await connection.OpenAsync();
+        var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        return count > 0;
+    }
+
+    /// <summary>
+    /// Faithful port of the legacy EvoData.InsertServiceRequest: inserts the
+    /// ServiceRequest, its primary WorkOrder (status unassigned-1), points the
+    /// SR at that WorkOrder, then best-effort populates zone data. SR + WO +
+    /// primary-WO are atomic; zone data is non-fatal (matches legacy behavior
+    /// where a missing tax/zone mapping does not block creation).
+    /// </summary>
+    public async Task<CreateServiceRequestResponse> InsertServiceRequestAsync(CreateServiceRequestRequest request, int createdByUserId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        // Match legacy field truncation
+        var srSummary = Left(request.SrSummary, 200);
+        var srRequestNumber = Left(request.SrRequestNumber, 100);
+        var srIvrRequestNumber = Left(request.SrIvrRequestNumber, 100);
+        var woWorkOrderNumber = Left(request.WoWorkOrderNumber, 103);
+        var srCallNote = Left(request.SrCallNote, 4000);
+        var srOfficeNote = Left(request.SrOfficeNote, 4000);
+
+        // Method of Request + requestor / on-site contact capture (New Service Request wizard)
+        var srMethodOfRequest = Left(request.SrMethodOfRequest, 20);
+        var srRequestorName = Left(request.SrRequestorName, 100);
+        var srRequestorEmail = Left(request.SrRequestorEmail, 150);
+        var srRequestorPhone = Left(request.SrRequestorPhone, 30);
+        var srRequestEmailText = request.SrRequestEmailText;   // VARCHAR(MAX), no truncation
+        var srPortalUrl = Left(request.SrPortalUrl, 500);
+        var srPortalNote = Left(request.SrPortalNote, 4000);
+        var srAgency = Left(request.SrAgency, 100);
+        var srSiteContactName = Left(request.SrSiteContactName, 100);
+        var srSiteContactPhone = Left(request.SrSiteContactPhone, 30);
+        var srSiteContactEmail = Left(request.SrSiteContactEmail, 150);
+
+        // PO / Invoice / Quote contact capture. PO provider fields only carry values when PO is required.
+        var srPoProviderName = request.SrPoRequired ? Left(request.SrPoProviderName, 100) : null;
+        var srPoProviderPhone = request.SrPoRequired ? Left(request.SrPoProviderPhone, 30) : null;
+        var srPoProviderEmail = request.SrPoRequired ? Left(request.SrPoProviderEmail, 150) : null;
+        var srInvoiceEmail = Left(request.SrInvoiceEmail, 150);
+        var srQuoteEmail = Left(request.SrQuoteEmail, 150);
+
+        var srNte = request.SrNte ?? 0m;
+        var srTripCharge = request.SrTripChargeWorked ?? 100m;
+        var ssId = request.SsId ?? 1;
+
+        int srId;
+        int woId;
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+            {
+                // 1) Insert ServiceRequest. sr_tripcharge_quote mirrors sr_tripcharge_worked and
+                //    sr_flatorhourly is seeded 'hourly', exactly as the legacy insert does.
+                const string insertSrSql = @"
+                    INSERT INTO ServiceRequest
+                        (xccc_id, l_id, t_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_ivrrequestnumber,
+                         sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly,
+                         sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby,
+                         sr_methodofrequest, sr_requestor_name, sr_requestor_email, sr_requestor_phone, sr_requestemailtext,
+                         sr_portal_url, sr_portal_note, sr_agency,
+                         sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email,
+                         sr_porequired, sr_poprovider_name, sr_poprovider_phone, sr_poprovider_email,
+                         sr_invoice_email, sr_quote_email)
+                    VALUES
+                        (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
+                         @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
+                         @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby,
+                         @sr_methodofrequest, @sr_requestor_name, @sr_requestor_email, @sr_requestor_phone, @sr_requestemailtext,
+                         @sr_portal_url, @sr_portal_note, @sr_agency,
+                         @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email,
+                         @sr_porequired, @sr_poprovider_name, @sr_poprovider_phone, @sr_poprovider_email,
+                         @sr_invoice_email, @sr_quote_email);
+                    SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                using (var command = new SqlCommand(insertSrSql, connection, transaction))
+                {
+                    command.Parameters.Add("@xccc_id", SqlDbType.Int).Value = request.XcccId;
+                    command.Parameters.Add("@l_id", SqlDbType.Int).Value = request.LId;
+                    command.Parameters.Add("@t_id", SqlDbType.Int).Value = request.TId;
+                    command.Parameters.Add("@ss_id", SqlDbType.Int).Value = ssId;
+                    command.Parameters.Add("@p_id", SqlDbType.Int).Value = request.PId;
+                    command.Parameters.Add("@lrt_id", SqlDbType.Int).Value = request.LrtId;
+                    command.Parameters.Add("@sr_summary", SqlDbType.VarChar, 200).Value = (object?)srSummary ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestnumber", SqlDbType.VarChar, 100).Value = (object?)srRequestNumber ?? DBNull.Value;
+                    command.Parameters.Add("@sr_ivrrequestnumber", SqlDbType.VarChar, 100).Value = (object?)srIvrRequestNumber ?? DBNull.Value;
+                    command.Parameters.Add("@sr_callnote", SqlDbType.VarChar, 4000).Value = (object?)srCallNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_officenote", SqlDbType.VarChar, 4000).Value = (object?)srOfficeNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_nte", SqlDbType.Money).Value = srNte;
+                    command.Parameters.Add("@sr_tripcharge_worked", SqlDbType.Money).Value = srTripCharge;
+                    command.Parameters.Add("@sr_requiresprearrivalcall", SqlDbType.Bit).Value = request.SrRequiresPreArrivalCall;
+                    command.Parameters.Add("@sr_shiftdifferential", SqlDbType.Bit).Value = request.SrShiftDifferential;
+                    command.Parameters.Add("@u_id_createdby", SqlDbType.Int).Value = createdByUserId;
+                    command.Parameters.Add("@sr_methodofrequest", SqlDbType.VarChar, 20).Value = (object?)srMethodOfRequest ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_name", SqlDbType.VarChar, 100).Value = (object?)srRequestorName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_email", SqlDbType.VarChar, 150).Value = (object?)srRequestorEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestor_phone", SqlDbType.VarChar, 30).Value = (object?)srRequestorPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_requestemailtext", SqlDbType.VarChar, -1).Value = (object?)srRequestEmailText ?? DBNull.Value;
+                    command.Parameters.Add("@sr_portal_url", SqlDbType.VarChar, 500).Value = (object?)srPortalUrl ?? DBNull.Value;
+                    command.Parameters.Add("@sr_portal_note", SqlDbType.VarChar, 4000).Value = (object?)srPortalNote ?? DBNull.Value;
+                    command.Parameters.Add("@sr_agency", SqlDbType.VarChar, 100).Value = (object?)srAgency ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_name", SqlDbType.VarChar, 100).Value = (object?)srSiteContactName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_phone", SqlDbType.VarChar, 30).Value = (object?)srSiteContactPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_sitecontact_email", SqlDbType.VarChar, 150).Value = (object?)srSiteContactEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_porequired", SqlDbType.Bit).Value = request.SrPoRequired;
+                    command.Parameters.Add("@sr_poprovider_name", SqlDbType.VarChar, 100).Value = (object?)srPoProviderName ?? DBNull.Value;
+                    command.Parameters.Add("@sr_poprovider_phone", SqlDbType.VarChar, 30).Value = (object?)srPoProviderPhone ?? DBNull.Value;
+                    command.Parameters.Add("@sr_poprovider_email", SqlDbType.VarChar, 150).Value = (object?)srPoProviderEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_invoice_email", SqlDbType.VarChar, 150).Value = (object?)srInvoiceEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_quote_email", SqlDbType.VarChar, 150).Value = (object?)srQuoteEmail ?? DBNull.Value;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        await transaction.RollbackAsync();
+                        throw new InvalidOperationException("Failed to insert ServiceRequest");
+                    }
+                    srId = Convert.ToInt32(result);
+                }
+
+                // 2) Insert primary WorkOrder, initial status unassigned-1
+                const string insertWoSql = @"
+                    INSERT INTO WorkOrder (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id)
+                    VALUES (@sr_id, @wo_workordernumber, @wo_description, @wo_nte,
+                            (SELECT ss_id FROM StatusSecondary WHERE ss_code = 'unassigned-1'));
+                    SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                using (var command = new SqlCommand(insertWoSql, connection, transaction))
+                {
+                    command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                    command.Parameters.Add("@wo_workordernumber", SqlDbType.VarChar, 103).Value = (object?)woWorkOrderNumber ?? DBNull.Value;
+                    command.Parameters.Add("@wo_description", SqlDbType.VarChar, 200).Value = (object?)srSummary ?? DBNull.Value;
+                    command.Parameters.Add("@wo_nte", SqlDbType.Money).Value = srNte;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        await transaction.RollbackAsync();
+                        throw new InvalidOperationException("Failed to insert WorkOrder");
+                    }
+                    woId = Convert.ToInt32(result);
+                }
+
+                // 3) Make the new WorkOrder the primary WO on the ServiceRequest
+                const string updatePrimarySql = "UPDATE ServiceRequest SET wo_id_primary = @woId WHERE sr_id = @srId";
+                using (var command = new SqlCommand(updatePrimarySql, connection, transaction))
+                {
+                    command.Parameters.Add("@woId", SqlDbType.Int).Value = woId;
+                    command.Parameters.Add("@srId", SqlDbType.Int).Value = srId;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                await transaction.CommitAsync();
+            }
+
+            // 4) Best-effort zone data (non-fatal, matches legacy UpdateServiceRequestZoneData)
+            await TryUpdateServiceRequestZoneDataAsync(connectionString, srId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertServiceRequest",
+                Detail = $"Created ServiceRequest {srId} ({srRequestNumber}), primary WorkOrder {woId}, by user {createdByUserId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return new CreateServiceRequestResponse
+            {
+                SrId = srId,
+                SrRequestNumber = srRequestNumber ?? string.Empty,
+                WoWorkOrderNumber = woWorkOrderNumber ?? string.Empty
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error inserting ServiceRequest {RequestNumber}", srRequestNumber);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertServiceRequest",
+                Detail = $"Error inserting ServiceRequest {srRequestNumber}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Resolves zone/zone-micro/facility-manager from the SR's location zip and stamps them
+    /// onto the ServiceRequest. Swallows errors (e.g. no tax/zone mapping for the zip) so a
+    /// missing mapping never blocks SR creation, exactly like the legacy implementation.
+    /// </summary>
+    private async Task TryUpdateServiceRequestZoneDataAsync(string connectionString, int srId)
+    {
+        try
+        {
+            const string zoneSelectSql = @"
+                SELECT TOP 1 z.z_number, zm.zm_number, (u.u_firstname + ' ' + u.u_lastname) AS zfm
+                FROM servicerequest sr, location l, address a, tax, ZoneMicro zm, zone z
+                LEFT JOIN [user] u ON z.u_id = u.u_id
+                WHERE sr.sr_id = @sr_id
+                  AND sr.l_id = l.l_id
+                  AND l.a_id = a.a_id
+                  AND LEFT(a.a_zip, 5) = tax.tax_zip
+                  AND tax.zm_id = zm.zm_id
+                  AND zm.z_id = z.z_id";
+
+            string? zoneNumber = null;
+            string? zoneMicroNumber = null;
+            string? zoneFacilityManager = null;
+
+            using var connection = new SqlConnection(connectionString);
+            using (var command = new SqlCommand(zoneSelectSql, connection))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                await connection.OpenAsync();
+                using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    zoneNumber = reader.IsDBNull(0) ? null : reader.GetValue(0).ToString();
+                    zoneMicroNumber = reader.IsDBNull(1) ? null : reader.GetValue(1).ToString();
+                    zoneFacilityManager = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
+
+            if (zoneNumber == null && zoneMicroNumber == null && zoneFacilityManager == null)
+            {
+                return; // No mapping for this zip; leave zone fields untouched (legacy swallows this)
+            }
+
+            const string zoneUpdateSql = @"
+                UPDATE ServiceRequest
+                SET sr_zonenumber = @sr_zonenumber,
+                    sr_zonemicronumber = @sr_zonemicronumber,
+                    sr_zonefacilitymanager = @sr_zonefacilitymanager
+                WHERE sr_id = @sr_id";
+
+            using (var command = new SqlCommand(zoneUpdateSql, connection))
+            {
+                command.Parameters.Add("@sr_zonenumber", SqlDbType.VarChar, 50).Value = (object?)zoneNumber ?? DBNull.Value;
+                command.Parameters.Add("@sr_zonemicronumber", SqlDbType.VarChar, 50).Value = (object?)zoneMicroNumber ?? DBNull.Value;
+                command.Parameters.Add("@sr_zonefacilitymanager", SqlDbType.VarChar, 200).Value = (object?)zoneFacilityManager ?? DBNull.Value;
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to update zone data for ServiceRequest {SrId}", srId);
+        }
+    }
+
+    private static string? Left(string? value, int maxLength)
+    {
+        if (value == null) return null;
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength);
+    }
+
+    /// <summary>
+    /// Assigns technicians to a just-created Service Request, one Work Order per tech.
+    /// The first assignment takes the primary WO if it is still unassigned (sets its
+    /// schedule dates and inserts the xrefWorkOrderUser row); every other tech gets a new
+    /// WO numbered max-suffix+1, mirroring legacy UpdateWorkOrderAssignOrCreate +
+    /// GetWorkOrderNumberNew. Each WO gets a system-generated note and
+    /// sp_updateWorkOrderStatusAuto; sp_updateServiceRequestStatusAuto runs once at the
+    /// end. All-or-nothing: any failure rolls the whole assignment back (the SR itself is
+    /// left untouched).
+    /// </summary>
+    public async Task<AssignServiceRequestTechniciansResponse> AssignServiceRequestTechniciansAsync(AssignServiceRequestTechniciansRequest request, int assignedByUserId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var response = new AssignServiceRequestTechniciansResponse { SrId = request.SrId };
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+            // SR context: primary WO (id, number, description, whether already assigned),
+            // the admin's display name, and the current max WO number suffix for the SR.
+            int primaryWoId;
+            string? primaryWoNumber;
+            string? primaryWoDescription;
+            bool primaryAssigned;
+            string adminName;
+
+            const string contextSql = @"
+                SELECT wo.wo_id, wo.wo_workordernumber, wo.wo_description,
+                       CASE WHEN EXISTS (SELECT 1 FROM xrefWorkOrderUser x WHERE x.wo_id = wo.wo_id) THEN 1 ELSE 0 END AS assigned,
+                       ISNULL((SELECT u_firstname + ' ' + u_lastname FROM [user] WHERE u_id = @u_id_admin), 'Office') AS admin_name
+                FROM ServiceRequest sr
+                JOIN WorkOrder wo ON wo.wo_id = sr.wo_id_primary
+                WHERE sr.sr_id = @sr_id";
+
+            using (var command = new SqlCommand(contextSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                command.Parameters.Add("@u_id_admin", SqlDbType.Int).Value = assignedByUserId;
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    throw new InvalidOperationException($"ServiceRequest {request.SrId} not found or has no primary WorkOrder");
+                }
+                primaryWoId = reader.GetInt32(0);
+                primaryWoNumber = reader.IsDBNull(1) ? null : reader.GetString(1);
+                primaryWoDescription = reader.IsDBNull(2) ? null : reader.GetString(2);
+                primaryAssigned = reader.GetInt32(3) == 1;
+                adminName = reader.GetString(4);
+            }
+
+            // Max existing "-N" suffix across the SR's WOs (deleted WOs must not cause
+            // duplicate numbers — same rule as legacy GetWorkOrderNumberNew).
+            var maxSuffix = 0;
+            string? baseNumber = null;
+            const string numbersSql = "SELECT wo_workordernumber FROM WorkOrder WHERE sr_id = @sr_id ORDER BY wo_id";
+            using (var command = new SqlCommand(numbersSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                    baseNumber ??= number;
+                    var dash = number.LastIndexOf('-');
+                    if (dash >= 0 && int.TryParse(number.Substring(dash + 1), out var suffix) && suffix > maxSuffix)
+                    {
+                        maxSuffix = suffix;
+                    }
+                }
+            }
+            if (string.IsNullOrEmpty(baseNumber) || baseNumber.LastIndexOf('-') < 0)
+            {
+                throw new InvalidOperationException($"ServiceRequest {request.SrId} has no numbered WorkOrder to derive new numbers from");
+            }
+            var numberPrefix = baseNumber.Substring(0, baseNumber.LastIndexOf('-') + 1);
+
+            var usedPrimary = false;
+            foreach (var assignment in request.Assignments)
+            {
+                int woId;
+                string woNumber;
+
+                if (!usedPrimary && !primaryAssigned)
+                {
+                    // First tech takes the primary WO: stamp its schedule and assign.
+                    usedPrimary = true;
+                    woId = primaryWoId;
+                    woNumber = primaryWoNumber ?? baseNumber;
+
+                    const string updatePrimarySql = @"
+                        UPDATE WorkOrder SET wo_startdatetime = @start, wo_enddatetime = @end WHERE wo_id = @wo_id";
+                    using var command = new SqlCommand(updatePrimarySql, connection, transaction);
+                    command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+                    command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+                    command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                    await command.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    // Additional tech: new WO numbered max-suffix+1. wo_nte = 0 matches the
+                    // legacy convention — the SR's NTE lives on the primary WO only.
+                    maxSuffix++;
+                    woNumber = numberPrefix + maxSuffix;
+
+                    const string insertWoSql = @"
+                        INSERT INTO WorkOrder (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id, wo_startdatetime, wo_enddatetime)
+                        VALUES (@sr_id, @wo_workordernumber, @wo_description, 0,
+                                (SELECT ss_id FROM StatusSecondary WHERE ss_code = 'unassigned-1'),
+                                @start, @end);
+                        SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                    using var command = new SqlCommand(insertWoSql, connection, transaction);
+                    command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                    command.Parameters.Add("@wo_workordernumber", SqlDbType.VarChar, 103).Value = Left(woNumber, 103);
+                    command.Parameters.Add("@wo_description", SqlDbType.VarChar, 200).Value = (object?)primaryWoDescription ?? DBNull.Value;
+                    command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+                    command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+
+                    var result = await command.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                    {
+                        throw new InvalidOperationException($"Failed to insert WorkOrder {woNumber} for ServiceRequest {request.SrId}");
+                    }
+                    woId = Convert.ToInt32(result);
+                }
+
+                // Assign the tech, leave the audit-trail note, and let the status SP set
+                // the WO status (assigned/scheduled per its business rules).
+                const string assignSql = @"
+                    INSERT INTO xrefWorkOrderUser (wo_id, u_id) VALUES (@wo_id, @u_id);
+
+                    INSERT INTO WorkOrderNote (wo_id, won_note, won_public, won_user)
+                    VALUES (@wo_id,
+                            'Work Order ' + @wo_number + ' assigned to ' +
+                            ISNULL((SELECT u_firstname + ' ' + u_lastname FROM [user] WHERE u_id = @u_id), 'Unknown') +
+                            ' via New Service Request by ' + @admin_name + '.',
+                            0, 'System Generated');
+
+                    EXEC sp_updateWorkOrderStatusAuto @wo_id;";
+
+                using (var command = new SqlCommand(assignSql, connection, transaction))
+                {
+                    command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                    command.Parameters.Add("@u_id", SqlDbType.Int).Value = assignment.UId;
+                    command.Parameters.Add("@wo_number", SqlDbType.VarChar, 103).Value = woNumber;
+                    command.Parameters.Add("@admin_name", SqlDbType.VarChar, 200).Value = adminName;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                response.WorkOrders.Add(new AssignedWorkOrderDto { WoId = woId, WoWorkOrderNumber = woNumber, UId = assignment.UId });
+            }
+
+            // Roll the WO statuses up to the SR once, exactly like the legacy flow.
+            const string srStatusSql = "EXEC sp_updateServiceRequestStatusAuto @sr_id";
+            using (var command = new SqlCommand(srStatusSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignServiceRequestTechnicians",
+                Detail = $"Assigned {response.WorkOrders.Count} technician(s) to ServiceRequest {request.SrId} " +
+                         $"({string.Join(", ", response.WorkOrders.Select(w => $"{w.WoWorkOrderNumber}→u{w.UId}"))}), by user {assignedByUserId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning technicians to ServiceRequest {SrId}", request.SrId);
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "AssignServiceRequestTechnicians",
+                Detail = $"Error assigning technicians to ServiceRequest {request.SrId}: {ex}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Double-booking check for the New Service Request wizard: existing open work orders
+    /// (parent status Unassigned/Assigned/Incomplete) already scheduled for each proposed
+    /// tech that overlap the proposed window. Informational — never blocks assignment.
+    /// </summary>
+    public async Task<List<TechScheduleConflictDto>> GetTechScheduleConflictsAsync(TechScheduleConflictsRequest request)
+    {
+        const string sql = @"
+            SELECT wo.wo_id, wo.wo_workordernumber, wo.wo_startdatetime, wo.wo_enddatetime,
+                   l.l_location, s.s_status + ' - ' + ss.ss_statussecondary AS wo_status
+            FROM xrefWorkOrderUser x
+            JOIN WorkOrder wo ON wo.wo_id = x.wo_id
+            JOIN StatusSecondary ss ON ss.ss_id = wo.ss_id
+            JOIN [status] s ON s.s_id = ss.s_id
+            JOIN ServiceRequest sr ON sr.sr_id = wo.sr_id
+            JOIN Location l ON l.l_id = sr.l_id
+            WHERE x.u_id = @u_id
+              AND s.s_status IN ('Unassigned', 'Assigned', 'Incomplete')
+              AND wo.wo_startdatetime IS NOT NULL
+              AND wo.wo_enddatetime IS NOT NULL
+              AND wo.wo_startdatetime < @end
+              AND wo.wo_enddatetime > @start
+            ORDER BY wo.wo_startdatetime";
+
+        var conflicts = new List<TechScheduleConflictDto>();
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        foreach (var assignment in request.Assignments)
+        {
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.Add("@u_id", SqlDbType.Int).Value = assignment.UId;
+            command.Parameters.Add("@start", SqlDbType.DateTime).Value = assignment.StartDateTimeUtc;
+            command.Parameters.Add("@end", SqlDbType.DateTime).Value = assignment.EndDateTimeUtc;
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                conflicts.Add(new TechScheduleConflictDto
+                {
+                    UId = assignment.UId,
+                    WoId = reader.GetInt32(0),
+                    WoWorkOrderNumber = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    // wo datetimes are stored UTC; stamp the kind so JSON carries the Z suffix
+                    StartDateTimeUtc = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
+                    EndDateTimeUtc = DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
+                    Location = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Status = reader.IsDBNull(5) ? null : reader.GetString(5)
+                });
+            }
+        }
+
+        return conflicts;
+    }
+
+    /// <summary>
+    /// Tech guidance for the New Service Request flow: per-technician distance from the job
+    /// (via home/customer zip lat-lon) plus hours booked over the next 7 days, for techs that
+    /// hold the selected trade. Faithful port of the legacy EvoData.GetTechUtilization
+    /// (trade-aware variant — a trade is always selected in this flow).
+    /// </summary>
+    public async Task<List<TechUtilizationDto>> GetTechUtilizationAsync(int tId, string customerZip)
+    {
+        const string sql = @"
+            WITH Numbers AS (
+                SELECT n
+                FROM (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),
+                             (10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),
+                             (21),(22),(23),(24),(25),(26),(27),(28),(29),(30),
+                             (31),(32),(33),(34),(35),(36),(37),(38),(39),(40),
+                             (41),(42),(43),(44),(45),(46),(47),(48),(49),(50)
+                     ) AS X(n)
+            ),
+            DateSeries AS (
+                SELECT
+                    xwou.u_id,
+                    wo.wo_id,
+                    DATEADD(hour, -6, wo_startdatetime) AS adjusted_start,
+                    DATEADD(hour, -6, wo_enddatetime)   AS adjusted_end,
+                    DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date)) AS work_date,
+                    DATEDIFF(
+                        day,
+                        CAST(DATEADD(hour, -6, GETDATE()) AS date),
+                        DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date))
+                    ) AS day_offset
+                FROM xrefWorkOrderUser xwou
+                JOIN workorder wo ON wo.wo_id = xwou.wo_id
+                CROSS JOIN Numbers
+                WHERE DATEADD(day, n, CAST(DATEADD(hour, -6, wo_startdatetime) AS date))
+                      <= CAST(DATEADD(hour, -6, wo_enddatetime) AS date)
+                  AND DATEADD(hour, -6, wo_startdatetime) >= DATEADD(day, -33, DATEADD(hour, -6, GETDATE()))
+                  AND DATEADD(hour, -6, wo_enddatetime)   <= DATEADD(day,  33, DATEADD(hour, -6, GETDATE()))
+            ),
+            PivotedData AS (
+                SELECT
+                     u.u_id
+                    ,u.u_firstname
+                    ,u.u_lastname
+                    ,u.u_note
+                    ,a.a_zip
+                    ,zip.zip_lat       AS home_lat
+                    ,zip.zip_lon       AS home_lon
+                    ,xsltt.xsltt_note
+                    ,day_offset
+                    ,sl_score
+                    ,sl_description
+                    ,t_trade
+                    ,CASE
+                         WHEN work_date = CAST(adjusted_start AS date)
+                              AND work_date = CAST(adjusted_end   AS date)
+                         THEN DATEDIFF(hour, adjusted_start, adjusted_end)
+
+                         WHEN work_date = CAST(adjusted_start AS date)
+                         THEN DATEDIFF(hour, adjusted_start, DATEADD(day, 1, CAST(adjusted_start AS date)))
+
+                         WHEN work_date = CAST(adjusted_end AS date)
+                         THEN DATEDIFF(hour, CAST(adjusted_end AS date), adjusted_end)
+
+                         ELSE 24
+                     END AS hours
+                FROM [user] u
+                     LEFT JOIN DateSeries ds
+                            ON u.u_id = ds.u_id
+                     LEFT JOIN Address a
+                            ON u.a_id = a.a_id
+                     LEFT JOIN Zip
+                            ON a.a_zip = zip.zip_zip
+                     JOIN xrefUserRole x
+                            ON u.u_id = x.u_id
+                     JOIN role r
+                            ON r.r_id = x.r_id
+                     JOIN xrefSkillLevelTechTrade xsltt
+                            ON u.u_id = xsltt.u_id
+                     JOIN SkillLevel sl
+                            ON xsltt.sl_id = sl.sl_id
+                     JOIN Trade t
+                            ON xsltt.t_id = t.t_id
+                WHERE r.r_role   = 'Technician'
+                  AND u.u_active = 1
+                  AND xsltt.t_id = @t_id
+                  AND sl.sl_score NOT IN (-1, 0)
+            ),
+            SRData AS (
+                SELECT TOP 1
+                    zip_zip AS customer_zip
+                    ,zip_lat AS customer_lat
+                    ,zip_lon AS customer_lon
+                FROM zip
+                WHERE zip_zip = @customer_zip
+            )
+            SELECT
+                 p.u_id
+                ,p.u_firstname
+                ,p.u_lastname
+                ,p.sl_score
+                ,p.sl_description
+                ,ISNULL([0],0) AS Today0
+                ,ISNULL([1],0) AS Today1
+                ,ISNULL([2],0) AS Today2
+                ,ISNULL([3],0) AS Today3
+                ,ISNULL([4],0) AS Today4
+                ,ISNULL([5],0) AS Today5
+                ,ISNULL([6],0) AS Today6
+                ,CASE WHEN @customer_zip IS NOT NULL AND LEN(@customer_zip) > 0
+                      THEN
+                           SQRT(
+                               POWER(69.1 * (p.home_lat - sr.customer_lat), 2) +
+                               POWER(69.1 * (p.home_lon - sr.customer_lon)
+                                     * COS(sr.customer_lat / 57.3), 2)
+                           )
+                      ELSE NULL
+                 END AS distance_miles
+            FROM (
+                SELECT
+                     u_id, u_firstname, u_lastname, u_note, a_zip,
+                     home_lat, home_lon, xsltt_note, sl_score, sl_description, t_trade,
+                     [0], [1], [2], [3], [4], [5], [6]
+                FROM PivotedData
+                PIVOT (
+                    SUM(hours)
+                    FOR day_offset IN ([0], [1], [2], [3], [4], [5], [6])
+                ) AS PVT
+            ) AS p
+            LEFT JOIN SRData sr ON 1 = 1
+            ORDER BY p.sl_score DESC, p.u_lastname;";
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["@t_id"] = tId,
+            ["@customer_zip"] = customerZip ?? string.Empty
+        };
+
+        var dt = await ExecuteQueryAsync(sql, parameters);
+
+        var result = new List<TechUtilizationDto>();
+        foreach (DataRow row in dt.Rows)
+        {
+            result.Add(new TechUtilizationDto
+            {
+                UId = ConvertToInt(row["u_id"]),
+                UFirstName = row["u_firstname"]?.ToString() ?? string.Empty,
+                ULastName = row["u_lastname"]?.ToString() ?? string.Empty,
+                SlScore = ConvertToNullableInt(row["sl_score"]),
+                SlDescription = row["sl_description"]?.ToString(),
+                DistanceMiles = row["distance_miles"] == DBNull.Value ? (double?)null : Convert.ToDouble(row["distance_miles"]),
+                Today0 = ConvertToInt(row["Today0"]),
+                Today1 = ConvertToInt(row["Today1"]),
+                Today2 = ConvertToInt(row["Today2"]),
+                Today3 = ConvertToInt(row["Today3"]),
+                Today4 = ConvertToInt(row["Today4"]),
+                Today5 = ConvertToInt(row["Today5"]),
+                Today6 = ConvertToInt(row["Today6"])
+            });
+        }
+
+        return result;
+    }
+
+    // lrt_id -> today's LaborRate column, matching the legacy pay-rate-type mapping.
+    private static readonly Dictionary<int, string> _lrtRateColumn = new()
+    {
+        { 1, "lr_rateregular" },
+        { 2, "lr_rateovertime" },
+        { 3, "lr_rateholiday" },
+        { 7, "lr_ratespecial" },
+        { 4, "lr_ratescheduledafterhours" },
+        { 5, "lr_rateregulardiscount" },
+        { 6, "lr_ratehelper" },
+        { 8, "lr_ratehelperovertime" },
+    };
+
+    private static double Percentile(List<double> values, double p)
+    {
+        if (values.Count == 0) return 0;
+        var sorted = values.OrderBy(v => v).ToList();
+        if (sorted.Count == 1) return sorted[0];
+        double rank = (p / 100.0) * (sorted.Count - 1);
+        int lo = (int)Math.Floor(rank);
+        int hi = (int)Math.Ceiling(rank);
+        if (lo == hi) return sorted[lo];
+        return sorted[lo] + (rank - lo) * (sorted[hi] - sorted[lo]);
+    }
+
+    private async Task<int> GetIntConfigAsync(string identifier, int fallback)
+    {
+        var raw = await GetConfigSettingValueAsync("Config", identifier);
+        return int.TryParse(raw, out var v) && v > 0 ? v : fallback;
+    }
+
+    /// <summary>
+    /// Builds a recommended NTE for a company + sub-trade from historical jobs in the last
+    /// N months: labor re-priced at today's rates (by the rate type each past job used) plus
+    /// billable pre-tax materials, each taken at the configured percentile, plus the current
+    /// trip charge. Returns a displayable breakdown and the trade-level NTE for reference.
+    /// </summary>
+    public async Task<NteEstimateDto> GetNteEstimateAsync(int xcccId, int tId)
+    {
+        var percentile = await GetIntConfigAsync("NteGuidancePercentile", 75);
+        var windowMonths = await GetIntConfigAsync("NteGuidanceWindowMonths", 12);
+        var minJobs = await GetIntConfigAsync("NteGuidanceMinJobs", 5);
+
+        var dto = new NteEstimateDto
+        {
+            WindowMonths = windowMonths,
+            Percentile = percentile,
+            HasEnoughHistory = false
+        };
+
+        // Current rates / trip charge / trade NTE for this combo (today's pricing)
+        const string rateSql = @"
+            SELECT lr.lr_rateregular, lr.lr_rateovertime, lr.lr_rateholiday, lr.lr_ratespecial,
+                   lr.lr_ratescheduledafterhours, lr.lr_rateregulardiscount, lr.lr_ratehelper, lr.lr_ratehelperovertime,
+                   lr.lr_nte, lr.lr_tripcharge, t.t_nte, xccc.xccc_tripcharge
+            FROM LaborRate lr
+            INNER JOIN Trade t ON lr.t_id = t.t_id
+            INNER JOIN xrefCompanyCallCenter xccc ON lr.xccc_id = xccc.xccc_id
+            WHERE lr.xccc_id = @xccc AND lr.t_id = @t";
+
+        var rateDt = await ExecuteQueryAsync(rateSql, new Dictionary<string, object> { ["@xccc"] = xcccId, ["@t"] = tId });
+
+        var todaysRate = new Dictionary<int, double>();
+        decimal tripCharge = 0;
+        decimal? tradeNte = null;
+        if (rateDt.Rows.Count > 0)
+        {
+            var r = rateDt.Rows[0];
+            double Col(string c) => r[c] == DBNull.Value ? 0 : Convert.ToDouble(r[c]);
+            foreach (var kv in _lrtRateColumn) todaysRate[kv.Key] = Col(kv.Value);
+
+            var lrTrip = r["lr_tripcharge"] == DBNull.Value ? 0 : Convert.ToDecimal(r["lr_tripcharge"]);
+            var xcccTrip = r["xccc_tripcharge"] == DBNull.Value ? 0 : Convert.ToDecimal(r["xccc_tripcharge"]);
+            tripCharge = lrTrip > 0 ? lrTrip : xcccTrip;
+
+            if (r["lr_nte"] != DBNull.Value) tradeNte = Convert.ToDecimal(r["lr_nte"]);
+            else if (r["t_nte"] != DBNull.Value) tradeNte = Convert.ToDecimal(r["t_nte"]);
+        }
+        dto.TripCharge = tripCharge;
+        dto.TradeNte = tradeNte;
+
+        // Per-SR on-site hours by rate type, for completed service work orders in the window
+        const string hoursSql = @"
+            SELECT sr.sr_id, tt.lrt_id,
+                   SUM(DATEDIFF(SECOND, tt.tt_begin, tt.tt_end)) / 3600.0 AS hours
+            FROM TimeTracking tt
+            INNER JOIN WorkOrder wo ON tt.wo_id = wo.wo_id
+            INNER JOIN ServiceRequest sr ON wo.sr_id = sr.sr_id
+            WHERE sr.xccc_id = @xccc AND sr.t_id = @t
+              AND tt.ttt_id = 3 AND tt.tt_end IS NOT NULL
+              AND wo.wot_id = 1
+              AND tt.tt_begin >= DATEADD(MONTH, -@windowMonths, GETDATE())
+            GROUP BY sr.sr_id, tt.lrt_id";
+
+        var hoursDt = await ExecuteQueryAsync(hoursSql, new Dictionary<string, object>
+        {
+            ["@xccc"] = xcccId,
+            ["@t"] = tId,
+            ["@windowMonths"] = windowMonths
+        });
+
+        // Per-SR billable pre-tax materials (incurred items only)
+        const string matSql = @"
+            SELECT sr.sr_id,
+                   SUM(xwosi.xwosi_basecost * xwosi.xwosi_quantity
+                       * (1 + ISNULL(xwosi.xwosi_percentagemarkup, 0) / 100.0)) AS materials
+            FROM xrefWorkOrderServiceItem xwosi
+            INNER JOIN WorkOrder wo ON xwosi.wo_id = wo.wo_id
+            INNER JOIN ServiceRequest sr ON wo.sr_id = sr.sr_id
+            WHERE sr.xccc_id = @xccc AND sr.t_id = @t
+              AND xwosi.xwosi_forquote = 0
+            GROUP BY sr.sr_id";
+
+        var matDt = await ExecuteQueryAsync(matSql, new Dictionary<string, object> { ["@xccc"] = xcccId, ["@t"] = tId });
+        var materialsBySr = new Dictionary<int, double>();
+        foreach (DataRow row in matDt.Rows)
+        {
+            var srId = ConvertToInt(row["sr_id"]);
+            materialsBySr[srId] = row["materials"] == DBNull.Value ? 0 : Convert.ToDouble(row["materials"]);
+        }
+
+        // Roll hours up per SR -> labor $ (at today's rates) and total hours
+        var laborBySr = new Dictionary<int, double>();
+        var hoursBySr = new Dictionary<int, double>();
+        foreach (DataRow row in hoursDt.Rows)
+        {
+            var srId = ConvertToInt(row["sr_id"]);
+            var lrtId = row["lrt_id"] == DBNull.Value ? 1 : ConvertToInt(row["lrt_id"]);
+            var hrs = row["hours"] == DBNull.Value ? 0 : Convert.ToDouble(row["hours"]);
+            var rate = todaysRate.TryGetValue(lrtId, out var rr) && rr > 0 ? rr : (todaysRate.TryGetValue(1, out var reg) ? reg : 0);
+            laborBySr[srId] = laborBySr.GetValueOrDefault(srId) + hrs * rate;
+            hoursBySr[srId] = hoursBySr.GetValueOrDefault(srId) + hrs;
+        }
+
+        var jobIds = hoursBySr.Keys.ToList();
+        dto.JobCount = jobIds.Count;
+
+        if (jobIds.Count < minJobs)
+        {
+            return dto; // HasEnoughHistory stays false; trade NTE + trip charge already populated
+        }
+
+        var laborList = jobIds.Select(id => laborBySr.GetValueOrDefault(id)).ToList();
+        var materialsList = jobIds.Select(id => materialsBySr.GetValueOrDefault(id)).ToList();
+        var hoursList = jobIds.Select(id => hoursBySr.GetValueOrDefault(id)).ToList();
+
+        var laborP = (decimal)Math.Round(Percentile(laborList, percentile), 2);
+        var materialsP = (decimal)Math.Round(Percentile(materialsList, percentile), 2);
+        var laborHoursP = (decimal)Math.Round(Percentile(hoursList, percentile), 2);
+        var avgHours = (decimal)Math.Round(hoursList.Average(), 2);
+
+        dto.HasEnoughHistory = true;
+        dto.AvgHours = avgHours;
+        dto.LaborHours = laborHoursP;
+        dto.LaborAmount = laborP;
+        dto.MaterialsAmount = materialsP;
+        dto.EstimatedNte = Math.Round(laborP + materialsP + tripCharge, 2);
+        dto.Lines = new List<NteEstimateLineDto>
+        {
+            new() { Label = $"Labor ({percentile}th pct)", Value = laborP, Note = $"≈{laborHoursP:0.##} hrs at current rates" },
+            new() { Label = $"Materials ({percentile}th pct)", Value = materialsP, Note = "billable, pre-tax" },
+            new() { Label = "Trip charge", Value = tripCharge, Note = null }
+        };
+
+        return dto;
+    }
+
+    #endregion
+
+    #region Location Management
+
+    public async Task<List<LocationDto>> GetCompanyLocationsAsync(int cId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    l.l_id,
+                    l.c_id,
+                    l.a_id,
+                    l.l_location,
+                    l.l_phone,
+                    l.l_hours,
+                    l.l_note,
+                    l.l_email,
+                    l.l_active,
+                    l.l_insertdatetime,
+                    l.l_modifieddatetime,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    a.a_latitude,
+                    a.a_longitude
+                FROM location l
+                LEFT JOIN address a ON l.a_id = a.a_id
+                WHERE l.c_id = @cId
+                ORDER BY l.l_location";
+
+            var locations = new List<LocationDto>();
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.Parameters.Add("@cId", SqlDbType.Int).Value = cId;
+                await connection.OpenAsync();
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        locations.Add(new LocationDto
+                        {
+                            LId = (int)reader["l_id"],
+                            CId = (int)reader["c_id"],
+                            AId = reader["a_id"] != DBNull.Value ? (int)reader["a_id"] : 0,
+                            LLocation = reader["l_location"]?.ToString() ?? string.Empty,
+                            LPhone = reader["l_phone"]?.ToString(),
+                            LHours = reader["l_hours"]?.ToString(),
+                            LNote = reader["l_note"]?.ToString(),
+                            LEmail = reader["l_email"]?.ToString(),
+                            LActive = reader["l_active"] != DBNull.Value && (bool)reader["l_active"],
+                            InsertDateTime = reader["l_insertdatetime"] != DBNull.Value ? (DateTime)reader["l_insertdatetime"] : DateTime.Now,
+                            ModifiedDateTime = reader["l_modifieddatetime"] != DBNull.Value ? (DateTime)reader["l_modifieddatetime"] : null,
+                            AAddress1 = reader["a_address1"]?.ToString(),
+                            AAddress2 = reader["a_address2"]?.ToString(),
+                            ACity = reader["a_city"]?.ToString(),
+                            AState = reader["a_state"]?.ToString(),
+                            AZip = reader["a_zip"]?.ToString(),
+                            ALatitude = reader["a_latitude"]?.ToString(),
+                            ALongitude = reader["a_longitude"]?.ToString()
+                        });
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyLocations",
+                Detail = $"Retrieved {locations.Count} locations for company {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return locations;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCompanyLocations",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving locations for company {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<LocationDto> CreateLocationAsync(int cId, CreateLocationRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // First create/get the address
+            int aId;
+            const string createAddressSql = @"
+                INSERT INTO address (at_id, a_description, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_insertdatetime)
+                VALUES (3, @description, @address1, @address2, @city, @state, @zip, @latitude, @longitude, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() as int);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(createAddressSql, connection))
+            {
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.LLocation ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                aId = result != null ? (int)result : 0;
+            }
+
+            // Now create the location
+            const string createLocationSql = @"
+                INSERT INTO location (c_id, a_id, l_location, l_phone, l_hours, l_note, l_email, l_active, l_insertdatetime)
+                VALUES (@cId, @aId, @lLocation, @lPhone, @lHours, @lNote, @lEmail, 1, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() as int);";
+
+            int lId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(createLocationSql, connection))
+            {
+                command.Parameters.Add("@cId", SqlDbType.Int).Value = cId;
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                command.Parameters.Add("@lLocation", SqlDbType.VarChar).Value = request.LLocation;
+                command.Parameters.Add("@lPhone", SqlDbType.VarChar).Value = (object?)request.LPhone ?? DBNull.Value;
+                command.Parameters.Add("@lHours", SqlDbType.VarChar).Value = (object?)request.LHours ?? DBNull.Value;
+                command.Parameters.Add("@lNote", SqlDbType.VarChar).Value = (object?)request.LNote ?? DBNull.Value;
+                command.Parameters.Add("@lEmail", SqlDbType.VarChar).Value = (object?)request.LEmail ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                var result = await command.ExecuteScalarAsync();
+                lId = result != null ? (int)result : 0;
+            }
+
+            // Retrieve the created location
+            var locations = await GetCompanyLocationsAsync(cId);
+            var createdLocation = locations.FirstOrDefault(l => l.LId == lId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateLocation",
+                Detail = $"Created location {lId} for company {cId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return createdLocation ?? new LocationDto();
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateLocation",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating location for company {CId}", cId);
+            throw;
+        }
+    }
+
+    public async Task<LocationDto?> UpdateLocationAsync(int lId, UpdateLocationRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            // Get location details
+            const string getLocationSql = "SELECT c_id, a_id FROM location WHERE l_id = @lId";
+            int cId, aId;
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getLocationSql, connection))
+            {
+                command.Parameters.Add("@lId", SqlDbType.Int).Value = lId;
+                await connection.OpenAsync();
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (!await reader.ReadAsync())
+                    {
+                        return null;
+                    }
+                    cId = (int)reader["c_id"];
+                    aId = (int)reader["a_id"];
+                }
+            }
+
+            // Update address
+            const string updateAddressSql = @"
+                UPDATE address
+                SET at_id = 3,
+                    a_description = @description,
+                    a_address1 = @address1,
+                    a_address2 = @address2,
+                    a_city = @city,
+                    a_state = @state,
+                    a_zip = @zip,
+                    a_latitude = @latitude,
+                    a_longitude = @longitude,
+                    a_modifieddatetime = GETDATE()
+                WHERE a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateAddressSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.LLocation ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Update location
+            const string updateLocationSql = @"
+                UPDATE location
+                SET l_location = @lLocation,
+                    l_phone = @lPhone,
+                    l_hours = @lHours,
+                    l_note = @lNote,
+                    l_email = @lEmail,
+                    l_modifieddatetime = GETDATE()
+                WHERE l_id = @lId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateLocationSql, connection))
+            {
+                command.Parameters.Add("@lId", SqlDbType.Int).Value = lId;
+                command.Parameters.Add("@lLocation", SqlDbType.VarChar).Value = request.LLocation;
+                command.Parameters.Add("@lPhone", SqlDbType.VarChar).Value = (object?)request.LPhone ?? DBNull.Value;
+                command.Parameters.Add("@lHours", SqlDbType.VarChar).Value = (object?)request.LHours ?? DBNull.Value;
+                command.Parameters.Add("@lNote", SqlDbType.VarChar).Value = (object?)request.LNote ?? DBNull.Value;
+                command.Parameters.Add("@lEmail", SqlDbType.VarChar).Value = (object?)request.LEmail ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve the updated location
+            var locations = await GetCompanyLocationsAsync(cId);
+            var updatedLocation = locations.FirstOrDefault(l => l.LId == lId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateLocation",
+                Detail = $"Updated location {lId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedLocation;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateLocation",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating location {LId}", lId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Call Center Contacts
+
+    public async Task<List<ContactDto>> GetCallCenterContactsAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax
+                FROM contact c
+                INNER JOIN xrefcallcentercontact xccc ON c.con_id = xccc.con_id
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE xccc.cc_id = @ccId
+                ORDER BY ct.ct_title, c.con_lastname, c.con_firstname";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@ccId"] = ccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<ContactDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new ContactDto
+                {
+                    ConId = ConvertToInt(row["con_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    CtId = ConvertToInt(row["ct_id"]),
+                    CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                    ConFirstname = row["con_firstname"]?.ToString() ?? string.Empty,
+                    ConLastname = row["con_lastname"]?.ToString() ?? string.Empty,
+                    ConEmail = row["con_email"]?.ToString() ?? string.Empty,
+                    ConPhone = row["con_phone"]?.ToString() ?? string.Empty,
+                    ConMobile = row["con_mobile"]?.ToString() ?? string.Empty,
+                    ConFax = row["con_fax"]?.ToString() ?? string.Empty
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterContacts",
+                Detail = $"Retrieved {result.Count} contacts for call center cc_id {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterContacts",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving contacts for call center cc_id {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto> CreateCallCenterContactAsync(int ccId, CreateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            int newConId;
+
+            // Insert contact
+            const string insertContactSql = @"
+                INSERT INTO contact (o_id, ct_id, con_firstname, con_lastname, con_email, con_phone, con_mobile, con_fax, con_insertdatetime)
+                VALUES (1, @ctId, @firstname, @lastname, @email, @phone, @mobile, @fax, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertContactSql, connection))
+            {
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@firstname", SqlDbType.VarChar).Value = request.ConFirstname;
+                command.Parameters.Add("@lastname", SqlDbType.VarChar).Value = request.ConLastname;
+                command.Parameters.Add("@email", SqlDbType.VarChar).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@phone", SqlDbType.VarChar).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@mobile", SqlDbType.VarChar).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@fax", SqlDbType.VarChar).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                newConId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Create cross-reference
+            const string insertXrefSql = @"
+                INSERT INTO xrefcallcentercontact (cc_id, con_id)
+                VALUES (@ccId, @conId)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertXrefSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = newConId;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve the created contact
+            var contacts = await GetCallCenterContactsAsync(ccId);
+            var createdContact = contacts.FirstOrDefault(c => c.ConId == newConId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterContact",
+                Detail = $"Created contact {newConId} for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return createdContact ?? new ContactDto();
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating contact for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> UpdateCallCenterContactAsync(int conId, UpdateContactRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string updateContactSql = @"
+                UPDATE contact
+                SET ct_id = @ctId,
+                    con_firstname = @firstname,
+                    con_lastname = @lastname,
+                    con_email = @email,
+                    con_phone = @phone,
+                    con_mobile = @mobile,
+                    con_fax = @fax,
+                    con_modifieddatetime = GETDATE()
+                WHERE con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateContactSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                command.Parameters.Add("@ctId", SqlDbType.Int).Value = request.CtId;
+                command.Parameters.Add("@firstname", SqlDbType.VarChar).Value = request.ConFirstname;
+                command.Parameters.Add("@lastname", SqlDbType.VarChar).Value = request.ConLastname;
+                command.Parameters.Add("@email", SqlDbType.VarChar).Value = (object?)request.ConEmail ?? DBNull.Value;
+                command.Parameters.Add("@phone", SqlDbType.VarChar).Value = (object?)request.ConPhone ?? DBNull.Value;
+                command.Parameters.Add("@mobile", SqlDbType.VarChar).Value = (object?)request.ConMobile ?? DBNull.Value;
+                command.Parameters.Add("@fax", SqlDbType.VarChar).Value = (object?)request.ConFax ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Get the cc_id to retrieve the updated contact
+            const string getCcIdSql = "SELECT cc_id FROM xrefcallcentercontact WHERE con_id = @conId";
+            int ccId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCcIdSql, connection))
+            {
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+                await connection.OpenAsync();
+                ccId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the updated contact
+            var contacts = await GetCallCenterContactsAsync(ccId);
+            var updatedContact = contacts.FirstOrDefault(c => c.ConId == conId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterContact",
+                Detail = $"Updated contact {conId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedContact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterContact",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteCallCenterContactXrefAsync(int ccId, int conId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string deleteSql = @"
+                DELETE FROM xrefcallcentercontact
+                WHERE cc_id = @ccId AND con_id = @conId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(deleteSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@conId", SqlDbType.Int).Value = conId;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "DeleteCallCenterContactXref",
+                    Detail = $"Deleted xref for call center {ccId} and contact {conId}. Rows affected: {rowsAffected}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteCallCenterContactXref",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting contact xref for call center {CcId} and contact {ConId}", ccId, conId);
+            throw;
+        }
+    }
+
+    public async Task<ContactDto?> GetContactByIdAsync(int conId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    c.con_id,
+                    c.o_id,
+                    c.ct_id,
+                    ct.ct_title,
+                    c.con_firstname,
+                    c.con_lastname,
+                    c.con_email,
+                    c.con_phone,
+                    c.con_mobile,
+                    c.con_fax
+                FROM contact c
+                INNER JOIN contacttitle ct ON c.ct_id = ct.ct_id
+                WHERE c.con_id = @conId";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@conId"] = conId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            if (dt.Rows.Count == 0)
+            {
+                return null;
+            }
+
+            var row = dt.Rows[0];
+            var contact = new ContactDto
+            {
+                ConId = ConvertToInt(row["con_id"]),
+                OId = ConvertToInt(row["o_id"]),
+                CtId = ConvertToInt(row["ct_id"]),
+                CtTitle = row["ct_title"]?.ToString() ?? string.Empty,
+                ConFirstname = row["con_firstname"]?.ToString() ?? string.Empty,
+                ConLastname = row["con_lastname"]?.ToString() ?? string.Empty,
+                ConEmail = row["con_email"]?.ToString() ?? string.Empty,
+                ConPhone = row["con_phone"]?.ToString() ?? string.Empty,
+                ConMobile = row["con_mobile"]?.ToString() ?? string.Empty,
+                ConFax = row["con_fax"]?.ToString() ?? string.Empty
+            };
+
+            stopwatch.Stop();
+            return contact;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving contact {ConId}", conId);
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Call Center Addresses
+
+    public async Task<List<AddressDto>> GetCallCenterAddressesAsync(int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    a.a_id,
+                    a.o_id,
+                    a.at_id,
+                    at.at_title,
+                    a.a_description,
+                    a.a_address1,
+                    a.a_address2,
+                    a.a_city,
+                    a.a_state,
+                    a.a_zip,
+                    a.a_latitude,
+                    a.a_longitude,
+                    a.a_active
+                FROM address a
+                INNER JOIN xrefcallcenteraddress xcca ON a.a_id = xcca.a_id
+                INNER JOIN addresstitle at ON a.at_id = at.at_id
+                WHERE xcca.cc_id = @ccId
+                ORDER BY at.at_title, a.a_city";
+
+            var parameters = new Dictionary<string, object>
+            {
+                ["@ccId"] = ccId
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            
+            var result = new List<AddressDto>();
+            foreach (DataRow row in dt.Rows)
+            {
+                result.Add(new AddressDto
+                {
+                    AId = ConvertToInt(row["a_id"]),
+                    OId = ConvertToInt(row["o_id"]),
+                    AtId = ConvertToInt(row["at_id"]),
+                    AtTitle = row["at_title"]?.ToString() ?? string.Empty,
+                    ADescription = row["a_description"]?.ToString() ?? string.Empty,
+                    AAddress1 = row["a_address1"]?.ToString() ?? string.Empty,
+                    AAddress2 = row["a_address2"]?.ToString() ?? string.Empty,
+                    ACity = row["a_city"]?.ToString() ?? string.Empty,
+                    AState = row["a_state"]?.ToString() ?? string.Empty,
+                    AZip = row["a_zip"]?.ToString() ?? string.Empty,
+                    ALatitude = row["a_latitude"]?.ToString() ?? string.Empty,
+                    ALongitude = row["a_longitude"]?.ToString() ?? string.Empty,
+                    AActive = ConvertToBool(row["a_active"])
+                });
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterAddresses",
+                Detail = $"Retrieved {result.Count} addresses for call center cc_id {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCallCenterAddresses",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error retrieving addresses for call center cc_id {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto> CreateCallCenterAddressAsync(int ccId, CreateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            int newAId;
+
+            // Insert address
+            const string insertAddressSql = @"
+                INSERT INTO address (o_id, at_id, a_description, a_address1, a_address2, a_city, a_state, a_zip, a_latitude, a_longitude, a_active, a_insertdatetime)
+                VALUES (1, @atId, @description, @address1, @address2, @city, @state, @zip, @latitude, @longitude, 1, GETDATE());
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertAddressSql, connection))
+            {
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                newAId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Create cross-reference
+            const string insertXrefSql = @"
+                INSERT INTO xrefcallcenteraddress (cc_id, a_id)
+                VALUES (@ccId, @aId)";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(insertXrefSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = newAId;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve the created address
+            var addresses = await GetCallCenterAddressesAsync(ccId);
+            var createdAddress = addresses.FirstOrDefault(a => a.AId == newAId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterAddress",
+                Detail = $"Created address {newAId} for call center {ccId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return createdAddress ?? new AddressDto();
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCallCenterAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error creating address for call center {CcId}", ccId);
+            throw;
+        }
+    }
+
+    public async Task<AddressDto?> UpdateCallCenterAddressAsync(int aId, UpdateAddressRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string updateAddressSql = @"
+                UPDATE address
+                SET at_id = @atId,
+                    a_description = @description,
+                    a_address1 = @address1,
+                    a_address2 = @address2,
+                    a_city = @city,
+                    a_state = @state,
+                    a_zip = @zip,
+                    a_latitude = @latitude,
+                    a_longitude = @longitude,
+                    a_active = @active,
+                    a_modifieddatetime = GETDATE()
+                WHERE a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(updateAddressSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                command.Parameters.Add("@atId", SqlDbType.Int).Value = request.AtId;
+                command.Parameters.Add("@description", SqlDbType.VarChar).Value = (object?)request.ADescription ?? DBNull.Value;
+                command.Parameters.Add("@address1", SqlDbType.VarChar).Value = request.AAddress1;
+                command.Parameters.Add("@address2", SqlDbType.VarChar).Value = (object?)request.AAddress2 ?? DBNull.Value;
+                command.Parameters.Add("@city", SqlDbType.VarChar).Value = request.ACity;
+                command.Parameters.Add("@state", SqlDbType.VarChar).Value = request.AState;
+                command.Parameters.Add("@zip", SqlDbType.VarChar).Value = request.AZip;
+                command.Parameters.Add("@latitude", SqlDbType.VarChar).Value = (object?)request.ALatitude ?? DBNull.Value;
+                command.Parameters.Add("@longitude", SqlDbType.VarChar).Value = (object?)request.ALongitude ?? DBNull.Value;
+
+                await connection.OpenAsync();
+                await command.ExecuteNonQueryAsync();
+            }
+
+            // Get the cc_id to retrieve the updated address
+            const string getCcIdSql = "SELECT cc_id FROM xrefcallcenteraddress WHERE a_id = @aId";
+            int ccId;
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(getCcIdSql, connection))
+            {
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+                await connection.OpenAsync();
+                ccId = (int)await command.ExecuteScalarAsync();
+            }
+
+            // Retrieve the updated address
+            var addresses = await GetCallCenterAddressesAsync(ccId);
+            var updatedAddress = addresses.FirstOrDefault(a => a.AId == aId);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterAddress",
+                Detail = $"Updated address {aId}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return updatedAddress;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateCallCenterAddress",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error updating address {AId}", aId);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteCallCenterAddressXrefAsync(int ccId, int aId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            const string deleteSql = @"
+                DELETE FROM xrefcallcenteraddress
+                WHERE cc_id = @ccId AND a_id = @aId";
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(deleteSql, connection))
+            {
+                command.Parameters.Add("@ccId", SqlDbType.Int).Value = ccId;
+                command.Parameters.Add("@aId", SqlDbType.Int).Value = aId;
+
+                await connection.OpenAsync();
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "DeleteCallCenterAddressXref",
+                    Detail = $"Deleted xref for call center {ccId} and address {aId}. Rows affected: {rowsAffected}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return rowsAffected > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteCallCenterAddressXref",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            
+            _logger.LogError(ex, "Error deleting address xref for call center {CcId} and address {AId}", ccId, aId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets all call center attachments (one per call center, most recent)
+    /// Returns a DataTable with cc_id and attachment details for bulk loading
+    /// </summary>
+    public async Task<DataTable> GetAllCallCenterAttachmentsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+                throw new InvalidOperationException("Connection string not configured");
+
+            const string sql = @"
+                SELECT 
+                    a.att_id,
+                    a.cc_id,
+                    a.att_filename,
+                    a.att_extension,
+                    a.att_description,
+                    a.att_insertdatetime,
+                    a.att_modifieddatetime,
+                    a.att_active,
+                    a.att_receipt,
+                    a.att_public,
+                    a.att_signoff,
+                    a.att_submittedby,
+                    a.att_receiptamount,
+                    a.sr_id
+                FROM (
+                    SELECT 
+                        att_id,
+                        cc_id,
+                        att_filename,
+                        att_extension,
+                        att_description,
+                        att_insertdatetime,
+                        att_modifieddatetime,
+                        att_active,
+                        att_receipt,
+                        att_public,
+                        att_signoff,
+                        att_submittedby,
+                        att_receiptamount,
+                        sr_id,
+                        ROW_NUMBER() OVER (PARTITION BY cc_id ORDER BY att_insertdatetime DESC) as rn
+                    FROM attachment
+                    WHERE cc_id IS NOT NULL AND cc_id > 0
+                ) a
+                WHERE a.rn = 1
+                ORDER BY a.cc_id";
+
+            var dt = new DataTable();
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.CommandTimeout = 30;
+                var adapter = new SqlDataAdapter(command);
+                adapter.Fill(dt);
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenterAttachments",
+                Detail = $"Retrieved {dt.Rows.Count} call center attachments",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return dt;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllCallCenterAttachments",
+                Detail = $"Error retrieving call center attachments: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    #endregion
+
+    #region Time Off Requests
+
+    public async Task<DataTable> GetTimeOffRequestTypesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"SELECT tort_id, tort_type FROM TimeOffRequestType";
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestTypesAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestTypesAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequestTypes",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestTypeDetailsAsync(int tortId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tortd_id, tort_id, tortd_typedetail, tortd_workflowrequired, 
+                       tortd_admincancreate, 
+                       ISNULL(tortd_techcancreate, 1) as tortd_techcancreate,
+                       ISNULL(tortd_maxdaysoff, 30) as tortd_maxdaysoff
+                FROM TimeOffRequestTypeDetail
+                WHERE (@tort_id = 0 OR tort_id = @tort_id)
+                AND tortd_active = 1";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@tort_id", tortId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestTypeDetailsAsync completed in {ElapsedMs}ms for tortId={TortId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, tortId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestTypeDetailsAsync for tortId={TortId}", tortId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequestTypeDetails",
+                Detail = $"Error for tortId={tortId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffBalanceAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u_id, u_username, u_firstname, u_lastname, u_email, 
+                       ISNULL(u_daysavailablepto, 0) as u_daysavailablepto, 
+                       ISNULL(u_daysavailablevacation, 0) as u_daysavailablevacation 
+                FROM [user] u 
+                WHERE u_id = @u_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@u_id", userId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffBalanceAsync completed in {ElapsedMs}ms for userId={UserId}",
+                stopwatch.ElapsedMilliseconds, userId);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffBalanceAsync for userId={UserId}", userId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffBalance",
+                Detail = $"Error for userId={userId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestsAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tor.tor_id, u.u_firstname, u.u_lastname, 
+                       ISNULL(u.u_daysavailablevacation, 0) as u_daysavailablevacation, 
+                       ISNULL(u.u_daysavailablepto, 0) as u_daysavailablepto,
+                       tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail, tortd.tortd_id,
+                       tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id, 
+                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) as z_id
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN timeoffrequeststatus tors ON tor.tors_id = tors.tors_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE u.u_id = @u_id
+                ORDER BY tors.tors_orderby, tor.tor_startdate DESC";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@u_id", userId }
+            };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestsAsync completed in {ElapsedMs}ms for userId={UserId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, userId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestsAsync for userId={UserId}", userId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetTimeOffRequests",
+                Detail = $"Error for userId={userId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<int?> InsertTimeOffRequestAsync(EvoAPI.Shared.DTOs.CreateTimeOffRequestDto request, int statusId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var note = request.Note ?? string.Empty;
+
+            const string sql = @"
+                INSERT INTO TimeOffRequest (tortd_id, u_id, u_id_admincreated, tors_id, tor_startdate, tor_enddate, tor_note) 
+                VALUES (@tortd_id, @u_id, @u_id_admincreated, @tors_id, @tor_startdate, @tor_enddate, @tor_note);
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@tortd_id", request.TortdId },
+                { "@u_id", request.UserId },
+                { "@u_id_admincreated", request.UserIdAdmincreated },
+                { "@tors_id", statusId },
+                { "@tor_startdate", request.StartDate },
+                { "@tor_enddate", request.EndDate },
+                { "@tor_note", note }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+
+            if (result.Rows.Count > 0 && result.Rows[0][0] != DBNull.Value)
+            {
+                var newId = Convert.ToInt32(result.Rows[0][0]);
+                _logger.LogInformation("InsertTimeOffRequestAsync completed in {ElapsedMs}ms, new tor_id={TorId}",
+                    stopwatch.ElapsedMilliseconds, newId);
+                return newId;
+            }
+
+            _logger.LogWarning("InsertTimeOffRequestAsync completed but no ID returned");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequest",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> InsertTimeOffRequestDetailsAsync(int torId, List<EvoAPI.Shared.DTOs.CreateTimeOffRequestDetailDto> details)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            int totalHours = 0;
+
+            foreach (var detail in details)
+            {
+                const string sqlDetail = @"
+                    INSERT INTO TimeOffRequestDetail (tor_id, tord_date, tord_starthour, tord_endhour) 
+                    VALUES (@tor_id, @tord_date, @tord_starthour, @tord_endhour)";
+
+                var detailParams = new Dictionary<string, object>
+                {
+                    { "@tor_id", torId },
+                    { "@tord_date", detail.Date },
+                    { "@tord_starthour", detail.StartHour },
+                    { "@tord_endhour", detail.EndHour }
+                };
+
+                await ExecuteNonQueryAsync(sqlDetail, detailParams);
+                totalHours += detail.EndHour - detail.StartHour;
+            }
+
+            // Update total hours on the parent request
+            if (totalHours > 0)
+            {
+                const string sqlUpdate = @"UPDATE TimeOffRequest SET tor_totalhours = @totalHours WHERE tor_id = @tor_id";
+                var updateParams = new Dictionary<string, object>
+                {
+                    { "@totalHours", totalHours },
+                    { "@tor_id", torId }
+                };
+                await ExecuteNonQueryAsync(sqlUpdate, updateParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("InsertTimeOffRequestDetailsAsync completed in {ElapsedMs}ms for torId={TorId}, {Count} details, {TotalHours} total hours",
+                stopwatch.ElapsedMilliseconds, torId, details.Count, totalHours);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestDetailsAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequestDetails",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> CancelTimeOffRequestAsync(int torId, int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // Verify the request belongs to this user and is cancellable (not already cancelled/rejected)
+            const string verifySql = @"
+                SELECT tor_id, u_id, tors_id 
+                FROM TimeOffRequest 
+                WHERE tor_id = @tor_id";
+
+            var verifyParams = new Dictionary<string, object> { { "@tor_id", torId } };
+            var verifyResult = await ExecuteQueryAsync(verifySql, verifyParams);
+
+            if (verifyResult.Rows.Count == 0)
+                throw new InvalidOperationException("Time off request not found");
+
+            var row = verifyResult.Rows[0];
+            var requestUserId = Convert.ToInt32(row["u_id"]);
+            var currentStatus = Convert.ToInt32(row["tors_id"]);
+
+            if (requestUserId != userId)
+                throw new UnauthorizedAccessException("You can only cancel your own requests");
+
+            if (currentStatus == 5) // Already cancelled
+                throw new InvalidOperationException("Request is already cancelled");
+
+            if (currentStatus == 4) // Rejected
+                throw new InvalidOperationException("Cannot cancel a rejected request");
+
+            // Update status to 5 (Cancelled)
+            const string sql = @"
+                UPDATE TimeOffRequest 
+                SET tors_id = 5 
+                WHERE tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            await ExecuteNonQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            _logger.LogInformation("CancelTimeOffRequestAsync completed in {ElapsedMs}ms for torId={TorId}, userId={UserId}",
+                stopwatch.ElapsedMilliseconds, torId, userId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in CancelTimeOffRequestAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CancelTimeOffRequest",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetActiveEmployeesForTimeOffAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u.u_id, u.u_firstname, u.u_lastname, u.u_username
+                FROM [user] u
+                WHERE u.u_active = 1
+                ORDER BY u.u_lastname, u.u_firstname";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetActiveEmployeesForTimeOffAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetActiveEmployeesForTimeOffAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetActiveEmployeesForTimeOff",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetAllTimeOffRequestsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tor.tor_id, u.u_firstname, u.u_lastname, u.u_daysavailablevacation, 
+                       u.u_daysavailablepto, tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail, 
+                       tortd.tortd_id, tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id, 
+                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) AS z_id, tor.tor_insertdatetime
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN timeoffrequeststatus tors ON tor.tors_id = tors.tors_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                LEFT JOIN zone z ON u.z_id = z.z_id
+                WHERE tor.tor_startdate >= '2022-01-01'
+                AND tor.tor_enddate <= '2045-12-31'
+                ORDER BY tors.tors_orderby, tor.tor_startdate DESC";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetAllTimeOffRequestsAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetAllTimeOffRequestsAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllTimeOffRequests",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetTimeOffRequestDetailAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT tord_id, tor_id, tord_date, tord_starthour, tord_endhour
+                FROM timeoffrequestdetail
+                WHERE tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            _logger.LogInformation("GetTimeOffRequestDetailAsync completed in {ElapsedMs}ms for torId={TorId}, {Count} rows",
+                stopwatch.ElapsedMilliseconds, torId, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetTimeOffRequestDetailAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateTimeOffRequestStatusAsync(int torId, int torsId, string noteReason)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // Step 1: Update the status and reviewer note
+            const string sqlUpdate = @"
+                UPDATE TimeOffRequest 
+                SET tors_id = @tors_id, tor_notereason = @tor_notereason
+                WHERE tor_id = @tor_id";
+
+            var updateParams = new Dictionary<string, object>
+            {
+                { "@tors_id", torsId },
+                { "@tor_notereason", noteReason ?? "" },
+                { "@tor_id", torId }
+            };
+            await ExecuteNonQueryAsync(sqlUpdate, updateParams);
+
+            // Step 2: If cancelling (status 5), update linked service request and remove WO assignments
+            if (torsId == 5)
+            {
+                const string sqlCancelSR = @"
+                    UPDATE servicerequest SET s_id = 6, ss_id = 25
+                    WHERE sr_id IN (SELECT sr_id FROM timeoffrequest WHERE tor_id = @tor_id)";
+                var cancelParams = new Dictionary<string, object> { { "@tor_id", torId } };
+                await ExecuteNonQueryAsync(sqlCancelSR, cancelParams);
+
+                const string sqlDeleteWOUsers = @"
+                    DELETE FROM xrefworkorderuser 
+                    WHERE wo_id IN (
+                        SELECT wo.wo_id FROM workorder wo
+                        INNER JOIN timeoffrequest tor ON tor.sr_id = wo.sr_id
+                        WHERE tor.tor_id = @tor_id
+                    )";
+                await ExecuteNonQueryAsync(sqlDeleteWOUsers, cancelParams);
+            }
+
+            // Step 3: If approving (status 1), update linked SR to invoiced
+            if (torsId == 1)
+            {
+                const string sqlApproveSR = @"
+                    UPDATE ServiceRequest SET s_id = 5 
+                    WHERE sr_id IN (SELECT sr_id FROM timeoffrequest WHERE tor_id = @tor_id)";
+                var approveParams = new Dictionary<string, object> { { "@tor_id", torId } };
+                await ExecuteNonQueryAsync(sqlApproveSR, approveParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("UpdateTimeOffRequestStatusAsync completed in {ElapsedMs}ms for torId={TorId}, newStatus={TorsId}",
+                stopwatch.ElapsedMilliseconds, torId, torsId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in UpdateTimeOffRequestStatusAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateTimeOffRequestStatus",
+                Detail = $"Error for torId={torId}, torsId={torsId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteTimeOffRequestAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                DELETE FROM TimeOffRequestDetail WHERE tor_id = @tor_id;
+                DELETE FROM TimeOffRequest WHERE tor_id = @tor_id;";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            await ExecuteNonQueryAsync(sql, parameters);
+
+            stopwatch.Stop();
+            _logger.LogInformation("DeleteTimeOffRequestAsync completed in {ElapsedMs}ms for torId={TorId}",
+                stopwatch.ElapsedMilliseconds, torId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in DeleteTimeOffRequestAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteTimeOffRequest",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<bool> IsTimeOffWorkflowCurrentlyZFMReviewAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*) AS cnt
+                FROM timeoffrequest
+                WHERE tors_id = 2 AND tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["cnt"]) > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in IsTimeOffWorkflowCurrentlyZFMReviewAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<bool> IsTimeOffWorkflowAdminRequiredAsync(int torId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*) AS cnt
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE DATEDIFF(d, tor.tor_insertdatetime, tor.tor_startdate) < tortd.tortd_workflowadmindaythreshold
+                AND tortd.tortd_workflowrequired = 1
+                AND tor.tors_id = 2
+                AND tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["cnt"]) > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in IsTimeOffWorkflowAdminRequiredAsync for torId={TorId}", torId);
+            throw;
+        }
+    }
+
+    public async Task<int> InsertTimeOffRequestServiceRequestsAsync(int torId, int userId, int tortdId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var rnd = new Random();
+            string srRequestNumber = DateTime.UtcNow.ToString("yyyyMMdd") + "-" + rnd.Next(1000, 9999).ToString();
+
+            // Step 1: Create Service Request
+            const string sqlInsertSR = @"
+                DECLARE @xccc_id int 
+                DECLARE @l_id int 
+                DECLARE @t_id int 
+                DECLARE @sr_summary varchar(100)
+                DECLARE @sr_callnote varchar(8000)
+                DECLARE @tortd_id_local int 
+
+                SELECT @tortd_id_local = tortd_id FROM timeoffrequest WHERE tor_id = @tor_id
+                SELECT @xccc_id = xccc_id, @l_id = l_id, @t_id = t_id, @sr_summary = tortd_typedetail 
+                    FROM timeoffrequesttypedetail WHERE tortd_id = @tortd_id_local
+                SELECT @sr_callnote = tor_note FROM timeoffrequest WHERE tor_id = @tor_id
+
+                INSERT INTO ServiceRequest (xccc_id, l_id, t_id, s_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_callnote, sr_flatorhourly)
+                VALUES (@xccc_id, @l_id, @t_id, 5, 17, 1, 1, @sr_summary, @sr_requestnumber, @sr_callnote, 'hourly')
+
+                SELECT SCOPE_IDENTITY()";
+
+            var srParams = new Dictionary<string, object>
+            {
+                { "@tor_id", torId },
+                { "@sr_requestnumber", srRequestNumber }
+            };
+            var srResult = await ExecuteQueryAsync(sqlInsertSR, srParams);
+            int srId = Convert.ToInt32(srResult.Rows[0][0]);
+
+            // Step 2: Link TimeOffRequest to Service Request
+            const string sqlUpdateTor = "UPDATE TimeOffRequest SET sr_id = @sr_id WHERE tor_id = @tor_id";
+            var updateTorParams = new Dictionary<string, object>
+            {
+                { "@sr_id", srId },
+                { "@tor_id", torId }
+            };
+            await ExecuteNonQueryAsync(sqlUpdateTor, updateTorParams);
+
+            // Step 3: Get detail rows for creating work orders
+            var detailDt = await GetTimeOffRequestDetailAsync(torId);
+
+            // Step 4: Create work orders for each detail day
+            int i = 0;
+            foreach (System.Data.DataRow row in detailDt.Rows)
+            {
+                i++;
+                string woNumber = srRequestNumber + "-" + i.ToString();
+                var tordDate = Convert.ToDateTime(row["tord_date"]);
+                int startHour = Convert.ToInt32(row["tord_starthour"]);
+                int endHour = Convert.ToInt32(row["tord_endhour"]);
+
+                // Calculate start/end datetimes (UTC offset for Central Time)
+                DateTime startDateTime = tordDate.Date.AddHours(startHour + 5);
+                DateTime endDateTime = tordDate.Date.AddHours(endHour + 5);
+
+                // Full day override (8 hours)
+                if ((endHour - startHour) == 8)
+                {
+                    int offset = (int)(DateTime.UtcNow - TimeZoneInfo.ConvertTime(DateTime.Now, 
+                        TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time"))).TotalHours;
+                    startDateTime = tordDate.Date.AddHours(offset);
+                    endDateTime = tordDate.Date.AddHours(23).AddMinutes(59).AddSeconds(59).AddHours(offset);
+                }
+
+                const string sqlInsertWO = @"
+                    DECLARE @sr_summary varchar(100)
+                    SELECT @sr_summary = tortd_typedetail FROM timeoffrequesttypedetail WHERE tortd_id = @tortd_id
+
+                    INSERT INTO WORKORDER (sr_id, wo_workordernumber, wo_description, wo_nte, ss_id, wot_id, wo_startdatetime, wo_enddatetime)
+                    VALUES (@sr_id, @wo_workordernumber, @sr_summary, 0, 17, 1, @wo_startdatetime, @wo_enddatetime)
+
+                    SELECT SCOPE_IDENTITY()";
+
+                var woParams = new Dictionary<string, object>
+                {
+                    { "@sr_id", srId },
+                    { "@tortd_id", tortdId },
+                    { "@wo_workordernumber", woNumber },
+                    { "@wo_startdatetime", startDateTime },
+                    { "@wo_enddatetime", endDateTime }
+                };
+                var woResult = await ExecuteQueryAsync(sqlInsertWO, woParams);
+                int woId = Convert.ToInt32(woResult.Rows[0][0]);
+
+                // Assign employee to work order
+                const string sqlAssign = "INSERT INTO xrefworkorderuser (wo_id, u_id) VALUES (@wo_id, @u_id)";
+                var assignParams = new Dictionary<string, object>
+                {
+                    { "@wo_id", woId },
+                    { "@u_id", userId }
+                };
+                await ExecuteNonQueryAsync(sqlAssign, assignParams);
+            }
+
+            stopwatch.Stop();
+            _logger.LogInformation("InsertTimeOffRequestServiceRequestsAsync completed in {ElapsedMs}ms for torId={TorId}, srId={SrId}, {WoCount} work orders created",
+                stopwatch.ElapsedMilliseconds, torId, srId, i);
+            return srId;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in InsertTimeOffRequestServiceRequestsAsync for torId={TorId}", torId);
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "InsertTimeOffRequestServiceRequests",
+                Detail = $"Error for torId={torId}: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetZonesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT z_id, z_number, u_id
+                FROM zone
+                ORDER BY z_number";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetZonesAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetZonesAsync");
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetZFMByUserAsync(int userId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT zfm.* FROM [user] zfm
+                WHERE zfm.u_id IN (
+                    SELECT z.u_id FROM zone z
+                    INNER JOIN [user] u ON z.z_id = u.z_id
+                    WHERE u.u_id = @u_id
+                )";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            stopwatch.Stop();
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetZFMByUserAsync for userId={UserId}", userId);
+            throw;
+        }
+    }
+
+    public async Task<DataTable> GetCalendarEventsAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            const string sql = @"
+                SELECT u.u_firstname, u.u_lastname, tortd.tortd_typedetail,
+                       tord.tord_date, tord.tord_starthour, tord.tord_endhour,
+                       tor.u_id, ISNULL(u.z_id, 0) AS z_id,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM xrefUserRole xur
+                           INNER JOIN xrefRoleFunction xrf ON xur.r_id = xrf.r_id
+                           INNER JOIN [function] f ON xrf.f_id = f.f_id
+                           WHERE f.f_functionidentifier = 'ADMIN' AND xur.u_id = tor.u_id
+                       ) THEN 1 ELSE 0 END AS is_admin
+                FROM timeoffrequest tor
+                INNER JOIN TimeOffRequestDetail tord ON tor.tor_id = tord.tor_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                INNER JOIN TimeOffRequestTypeDetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE tor.tors_id = 1
+                AND u.u_active = 1
+                ORDER BY tord.tord_date, u.u_lastname";
+
+            var result = await ExecuteQueryAsync(sql);
+            stopwatch.Stop();
+            _logger.LogInformation("GetCalendarEventsAsync completed in {ElapsedMs}ms, {Count} rows",
+                stopwatch.ElapsedMilliseconds, result.Rows.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error in GetCalendarEventsAsync");
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCalendarEvents",
+                Detail = $"Error: {ex.Message}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Get a config setting value by type and identifier
+    /// </summary>
+    public async Task<string?> GetConfigSettingValueAsync(string csType, string csIdentifier)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1 cs_value 
+                FROM ConfigSetting 
+                WHERE cs_type = @cs_type AND cs_identifier = @cs_identifier";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@cs_type", csType },
+                { "@cs_identifier", csIdentifier }
+            };
+
+            var result = await ExecuteQueryAsync(sql, parameters);
+            if (result.Rows.Count > 0 && result.Rows[0]["cs_value"] != DBNull.Value)
+            {
+                return result.Rows[0]["cs_value"].ToString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting config setting {CsType}/{CsIdentifier}", csType, csIdentifier);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Check if a user has the TECH function role
+    /// </summary>
+    public async Task<bool> IsUserTechAsync(int userId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT COUNT(*)
+                FROM xrefUserRole xur
+                INNER JOIN xrefRoleFunction xrf ON xur.r_id = xrf.r_id
+                INNER JOIN [function] f ON xrf.f_id = f.f_id
+                WHERE f.f_functionidentifier = 'TECH'
+                AND xur.u_id = @u_id";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0][0]) >= 1;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking IsTech for userId={UserId}", userId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get user email info (email, firstname, lastname) for notification purposes
+    /// </summary>
+    public async Task<DataTable> GetUserEmailInfoAsync(int userId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT u_id, u_email, u_firstname, u_lastname
+                FROM [user]
+                WHERE u_id = @u_id";
+
+            var parameters = new Dictionary<string, object> { { "@u_id", userId } };
+            return await ExecuteQueryAsync(sql, parameters);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting user email info for userId={UserId}", userId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Check if a time off request is exceeding the user's available balance
+    /// </summary>
+    public async Task<bool> IsTimeOffExceedingBalanceAsync(int torId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT 
+                    CASE 
+                        WHEN tortd.tortd_id = 1 AND ISNULL(u.u_daysavailablevacation, 0) < tor.tor_totalhours THEN 1
+                        WHEN tortd.tortd_id = 2 AND ISNULL(u.u_daysavailablepto, 0) < tor.tor_totalhours THEN 1
+                        ELSE 0
+                    END AS is_exceeding
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                INNER JOIN [user] u ON tor.u_id = u.u_id
+                WHERE tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["is_exceeding"]) == 1;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking balance exceeding for torId={TorId}", torId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get the balance type label for a time off request (Vacation or PTO)
+    /// </summary>
+    public async Task<string> GetTimeOffBalanceTypeAsync(int torId)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT tortd.tortd_id
+                FROM timeoffrequest tor
+                INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
+                WHERE tor.tor_id = @tor_id";
+
+            var parameters = new Dictionary<string, object> { { "@tor_id", torId } };
+            var result = await ExecuteQueryAsync(sql, parameters);
+            if (result.Rows.Count > 0)
+            {
+                var tortdId = Convert.ToInt32(result.Rows[0]["tortd_id"]);
+                return tortdId == 1 ? "vacation" : tortdId == 2 ? "PTO" : "time off";
+            }
+            return "time off";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting balance type for torId={TorId}", torId);
+            return "time off";
+        }
+    }
+
+    #endregion
+
+    #region Portal Info Report
+
+    public async Task<PortalInfoReportDto> GetPortalInfoReportAsync()
+    {
+        var result = new PortalInfoReportDto();
+
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+            throw new InvalidOperationException("No connection string found");
+
+        using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        // Call Centers with at least one portal field populated
+        const string callCenterSql = @"
+            SELECT cc_id, cc_name, cc_portalname, cc_portalurl, cc_portalcredentials
+            FROM CallCenter
+            WHERE (cc_portalname IS NOT NULL AND LTRIM(RTRIM(cc_portalname)) <> '')
+               OR (cc_portalurl IS NOT NULL AND LTRIM(RTRIM(cc_portalurl)) <> '')
+               OR (cc_portalcredentials IS NOT NULL AND LTRIM(RTRIM(cc_portalcredentials)) <> '')
+            ORDER BY cc_name";
+
+        using (var cmd = new SqlCommand(callCenterSql, connection))
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                result.CallCenters.Add(new PortalInfoCallCenterDto
+                {
+                    Id = Convert.ToInt32(reader["cc_id"]),
+                    Name = reader["cc_name"]?.ToString() ?? string.Empty,
+                    PortalName = reader["cc_portalname"] == DBNull.Value ? null : reader["cc_portalname"].ToString(),
+                    PortalUrl = reader["cc_portalurl"] == DBNull.Value ? null : reader["cc_portalurl"].ToString(),
+                    PortalCredentials = reader["cc_portalcredentials"] == DBNull.Value ? null : reader["cc_portalcredentials"].ToString()
+                });
+            }
+        }
+
+        // Companies with at least one portal field populated
+        const string companySql = @"
+            SELECT xccc.xccc_id, xccc.c_id, xccc.cc_id,
+                   c.c_name, cc.cc_name AS call_center_name,
+                   c.c_portalname, c.c_portalurl, c.c_portalcredentials
+            FROM xrefCompanyCallCenter xccc
+            INNER JOIN Company c ON xccc.c_id = c.c_id
+            INNER JOIN CallCenter cc ON xccc.cc_id = cc.cc_id
+            WHERE (c.c_portalname IS NOT NULL AND LTRIM(RTRIM(c.c_portalname)) <> '')
+               OR (c.c_portalurl IS NOT NULL AND LTRIM(RTRIM(c.c_portalurl)) <> '')
+               OR (c.c_portalcredentials IS NOT NULL AND LTRIM(RTRIM(c.c_portalcredentials)) <> '')
+            ORDER BY cc.cc_name, c.c_name";
+
+        using (var cmd = new SqlCommand(companySql, connection))
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                result.Companies.Add(new PortalInfoCompanyDto
+                {
+                    XcccId = Convert.ToInt32(reader["xccc_id"]),
+                    CompanyId = Convert.ToInt32(reader["c_id"]),
+                    CallCenterId = Convert.ToInt32(reader["cc_id"]),
+                    CompanyName = reader["c_name"]?.ToString() ?? string.Empty,
+                    CallCenterName = reader["call_center_name"]?.ToString() ?? string.Empty,
+                    PortalName = reader["c_portalname"] == DBNull.Value ? null : reader["c_portalname"].ToString(),
+                    PortalUrl = reader["c_portalurl"] == DBNull.Value ? null : reader["c_portalurl"].ToString(),
+                    PortalCredentials = reader["c_portalcredentials"] == DBNull.Value ? null : reader["c_portalcredentials"].ToString()
+                });
+            }
+        }
+
+        return result;
+    }
+
+    #endregion
+
+    #region QuickBooks Troubleshooting
+
+    public async Task<QuickBooksServiceRequestRow?> GetServiceRequestQbInfoByRequestNumberAsync(string requestNumber)
+    {
+        try
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    sr_id,
+                    sr_requestnumber,
+                    sr_quickbooks_docnumber,
+                    sr_quickbooks_synctoken
+                FROM servicerequest
+                WHERE sr_requestnumber = @sr_requestnumber";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@sr_requestnumber", requestNumber }
+            };
+
+            var dt = await ExecuteQueryAsync(sql, parameters);
+            if (dt.Rows.Count == 0) return null;
+
+            var row = dt.Rows[0];
+            return new QuickBooksServiceRequestRow
+            {
+                sr_id = Convert.ToInt32(row["sr_id"]),
+                sr_requestnumber = row["sr_requestnumber"]?.ToString() ?? string.Empty,
+                sr_quickbooks_docnumber = row["sr_quickbooks_docnumber"] == DBNull.Value ? null : row["sr_quickbooks_docnumber"].ToString(),
+                sr_quickbooks_synctoken = row["sr_quickbooks_synctoken"] == DBNull.Value ? null : row["sr_quickbooks_synctoken"].ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading SR QB info for request number {RequestNumber}", requestNumber);
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateServiceRequestSyncTokenAsync(int srId, string syncToken)
+    {
+        try
+        {
+            const string sql = @"
+                UPDATE servicerequest
+                SET sr_quickbooks_synctoken = @sr_quickbooks_synctoken,
+                    sr_modifieddatetime = GETDATE()
+                WHERE sr_id = @sr_id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@sr_quickbooks_synctoken", syncToken },
+                { "@sr_id", srId }
+            };
+
+            var rows = await ExecuteNonQueryAsync(sql, parameters);
+            return rows > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating sr_quickbooks_synctoken for sr_id {SrId}", srId);
+            throw;
+        }
+    }
+
     #endregion
 }
+

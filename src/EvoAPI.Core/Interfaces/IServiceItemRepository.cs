@@ -7,7 +7,7 @@ namespace EvoAPI.Core.Interfaces
 {
     public interface IServiceItemRepository
     {
-        Task<List<ServiceItemDto>> GetServiceItemsAsync(string? filterText, string? filterStatus, int? filterTradeParent, int? filterServiceItemType, int limit = 10000);
+        Task<List<ServiceItemDto>> GetServiceItemsAsync(string? filterText, string? filterStatus, int? filterTradeParent, int? filterServiceItemType, int limit = 10000, int? filterUserId = null);
         Task<ServiceItemDto?> GetServiceItemByIdAsync(int serviceItemId);
         Task<int> CreateServiceItemAsync(CreateServiceItemRequest request);
         Task<bool> UpdateServiceItemAsync(UpdateServiceItemRequest request);

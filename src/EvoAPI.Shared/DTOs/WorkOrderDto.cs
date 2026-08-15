@@ -13,6 +13,7 @@ public class WorkOrderDto
     public string RequestNumber { get; set; } = string.Empty;
     public decimal? TotalDue { get; set; }
     public string Priority { get; set; } = string.Empty;
+    public string PriorityColor { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string SecondaryStatus { get; set; } = string.Empty;
     public string StatusColor { get; set; } = string.Empty;
@@ -27,8 +28,10 @@ public class WorkOrderDto
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? Escalated { get; set; }
     public bool ScheduleLock { get; set; }
+    public bool Is811Required { get; set; }
     public string ActionableNote { get; set; } = string.Empty;
-   
+    public string InvoiceNumber { get; set; } = string.Empty;
+
 }
 
 public class ActiveServiceRequestDto
@@ -40,6 +43,19 @@ public class ActiveServiceRequestDto
     public string TechFirstName { get; set; } = string.Empty;
     public string TechLastName { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+}
+
+public class PendingTechInfoReportDto
+{
+    public int SrId { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    public DateTime InsertDateTime { get; set; }
+    public DateTime? StartDateTime { get; set; }
+    public string TechFirstName { get; set; } = string.Empty;
+    public string TechLastName { get; set; } = string.Empty;
+    public string Trade { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+    public int? MinutesInPriorStatus { get; set; } // Historic mode only
 }
 
 public class WorkOrderRequest

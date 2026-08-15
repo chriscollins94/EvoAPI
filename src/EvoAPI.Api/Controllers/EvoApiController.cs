@@ -5,6 +5,9 @@ using EvoAPI.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Data;
+using System.Data.SqlClient;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace EvoAPI.Api.Controllers;
 
@@ -17,15 +20,51 @@ public class EvoApiController : BaseController
 
     private readonly IDataService _dataService;
         private readonly ILogger<EvoApiController> _logger;
-    
+        private readonly HttpClient _httpClient;
+        private readonly IConfiguration _configuration;
+        private readonly IAuditCriticalService _auditCriticalService;
+        private readonly IMarkupConfigLoader _markupConfigLoader;
+
         public EvoApiController(
-            IDataService dataService, 
+            IDataService dataService,
             IAuditService auditService,
-            ILogger<EvoApiController> logger)
+            IAuditCriticalService auditCriticalService,
+            ILogger<EvoApiController> logger,
+            HttpClient httpClient,
+            IConfiguration configuration,
+            IMarkupConfigLoader markupConfigLoader)
         {
             _dataService = dataService;
             _logger = logger;
+            _httpClient = httpClient;
+            _configuration = configuration;
+            _auditCriticalService = auditCriticalService;
+            _markupConfigLoader = markupConfigLoader;
             InitializeAuditService(auditService);
+        }
+        
+        /// <summary>
+        /// Set user context on the audit critical service for proper logging
+        /// </summary>
+        private void SetAuditCriticalUserContext()
+        {
+            _auditCriticalService.Username = Username;
+            _auditCriticalService.UserFullName = UserFullName;
+            _auditCriticalService.IPAddress = ClientIPAddress;
+            _auditCriticalService.UserAgent = UserAgent;
+        }
+
+        private static bool IsValidEmail(string email)
+        {
+            try
+            {
+                var addr = new System.Net.Mail.MailAddress(email);
+                return addr.Address == email;
+            }
+            catch
+            {
+                return false;
+            }
         }
     #endregion
 
@@ -303,6 +342,59 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("configsettings/{identifier}")]
+        public async Task<ActionResult<ApiResponse<ConfigSettingDto>>> GetConfigSetting(string identifier)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting config setting: {Identifier}", identifier);
+                
+                // Get data from service
+                var configSetting = await _dataService.GetConfigSettingAsync(identifier);
+    
+                stopwatch.Stop();
+                
+                if (configSetting == null)
+                {
+                    await LogOperationAsync("GetConfigSetting", $"Config setting not found: {identifier}", stopwatch.Elapsed);
+                    
+                    return NotFound(new ApiResponse<ConfigSettingDto>
+                    {
+                        Success = false,
+                        Message = $"Config setting '{identifier}' not found",
+                        Count = 0
+                    });
+                }
+                
+                // Log successful operation
+                await LogOperationAsync("GetConfigSetting", $"Retrieved config setting: {identifier}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<ConfigSettingDto>
+                {
+                    Success = true,
+                    Message = "Config setting retrieved successfully",
+                    Data = configSetting,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetConfigSetting", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving config setting: {Identifier}", identifier);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving config setting",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("attackpointstatus")]
         public async Task<ActionResult<ApiResponse<List<AttackPointStatusDto>>>> GetAttackPointStatus()
         {
@@ -345,20 +437,20 @@ public class EvoApiController : BaseController
             }
         }
 
-        [HttpGet("zones")]
-        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZones()
+        [HttpGet("zones/legacy")]
+        public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZonesLegacy()
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             
             try
             {
-                _logger.LogInformation("Getting zones");
+                _logger.LogInformation("Getting zones (legacy endpoint)");
                 
                 var dataTable = await _dataService.GetAllZonesAsync();
                 var zones = ConvertDataTableToZones(dataTable);
                 
                 stopwatch.Stop();
-                await LogOperationAsync("GetZones", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
+                await LogOperationAsync("GetZonesLegacy", $"Retrieved {zones.Count} zones", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<List<ZoneDto>>
                 {
@@ -936,6 +1028,7 @@ public class EvoApiController : BaseController
 
         /// <summary>
         /// Get employees for tech directory - minimal data (city/state only, work email/phone only)
+        /// Full address only shown for the current authenticated user
         /// </summary>
         [HttpGet("employees/tech-directory")]
         public async Task<ActionResult<ApiResponse<object>>> GetEmployeesForTechDirectory([FromQuery] bool includeTrades = true)
@@ -952,13 +1045,13 @@ public class EvoApiController : BaseController
                 {
                     // Get all employee data including roles AND trade generals in secure mode
                     var employeesWithRolesAndTradesDataTable = await _dataService.GetAllEmployeesWithRolesAndTradeGeneralsAsync();
-                    employees = ConvertDataTableToEmployeesForTechDirectory(employeesWithRolesAndTradesDataTable);
+                    employees = ConvertDataTableToEmployeesForTechDirectory(employeesWithRolesAndTradesDataTable, UserId);
                 }
                 else
                 {
                     // Get all employee data including roles in secure mode
                     var employeesWithRolesDataTable = await _dataService.GetAllEmployeesWithRolesAsync();
-                    employees = ConvertDataTableToEmployeesForTechDirectoryNoTrades(employeesWithRolesDataTable);
+                    employees = ConvertDataTableToEmployeesForTechDirectoryNoTrades(employeesWithRolesDataTable, UserId);
                 }
 
                 stopwatch.Stop();
@@ -1701,6 +1794,258 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("call-center-attachments")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetCallCenterAttachments([FromQuery] int ccId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting attachments for call center {CcId}", ccId);
+                
+                // Validate input
+                if (ccId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid call center ID is required",
+                        Count = 0
+                    });
+                }
+    
+                // Get data from service
+                var dataTable = await _dataService.GetAttachmentsByCallCenterAsync(ccId);
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetCallCenterAttachments", $"Retrieved {attachments.Count} attachments for call center {ccId}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCallCenterAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving attachments for call center {CcId}", ccId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("call-center-attachments-all")]
+        public async Task<ActionResult<ApiResponse<List<AttachmentDto>>>> GetAllCallCenterAttachments()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                _logger.LogInformation("Getting all call center attachments");
+                
+                // Get data from service - gets one attachment per call center (most recent)
+                var dataTable = await _dataService.GetAllCallCenterAttachmentsAsync();
+                var attachments = ConvertDataTableToAttachments(dataTable);
+    
+                stopwatch.Stop();
+                
+                // Log successful operation
+                await LogOperationAsync("GetAllCallCenterAttachments", $"Retrieved {attachments.Count} call center attachments", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<List<AttachmentDto>>
+                {
+                    Success = true,
+                    Message = "Call center attachments retrieved successfully",
+                    Data = attachments,
+                    Count = attachments.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAllCallCenterAttachments", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error retrieving all call center attachments");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attachments",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPut("call-center-attachment-description")]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateCallCenterAttachmentDescription([FromBody] UpdateAttachmentDescriptionRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (request == null || request.AttachmentId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid attachment ID is required"
+                    });
+                }
+
+                _logger.LogInformation("Updating attachment {AttId} description", request.AttachmentId);
+                
+                // Fetch current attachment for change history
+                var attachmentsTable = await _dataService.GetAttachmentByIdAsync(request.AttachmentId);
+                if (attachmentsTable == null || attachmentsTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Attachment not found"
+                    });
+                }
+                
+                var currentAttachmentRow = attachmentsTable.Rows[0];
+                
+                await _dataService.UpdateAttachmentDescriptionAsync(request.AttachmentId, request.Description);
+                
+                stopwatch.Stop();
+                
+                // Log critical change
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "Description", currentAttachmentRow["att_description"] ?? "" }
+                };
+                
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "Description", request.Description ?? "" }
+                };
+                
+                SetAuditCriticalUserContext();
+                var filename = currentAttachmentRow["att_filename"]?.ToString() ?? "Unknown";
+                var ccId = currentAttachmentRow["cc_id"];
+                var ccName = currentAttachmentRow["cc_name"]?.ToString() ?? "Unknown";
+                await _auditCriticalService.LogChangeAsync(
+                    $"Attachment Description Updated - {filename} (Call Center: {ccName} - ID: {ccId}, Attachment ID: {request.AttachmentId})",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
+                await LogOperationAsync("UpdateCallCenterAttachmentDescription", $"Updated attachment {request.AttachmentId} description", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Attachment description updated successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateCallCenterAttachmentDescription", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error updating attachment description");
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating attachment description"
+                });
+            }
+        }
+
+        [HttpDelete("call-center-attachment/{attachmentId}")]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterAttachment(int attachmentId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
+            try
+            {
+                if (attachmentId <= 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Valid attachment ID is required"
+                    });
+                }
+
+                _logger.LogInformation("Deleting attachment {AttId}", attachmentId);
+                
+                // Fetch current attachment for change history
+                var attachmentsTable = await _dataService.GetAttachmentByIdAsync(attachmentId);
+                if (attachmentsTable == null || attachmentsTable.Rows.Count == 0)
+                {
+                    return NotFound(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Attachment not found"
+                    });
+                }
+                
+                var attachmentToDelete = attachmentsTable.Rows[0];
+                
+                await _dataService.DeleteAttachmentAsync(attachmentId);
+                
+                stopwatch.Stop();
+                
+                // Log critical change
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "Filename", attachmentToDelete["att_filename"] ?? "" },
+                    { "Description", attachmentToDelete["att_description"] ?? "" },
+                    { "InsertDateTime", attachmentToDelete["att_insertdatetime"] }
+                };
+                
+                SetAuditCriticalUserContext();
+                var filename = attachmentToDelete["att_filename"]?.ToString() ?? "Unknown";
+                var ccId = attachmentToDelete["cc_id"];
+                var ccName = attachmentToDelete["cc_name"]?.ToString() ?? "Unknown";
+                await _auditCriticalService.LogChangeAsync(
+                    $"Attachment Deleted - {filename} (Call Center: {ccName} - ID: {ccId}, Attachment ID: {attachmentId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
+                await LogOperationAsync("DeleteCallCenterAttachment", $"Deleted attachment {attachmentId}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Attachment deleted successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteCallCenterAttachment", ex, stopwatch.Elapsed);
+                
+                _logger.LogError(ex, "Error deleting attachment {AttId}", attachmentId);
+                
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting attachment"
+                });
+            }
+        }
+
         [HttpGet("pending-tech-info")]
         public async Task<ActionResult<ApiResponse<List<PendingTechInfoDto>>>> GetPendingTechInfo([FromQuery] int? userId = null)
         {
@@ -2241,6 +2586,11 @@ public class EvoApiController : BaseController
                     });
                 }
 
+                // Get current call center data for audit logging
+                var currentCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+                var currentCallCenters = ConvertDataTableToCallCenters(currentCallCentersDataTable);
+                var currentCallCenter = currentCallCenters?.FirstOrDefault(cc => cc.Id == id);
+
                 // Update call center
                 var success = await _dataService.UpdateCallCenterAsync(request);
                 
@@ -2248,6 +2598,39 @@ public class EvoApiController : BaseController
                 
                 if (success)
                 {
+                    // Log critical audit with change details
+                    var oldValues = new Dictionary<string, object?>
+                    {
+                        { "Name", currentCallCenter?.Name },
+                        { "Active", currentCallCenter?.Active },
+                        { "Note", currentCallCenter?.Note },
+                        { "OId", currentCallCenter?.OId },
+                        { "Attack", currentCallCenter?.Attack },
+                        { "PortalName", currentCallCenter?.PortalName },
+                        { "PortalUrl", currentCallCenter?.PortalUrl },
+                        { "PortalCredentials", currentCallCenter?.PortalCredentials }
+                    };
+                    
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        { "Name", request.Name },
+                        { "Active", request.Active },
+                        { "Note", request.Note },
+                        { "OId", request.OId },
+                        { "Attack", request.Attack },
+                        { "PortalName", request.PortalName },
+                        { "PortalUrl", request.PortalUrl },
+                        { "PortalCredentials", request.PortalCredentials }
+                    };
+                    
+                    SetAuditCriticalUserContext();
+                    await _auditCriticalService.LogChangeAsync(
+                        $"Call Center Updated - {request.Name} (ID: {id})",
+                        oldValues,
+                        newValues,
+                        stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                    );
+                    
                     // Log successful operation
                     await LogOperationAsync("UpdateCallCenter", $"Updated call center {id} - {request.Name}", stopwatch.Elapsed);
         
@@ -2323,6 +2706,25 @@ public class EvoApiController : BaseController
                     };
                     
                     stopwatch.Stop();
+                    
+                    // Log critical audit for new call center creation
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        { "Name", request.Name },
+                        { "Active", request.Active },
+                        { "Note", request.Note },
+                        { "OId", request.O_id },
+                        { "Attack", request.Attack }
+                    };
+                    
+                    SetAuditCriticalUserContext();
+                    await _auditCriticalService.LogChangeAsync(
+                        $"Call Center Created - {request.Name} (ID: {newId.Value})",
+                        null,
+                        newValues,
+                        stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                    );
+                    
                     await LogOperationAsync("CreateCallCenter", $"Created call center - {request.Name} with ID {newId.Value}", stopwatch.Elapsed);
                     
                     return Ok(new ApiResponse<CallCenterDto>
@@ -3024,6 +3426,7 @@ public class EvoApiController : BaseController
                 RequestNumber = CleanString(row["RequestNumber"]),
                 TotalDue = row["TotalDue"] != DBNull.Value ? Convert.ToDecimal(row["TotalDue"]) : null,
                 Priority = CleanString(row["Priority"]),
+                PriorityColor = CleanString(row["PriorityColor"]),
                 Status = CleanString(row["Status"]),
                 SecondaryStatus = CleanString(row["SecondaryStatus"]),
                 StatusColor = CleanString(row["StatusColor"]),
@@ -3038,7 +3441,9 @@ public class EvoApiController : BaseController
                 CreatedBy = CleanString(row["CreatedBy"]),
                 Escalated = row["Escalated"] != DBNull.Value ? Convert.ToDateTime(row["Escalated"]) : null,
                 ScheduleLock = row["ScheduleLock"] != DBNull.Value && Convert.ToBoolean(row["ScheduleLock"]),
-                ActionableNote = CleanString(row["ActionableNote"])
+                Is811Required = dataTable.Columns.Contains("Is811Required") && row["Is811Required"] != DBNull.Value && Convert.ToBoolean(row["Is811Required"]),
+                ActionableNote = CleanString(row["ActionableNote"]),
+                InvoiceNumber = dataTable.Columns.Contains("InvoiceNumber") ? CleanString(row["InvoiceNumber"]) : string.Empty
             };
 
             workOrders.Add(workOrder);
@@ -3111,13 +3516,134 @@ public class EvoApiController : BaseController
                 Active = Convert.ToBoolean(row["Active"]),
                 TempId = row["TempId"]?.ToString(),
                 Note = row["Note"]?.ToString(),
-                Attack = Convert.ToInt32(row["Attack"])
+                Attack = Convert.ToInt32(row["Attack"]),
+                PortalUrl = row["PortalUrl"]?.ToString(),
+                PortalName = row["PortalName"]?.ToString(),
+                PortalCredentials = row["PortalCredentials"]?.ToString()
             };
 
             callCenters.Add(callCenter);
         }
 
         return callCenters;
+    }
+
+    private static List<UserAttachmentTypeDto> ConvertDataTableToUserAttachmentTypes(DataTable dataTable)
+    {
+        var attachmentTypes = new List<UserAttachmentTypeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attachmentType = new UserAttachmentTypeDto
+            {
+                uat_id = Convert.ToInt32(row["uat_id"]),
+                uat_insertdatetime = Convert.ToDateTime(row["uat_insertdatetime"]),
+                uat_modifieddatetime = row["uat_modifieddatetime"] != DBNull.Value ? Convert.ToDateTime(row["uat_modifieddatetime"]) : null,
+                uat_type = row["uat_type"]?.ToString() ?? string.Empty
+            };
+
+            attachmentTypes.Add(attachmentType);
+        }
+
+        return attachmentTypes;
+    }
+
+    private static List<UserClothingSizeDto> ConvertDataTableToUserClothingSizes(DataTable dataTable)
+    {
+        var clothingSizes = new List<UserClothingSizeDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            clothingSizes.Add(new UserClothingSizeDto
+            {
+                Id = Convert.ToInt32(row["uc_id"]),
+                ClothingSize = row["uc_clothingsize"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return clothingSizes;
+    }
+
+    private static List<ServiceItemRackDto> ConvertDataTableToServiceItemRacks(DataTable dataTable)
+    {
+        var racks = new List<ServiceItemRackDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            racks.Add(new ServiceItemRackDto
+            {
+                Id = Convert.ToInt32(row["sir_id"]),
+                Rack = row["sir_rack"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return racks;
+    }
+
+    private static List<ServiceItemFacilityDto> ConvertDataTableToServiceItemFacilities(DataTable dataTable)
+    {
+        var facilities = new List<ServiceItemFacilityDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            facilities.Add(new ServiceItemFacilityDto
+            {
+                Id = Convert.ToInt32(row["sif_id"]),
+                Facility = row["sif_facility"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return facilities;
+    }
+
+    private static List<UserPantsWaistDto> ConvertDataTableToUserPantsWaist(DataTable dataTable)
+    {
+        var pantsWaist = new List<UserPantsWaistDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            pantsWaist.Add(new UserPantsWaistDto
+            {
+                Id = Convert.ToInt32(row["upw_id"]),
+                Size = row["upw_size"]?.ToString() ?? string.Empty,
+                Sex = row["upw_sex"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return pantsWaist;
+    }
+
+    private static List<UserPantsLengthDto> ConvertDataTableToUserPantsLength(DataTable dataTable)
+    {
+        var pantsLength = new List<UserPantsLengthDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            pantsLength.Add(new UserPantsLengthDto
+            {
+                Id = Convert.ToInt32(row["upl_id"]),
+                Size = row["upl_size"]?.ToString() ?? string.Empty,
+                Sex = row["upl_sex"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return pantsLength;
+    }
+
+    private static List<UserRelationshipDto> ConvertDataTableToUserRelationships(DataTable dataTable)
+    {
+        var relationships = new List<UserRelationshipDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            relationships.Add(new UserRelationshipDto
+            {
+                Id = Convert.ToInt32(row["ur_id"]),
+                Relationship = row["ur_relationship"]?.ToString() ?? string.Empty
+            });
+        }
+
+        return relationships;
     }
 
     private static List<AttackPointNoteDto> ConvertDataTableToAttackPointNotes(DataTable dataTable)
@@ -3199,7 +3725,7 @@ public class EvoApiController : BaseController
                 Number = row["Number"]?.ToString() ?? string.Empty,
                 Description = row["Description"]?.ToString(),
                 Acronym = row["Acronym"]?.ToString(),
-                UserId = Convert.ToInt32(row["UserId"])
+                UserId = row["UserId"] != DBNull.Value ? Convert.ToInt32(row["UserId"]) : 0
             };
 
             zones.Add(zone);
@@ -3376,6 +3902,7 @@ public class EvoApiController : BaseController
             var attachment = new AttachmentDto
             {
                 att_id = Convert.ToInt32(row["att_id"]),
+                cc_id = row.Table.Columns.Contains("cc_id") && row["cc_id"] != DBNull.Value ? Convert.ToInt32(row["cc_id"]) : 0,
                 att_insertdatetime = Convert.ToDateTime(row["att_insertdatetime"]),
                 att_filename = CleanString(row["att_filename"]),
                 att_description = CleanString(row["att_description"]),
@@ -3810,6 +4337,7 @@ public class EvoApiController : BaseController
                 Active = Convert.ToBoolean(row["Active"]),
                 DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                 DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                GuaranteedHours = row.Table.Columns.Contains("GuaranteedHours") && row["GuaranteedHours"] != DBNull.Value ? Convert.ToDecimal(row["GuaranteedHours"]) : null,
                 Note = row["Note"]?.ToString(),
                 VehicleNumber = row["VehicleNumber"]?.ToString(),
                 Picture = row["Picture"]?.ToString(),
@@ -3820,7 +4348,10 @@ public class EvoApiController : BaseController
                 Address2 = row["Address2"]?.ToString(),
                 City = row["City"]?.ToString(),
                 State = row["State"]?.ToString(),
-                Zip = row["Zip"]?.ToString()
+                Zip = row["Zip"]?.ToString(),
+                LicenseNumber = row["LicenseNumber"]?.ToString(),
+                LicenseState = row["LicenseState"]?.ToString(),
+                LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null
             };
 
             employees.Add(employee);
@@ -3925,6 +4456,7 @@ public class EvoApiController : BaseController
                     DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    GuaranteedHours = row.Table.Columns.Contains("GuaranteedHours") && row["GuaranteedHours"] != DBNull.Value ? Convert.ToDecimal(row["GuaranteedHours"]) : null,
                     Note = row["Note"]?.ToString(),
                     VehicleNumber = row["VehicleNumber"]?.ToString(),
                     Picture = row["Picture"]?.ToString(),
@@ -3937,6 +4469,18 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    // Clothing Size Information
+                    ShirtSizeId = row["ShirtSizeId"] != DBNull.Value ? Convert.ToInt32(row["ShirtSizeId"]) : null,
+                    PantsWaistId = row["PantsWaistId"] != DBNull.Value ? Convert.ToInt32(row["PantsWaistId"]) : null,
+                    PantsLengthId = row["PantsLengthId"] != DBNull.Value ? Convert.ToInt32(row["PantsLengthId"]) : null,
+                    JacketSizeId = row["JacketSizeId"] != DBNull.Value ? Convert.ToInt32(row["JacketSizeId"]) : null,
+                    ShirtSize = row["ShirtSize"]?.ToString(),
+                    PantsWaistSize = row["PantsWaistSize"]?.ToString(),
+                    PantsLengthSize = row["PantsLengthSize"]?.ToString(),
+                    JacketSize = row["JacketSize"]?.ToString(),
+                    LicenseNumber = row["LicenseNumber"]?.ToString(),
+                    LicenseState = row["LicenseState"]?.ToString(),
+                    LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4017,6 +4561,7 @@ public class EvoApiController : BaseController
                     DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    GuaranteedHours = row.Table.Columns.Contains("GuaranteedHours") && row["GuaranteedHours"] != DBNull.Value ? Convert.ToDecimal(row["GuaranteedHours"]) : null,
                     Note = row["Note"]?.ToString(),
                     VehicleNumber = row["VehicleNumber"]?.ToString(),
                     Picture = row["Picture"]?.ToString(),
@@ -4029,6 +4574,9 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    LicenseNumber = row["LicenseNumber"]?.ToString(),
+                    LicenseState = row["LicenseState"]?.ToString(),
+                    LicenseExpiration = row["LicenseExpiration"] != DBNull.Value ? Convert.ToDateTime(row["LicenseExpiration"]) : null,
                     Roles = new List<UserRoleDto>()
                 };
 
@@ -4126,6 +4674,7 @@ public class EvoApiController : BaseController
                     DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    GuaranteedHours = row.Table.Columns.Contains("GuaranteedHours") && row["GuaranteedHours"] != DBNull.Value ? Convert.ToDecimal(row["GuaranteedHours"]) : null,
                     Note = row["Note"]?.ToString(),
                     VehicleNumber = row["VehicleNumber"]?.ToString(),
                     Picture = row["Picture"]?.ToString(),
@@ -4138,6 +4687,8 @@ public class EvoApiController : BaseController
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
                     Zip = row["Zip"]?.ToString(),
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4221,6 +4772,7 @@ public class EvoApiController : BaseController
                     DirectoryOnly = row["DirectoryOnly"] != DBNull.Value ? Convert.ToBoolean(row["DirectoryOnly"]) : false,
                     DaysAvailablePTO = row["DaysAvailablePTO"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailablePTO"]) : null,
                     DaysAvailableVacation = row["DaysAvailableVacation"] != DBNull.Value ? Convert.ToDecimal(row["DaysAvailableVacation"]) : null,
+                    GuaranteedHours = row.Table.Columns.Contains("GuaranteedHours") && row["GuaranteedHours"] != DBNull.Value ? Convert.ToDecimal(row["GuaranteedHours"]) : null,
                     Note = row["Note"]?.ToString(),
                     VehicleNumber = row["VehicleNumber"]?.ToString(),
                     Picture = row["Picture"]?.ToString(),
@@ -4266,7 +4818,7 @@ public class EvoApiController : BaseController
     /// Minimal data version for tech directory - only city/state, work email/phone, no personal info
     /// Technicians get all phone numbers, non-techs get work phone, desk phone, and extension only
     /// </summary>
-    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable)
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectory(DataTable dataTable, int? currentUserId = null)
     {
         var employeeDict = new Dictionary<int, EmployeeDto>();
 
@@ -4300,12 +4852,15 @@ public class EvoApiController : BaseController
                     ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
                     ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
                     ZoneName = row["ZoneName"]?.ToString(),
-                    AddressId = null, // Excluded for tech directory
-                    Address1 = string.Empty, // Excluded for tech directory
-                    Address2 = string.Empty, // Excluded for tech directory
+                    // Only include full address for the current logged-in user
+                    AddressId = (currentUserId == employeeId) ? (row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null) : null,
+                    Address1 = (currentUserId == employeeId) ? (row["Address1"]?.ToString() ?? string.Empty) : string.Empty,
+                    Address2 = (currentUserId == employeeId) ? (row["Address2"]?.ToString() ?? string.Empty) : string.Empty,
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
-                    Zip = string.Empty, // Excluded for tech directory
+                    Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>(),
                     TradeGenerals = new List<UserTradeGeneralDto>()
                 };
@@ -4373,7 +4928,7 @@ public class EvoApiController : BaseController
     /// <summary>
     /// Minimal data version for tech directory without trades - only city/state, work email/phone, no personal info
     /// </summary>
-    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectoryNoTrades(DataTable dataTable)
+    private static List<EmployeeDto> ConvertDataTableToEmployeesForTechDirectoryNoTrades(DataTable dataTable, int? currentUserId = null)
     {
         var employeeDict = new Dictionary<int, EmployeeDto>();
 
@@ -4407,12 +4962,15 @@ public class EvoApiController : BaseController
                     ZoneId = row["ZoneId"] != DBNull.Value ? Convert.ToInt32(row["ZoneId"]) : null,
                     ZoneNumber = row["ZoneNumber"] != DBNull.Value ? row["ZoneNumber"].ToString() : null,
                     ZoneName = row["ZoneName"]?.ToString(),
-                    AddressId = null, // Excluded for tech directory
-                    Address1 = string.Empty, // Excluded for tech directory
-                    Address2 = string.Empty, // Excluded for tech directory
+                    // Only include full address for the current logged-in user
+                    AddressId = (currentUserId == employeeId) ? (row["AddressId"] != DBNull.Value ? Convert.ToInt32(row["AddressId"]) : null) : null,
+                    Address1 = (currentUserId == employeeId) ? (row["Address1"]?.ToString() ?? string.Empty) : string.Empty,
+                    Address2 = (currentUserId == employeeId) ? (row["Address2"]?.ToString() ?? string.Empty) : string.Empty,
                     City = row["City"]?.ToString(),
                     State = row["State"]?.ToString(),
-                    Zip = string.Empty, // Excluded for tech directory
+                    Zip = (currentUserId == employeeId) ? (row["Zip"]?.ToString() ?? string.Empty) : string.Empty,
+                    IsZoneFacilityManager = row["IsZoneFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsZoneFacilityManager"]) : false,
+                    IsRegionFacilityManager = row["IsRegionFacilityManager"] != DBNull.Value ? Convert.ToBoolean(row["IsRegionFacilityManager"]) : false,
                     Roles = new List<UserRoleDto>()
                 };
 
@@ -4553,6 +5111,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpGet("companies/detail/{xcccId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<CompanyDetailDto>>> GetCompanyDetail(int xcccId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4596,6 +5155,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("companies/detail")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyGeneralInfo([FromBody] UpdateCompanyGeneralInfoRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4612,12 +5172,79 @@ public class EvoApiController : BaseController
                 });
             }
 
+            if (string.IsNullOrWhiteSpace(request?.CompanyName))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Company Name is required"
+                });
+            }
+
+            request.CompanyName = request.CompanyName.Trim();
+
+            // Get the current values before update for critical audit logging
+            var currentCompany = await _dataService.GetCompanyDetailAsync(request.XcccId);
+            
             var result = await _dataService.UpdateCompanyGeneralInfoAsync(request);
             
             stopwatch.Stop();
             
             if (result)
             {
+                // Log critical audit with change details
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "CompanyName", currentCompany?.CompanyName },
+                    { "TripCharge", currentCompany?.TripCharge },
+                    { "BillableRuleId", currentCompany?.BillableRuleId },
+                    { "TermsId", currentCompany?.TermsId },
+                    { "TaxExempt", currentCompany?.TaxExempt },
+                    { "MinimumLaborChargeMinutes", currentCompany?.MinimumLaborChargeMinutes },
+                    { "MarkupPercentage", currentCompany?.MarkupPercentage },
+                    { "MarkupPercentageSupplier", currentCompany?.MarkupPercentageSupplier },
+                    { "MarkupTriggerAmount", currentCompany?.MarkupTriggerAmount },
+                    { "Active", currentCompany?.Active },
+                    { "FirmQuote", currentCompany?.FirmQuote },
+                    { "InvoiceDateShow", currentCompany?.InvoiceDateShow },
+                    { "IvrRequestNumber", currentCompany?.IvrRequestNumber },
+                    { "ClientRepresentative", currentCompany?.ClientRepresentative },
+                    { "LicenseRepresentative", currentCompany?.LicenseRepresentative },
+                    { "Agencies", currentCompany?.Agencies },
+                    { "InvoiceExtraText", currentCompany?.InvoiceExtraText },
+                    { "Note", currentCompany?.Note }
+                };
+                
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "CompanyName", request.CompanyName },
+                    { "TripCharge", request.TripCharge },
+                    { "BillableRuleId", request.BillableRuleId },
+                    { "TermsId", request.TermsId },
+                    { "TaxExempt", request.TaxExempt },
+                    { "MinimumLaborChargeMinutes", request.MinimumLaborChargeMinutes },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupPercentageSupplier", request.MarkupPercentageSupplier },
+                    { "MarkupTriggerAmount", request.MarkupTriggerAmount },
+                    { "Active", request.Active },
+                    { "FirmQuote", request.FirmQuote },
+                    { "InvoiceDateShow", request.InvoiceDateShow },
+                    { "IvrRequestNumber", request.IvrRequestNumber },
+                    { "ClientRepresentative", request.ClientRepresentative },
+                    { "LicenseRepresentative", request.LicenseRepresentative },
+                    { "Agencies", request.Agencies },
+                    { "InvoiceExtraText", request.InvoiceExtraText },
+                    { "Note", request.Note }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Company Updated - {currentCompany?.CompanyName} (ID: {request.XcccId})",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("UpdateCompanyGeneralInfo", $"Updated company general info for xccc_id {request.XcccId}", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -4650,7 +5277,218 @@ public class EvoApiController : BaseController
         }
     }
 
+    [HttpPost("companies")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CreateCompanyResponse>>> CreateCompany([FromBody] CreateCompanyRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request?.CompanyName))
+            {
+                return BadRequest(new ApiResponse<CreateCompanyResponse>
+                {
+                    Success = false,
+                    Message = "Company Name is required"
+                });
+            }
+
+            var name = request.CompanyName.Trim();
+            var newCId = await _dataService.CreateCompanyAsync(name);
+            stopwatch.Stop();
+
+            if (newCId == null)
+            {
+                return StatusCode(500, new ApiResponse<CreateCompanyResponse>
+                {
+                    Success = false,
+                    Message = "Failed to create company"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Created - {name} (c_id: {newCId})",
+                new Dictionary<string, object?>(),
+                new Dictionary<string, object?> { { "CompanyName", name }, { "Active", true } },
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("CreateCompany", $"Created company '{name}' (c_id {newCId})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<CreateCompanyResponse>
+            {
+                Success = true,
+                Message = "Company created successfully",
+                Count = 1,
+                Data = new CreateCompanyResponse { CId = newCId.Value, CompanyName = name }
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error creating company");
+            await LogErrorAsync("CreateCompany", ex, stopwatch.Elapsed);
+
+            return StatusCode(500, new ApiResponse<CreateCompanyResponse>
+            {
+                Success = false,
+                Message = "Failed to create company"
+            });
+        }
+    }
+
+    [HttpGet("companies/with-call-centers")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CompanyWithCallCentersDto>>>> GetCompaniesWithCallCenters()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var companies = await _dataService.GetCompaniesWithCallCentersAsync();
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompaniesWithCallCenters", $"Returned {companies.Count} companies", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<CompanyWithCallCentersDto>>
+            {
+                Success = true,
+                Data = companies,
+                Count = companies.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error getting companies with call centers");
+            await LogErrorAsync("GetCompaniesWithCallCenters", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<List<CompanyWithCallCentersDto>>
+            {
+                Success = false,
+                Message = "Failed to load companies"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/call-centers/{ccId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<AssignCompanyCallCenterResponse>>> AssignCompanyToCallCenter(int cId, int ccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            if (cId <= 0 || ccId <= 0)
+            {
+                return BadRequest(new ApiResponse<AssignCompanyCallCenterResponse>
+                {
+                    Success = false,
+                    Message = "Invalid company or call center ID"
+                });
+            }
+
+            var newXcccId = await _dataService.AssignCompanyToCallCenterAsync(cId, ccId);
+            stopwatch.Stop();
+
+            if (newXcccId == null)
+            {
+                return StatusCode(500, new ApiResponse<AssignCompanyCallCenterResponse>
+                {
+                    Success = false,
+                    Message = "Failed to assign company to call center"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Pairing Created - c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})",
+                new Dictionary<string, object?>(),
+                new Dictionary<string, object?> { { "CId", cId }, { "CcId", ccId }, { "XcccId", newXcccId } },
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("AssignCompanyToCallCenter", $"Assigned c_id {cId} to cc_id {ccId} (xccc_id {newXcccId})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<AssignCompanyCallCenterResponse>
+            {
+                Success = true,
+                Message = "Company assigned to call center",
+                Count = 1,
+                Data = new AssignCompanyCallCenterResponse { XcccId = newXcccId.Value, CId = cId, CcId = ccId }
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error assigning c_id {CId} to cc_id {CcId}", cId, ccId);
+            await LogErrorAsync("AssignCompanyToCallCenter", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<AssignCompanyCallCenterResponse>
+            {
+                Success = false,
+                Message = "Failed to assign company to call center"
+            });
+        }
+    }
+
+    [HttpDelete("companies/call-center-pairings/{xcccId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> UnassignCompanyFromCallCenter(int xcccId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            if (xcccId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid pairing ID"
+                });
+            }
+
+            var (success, errorMessage, cId, ccId, companyName, callCenterName) = await _dataService.UnassignCompanyFromCallCenterAsync(xcccId);
+            stopwatch.Stop();
+
+            if (!success)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = errorMessage ?? "Failed to unassign pairing"
+                });
+            }
+
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Company Pairing Removed - {companyName} from {callCenterName} (xccc_id {xcccId})",
+                new Dictionary<string, object?> { { "XcccId", xcccId }, { "CId", cId }, { "CcId", ccId }, { "CompanyName", companyName }, { "CallCenterName", callCenterName } },
+                new Dictionary<string, object?>(),
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+
+            await LogOperationAsync("UnassignCompanyFromCallCenter", $"Unassigned xccc_id {xcccId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Pairing removed",
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error unassigning xccc_id {XcccId}", xcccId);
+            await LogErrorAsync("UnassignCompanyFromCallCenter", ex, stopwatch.Elapsed);
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to unassign pairing"
+            });
+        }
+    }
+
     [HttpPost("materials-markup")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<int>>> CreateMaterialsMarkup([FromBody] CreateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4676,12 +5514,14 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500 ||
+                request.MarkupHighQuantity < 0 || request.MarkupHighQuantity > 500 ||
+                request.MarkupFoundational < 0 || request.MarkupFoundational > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 100"
+                    Message = "Markup percentages must be between 0 and 500"
                 });
             }
 
@@ -4691,6 +5531,24 @@ public class EvoApiController : BaseController
             
             if (newId.HasValue)
             {
+                // Log critical audit with new markup values
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", request.FromPrice },
+                    { "ToPrice", request.ToPrice },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupHighQuantity", request.MarkupHighQuantity },
+                    { "MarkupFoundational", request.MarkupFoundational }
+                };
+
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Materials Markup Created - Company ID: {request.XcccId}",
+                    null,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("CreateMaterialsMarkup", $"Created materials markup for xccc_id {request.XcccId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<int>
@@ -4736,6 +5594,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPut("materials-markup")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> UpdateMaterialsMarkup([FromBody] UpdateMaterialsMarkupRequest request)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4761,21 +5620,61 @@ public class EvoApiController : BaseController
                 });
             }
 
-            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 100)
+            if (request.MarkupPercentage < 0 || request.MarkupPercentage > 500 ||
+                request.MarkupHighQuantity < 0 || request.MarkupHighQuantity > 500 ||
+                request.MarkupFoundational < 0 || request.MarkupFoundational > 500)
             {
                 return BadRequest(new ApiResponse<object>
                 {
                     Success = false,
-                    Message = "Markup percentage must be between 0 and 100"
+                    Message = "Markup percentages must be between 0 and 500"
                 });
             }
 
+            // Fetch old values before update for audit comparison
+            var (oldMarkupData, companyName) = await _dataService.GetMaterialsMarkupWithCompanyByIdAsync(request.MmId);
+            if (oldMarkupData == null)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = $"Materials markup record {request.MmId} not found"
+                });
+            }
+            
             var result = await _dataService.UpdateMaterialsMarkupAsync(request);
             
             stopwatch.Stop();
             
             if (result)
             {
+                // Log critical audit with change details - show all fields
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", oldMarkupData.FromPrice },
+                    { "ToPrice", oldMarkupData.ToPrice },
+                    { "MarkupPercentage", oldMarkupData.MarkupPercentage },
+                    { "MarkupHighQuantity", oldMarkupData.MarkupHighQuantity },
+                    { "MarkupFoundational", oldMarkupData.MarkupFoundational }
+                };
+
+                var newValues = new Dictionary<string, object?>
+                {
+                    { "FromPrice", request.FromPrice },
+                    { "ToPrice", request.ToPrice },
+                    { "MarkupPercentage", request.MarkupPercentage },
+                    { "MarkupHighQuantity", request.MarkupHighQuantity },
+                    { "MarkupFoundational", request.MarkupFoundational }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Materials Markup Updated - ID: {request.MmId}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                    oldValues,
+                    newValues,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("UpdateMaterialsMarkup", $"Updated materials markup mm_id {request.MmId}, range {request.FromPrice}-{request.ToPrice}, markup {request.MarkupPercentage}%", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -4820,6 +5719,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpDelete("materials-markup/{mmId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> DeleteMaterialsMarkup(int mmId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4841,6 +5741,14 @@ public class EvoApiController : BaseController
             
             if (result)
             {
+                // Log critical audit for deletion
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogAsync(
+                    $"Materials Markup Deleted - ID: {mmId}",
+                    null,
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+                
                 await LogOperationAsync("DeleteMaterialsMarkup", $"Deleted materials markup mm_id {mmId}", stopwatch.Elapsed);
                 
                 return Ok(new ApiResponse<object>
@@ -4874,6 +5782,7 @@ public class EvoApiController : BaseController
     }
 
     [HttpPost("materials-markup/reset/{xcccId}")]
+    [CompanyAdminOnly]
     public async Task<ActionResult<ApiResponse<object>>> ResetMaterialsMarkupToDefault(int xcccId)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -4923,6 +5832,6091 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "Failed to reset materials markup to default"
+            });
+        }
+    }
+
+    // Company Priority endpoints
+    [HttpGet("company-priorities/{companyId}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CompanyPriorityDto>>>> GetCompanyPriorities(int companyId)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (companyId <= 0)
+            {
+                return BadRequest(new ApiResponse<List<CompanyPriorityDto>>
+                {
+                    Success = false,
+                    Message = "Invalid company ID"
+                });
+            }
+
+            var priorities = await _dataService.GetCompanyPrioritiesAsync(companyId);
+            stopwatch.Stop();
+            
+            await LogOperationAsync("GetCompanyPriorities", $"Retrieved {priorities.Count} priorities for company c_id {companyId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = true,
+                Message = "Company priorities retrieved successfully",
+                Data = priorities,
+                Count = priorities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving priorities for company c_id {CompanyId}", companyId);
+            await LogErrorAsync("GetCompanyPriorities", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = false,
+                Message = "Failed to retrieve company priorities"
+            });
+        }
+    }
+
+    [HttpPut("company-priorities")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateCompanyPriority([FromBody] UpdateCompanyPriorityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            if (request?.XcpId <= 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Invalid priority ID"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.CompanySpecificName))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Company specific name is required"
+                });
+            }
+
+            if (request.ArrivalTimeInHours < 0)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Arrival time must be 0 or greater"
+                });
+            }
+
+            var result = await _dataService.UpdateCompanyPriorityAsync(request);
+            stopwatch.Stop();
+            
+            if (result)
+            {
+                await LogOperationAsync("UpdateCompanyPriority", $"Updated company priority xcp_id {request.XcpId}, name '{request.CompanySpecificName}', arrival time {request.ArrivalTimeInHours} hours", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Company priority updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Failed to update company priority"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error updating company priority xcp_id {XcpId}", request?.XcpId);
+            await LogErrorAsync("UpdateCompanyPriority", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Failed to update company priority"
+            });
+        }
+    }
+
+    // User Attachment Type endpoints
+    [HttpGet("userattachmenttypes")]
+    public async Task<ActionResult<ApiResponse<List<UserAttachmentTypeDto>>>> GetUserAttachmentTypes()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user attachment types");
+            
+            // Get data from service
+            var dataTable = await _dataService.GetAllUserAttachmentTypesAsync();
+            var attachmentTypes = ConvertDataTableToUserAttachmentTypes(dataTable);
+
+            stopwatch.Stop();
+            
+            // Log successful operation
+            await LogOperationAsync("GetUserAttachmentTypes", $"Retrieved {attachmentTypes.Count} user attachment types", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserAttachmentTypeDto>>
+            {
+                Success = true,
+                Message = "User attachment types retrieved successfully",
+                Data = attachmentTypes,
+                Count = attachmentTypes.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserAttachmentTypes", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user attachment types");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user attachment types",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userattachmenttypes")]
+    public async Task<ActionResult<ApiResponse<UserAttachmentTypeDto>>> CreateUserAttachmentType([FromBody] CreateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user attachment type: {UatType}", request.uat_type);
+            
+            // Validate the request
+            if (string.IsNullOrWhiteSpace(request.uat_type) || request.uat_type.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Attachment type must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.uat_type.Length > 100)
+            {
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Attachment type must be no more than 100 characters",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserAttachmentTypeAsync(request);
+            
+            if (newId.HasValue)
+            {
+                // Create the DTO to return
+                var newAttachmentType = new UserAttachmentTypeDto
+                {
+                    uat_id = newId.Value,
+                    uat_type = request.uat_type,
+                    uat_insertdatetime = DateTime.Now,
+                    uat_modifieddatetime = DateTime.Now
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserAttachmentType", $"Created user attachment type - {request.uat_type} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = true,
+                    Message = "User attachment type created successfully",
+                    Data = newAttachmentType,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserAttachmentType", $"Failed to create user attachment type - {request.uat_type}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserAttachmentTypeDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user attachment type",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserAttachmentType", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user attachment type {UatType}", request.uat_type);
+            
+            return StatusCode(500, new ApiResponse<UserAttachmentTypeDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user attachment type",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userattachmenttypes/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserAttachmentType(int id, [FromBody] UpdateUserAttachmentTypeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user attachment type {Id}", id);
+            
+            // Validate input
+            if (id != request.uat_id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.uat_type) || request.uat_type.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Attachment type must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.uat_type.Length > 100)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Attachment type must be no more than 100 characters",
+                    Count = 0
+                });
+            }
+
+            // Update user attachment type
+            var success = await _dataService.UpdateUserAttachmentTypeAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                // Log successful operation
+                await LogOperationAsync("UpdateUserAttachmentType", $"Updated user attachment type {id} - {request.uat_type}", stopwatch.Elapsed);
+    
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User attachment type updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User attachment type not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserAttachmentType", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user attachment type {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user attachment type",
+                Count = 0
+            });
+        }
+    }
+
+    // User Clothing Size endpoints
+    [HttpGet("userclothing")]
+    public async Task<ActionResult<ApiResponse<List<UserClothingSizeDto>>>> GetUserClothingSizes()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user clothing sizes");
+            
+            var dataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var clothingSizes = ConvertDataTableToUserClothingSizes(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserClothingSizes", $"Retrieved {clothingSizes.Count} user clothing sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserClothingSizeDto>>
+            {
+                Success = true,
+                Message = "User clothing sizes retrieved successfully",
+                Data = clothingSizes,
+                Count = clothingSizes.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserClothingSizes", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user clothing sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user clothing sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userclothing")]
+    public async Task<ActionResult<ApiResponse<UserClothingSizeDto>>> CreateUserClothingSize([FromBody] CreateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user clothing size: {ClothingSize}", request.ClothingSize);
+            
+            if (string.IsNullOrWhiteSpace(request.ClothingSize) || request.ClothingSize.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Clothing size must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.ClothingSize.Length > 50)
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Clothing size must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var existingSizes = ConvertDataTableToUserClothingSizes(existingDataTable);
+            if (existingSizes.Any(s => s.ClothingSize.Equals(request.ClothingSize.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "This clothing size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserClothingSizeAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newClothingSize = new UserClothingSizeDto
+                {
+                    Id = newId.Value,
+                    ClothingSize = request.ClothingSize.Trim()
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserClothingSize", $"Created user clothing size - {request.ClothingSize} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = true,
+                    Message = "User clothing size created successfully",
+                    Data = newClothingSize,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserClothingSize", $"Failed to create user clothing size - {request.ClothingSize}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserClothingSizeDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user clothing size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserClothingSize", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user clothing size {ClothingSize}", request.ClothingSize);
+            
+            return StatusCode(500, new ApiResponse<UserClothingSizeDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userclothing/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserClothingSize(int id, [FromBody] UpdateUserClothingSizeRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user clothing size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ClothingSize) || request.ClothingSize.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Clothing size must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.ClothingSize.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Clothing size must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserClothingSizesAsync();
+            var existingSizes = ConvertDataTableToUserClothingSizes(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.ClothingSize.Equals(request.ClothingSize.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This clothing size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserClothingSizeAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserClothingSize", $"Updated user clothing size {id} to {request.ClothingSize}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User clothing size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserClothingSize", $"Failed to update user clothing size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User clothing size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserClothingSize", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user clothing size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user clothing size",
+                Count = 0
+            });
+        }
+    }
+
+    // Service Item Rack endpoints
+    [HttpGet("serviceitemrack")]
+    public async Task<ActionResult<ApiResponse<List<ServiceItemRackDto>>>> GetServiceItemRacks()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Getting all service item racks");
+
+            var dataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var racks = ConvertDataTableToServiceItemRacks(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceItemRacks", $"Retrieved {racks.Count} service item racks", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<ServiceItemRackDto>>
+            {
+                Success = true,
+                Message = "Service item racks retrieved successfully",
+                Data = racks,
+                Count = racks.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceItemRacks", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error retrieving service item racks");
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving service item racks",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("serviceitemrack")]
+    public async Task<ActionResult<ApiResponse<ServiceItemRackDto>>> CreateServiceItemRack([FromBody] CreateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Creating new service item rack: {Rack}", request.Rack);
+
+            if (string.IsNullOrWhiteSpace(request.Rack))
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Rack is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Rack.Length > 50)
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Rack must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var existingRacks = ConvertDataTableToServiceItemRacks(existingDataTable);
+            if (existingRacks.Any(r => r.Rack.Equals(request.Rack.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "This rack already exists",
+                    Count = 0
+                });
+            }
+
+            var newId = await _dataService.CreateServiceItemRackAsync(request);
+
+            if (newId.HasValue)
+            {
+                var newRack = new ServiceItemRackDto
+                {
+                    Id = newId.Value,
+                    Rack = request.Rack.Trim()
+                };
+
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemRack", $"Created service item rack - {request.Rack} with ID {newId.Value}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = true,
+                    Message = "Service item rack created successfully",
+                    Data = newRack,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemRack", $"Failed to create service item rack - {request.Rack}", stopwatch.Elapsed);
+
+                return BadRequest(new ApiResponse<ServiceItemRackDto>
+                {
+                    Success = false,
+                    Message = "Failed to create service item rack",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceItemRack", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error creating service item rack {Rack}", request.Rack);
+
+            return StatusCode(500, new ApiResponse<ServiceItemRackDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service item rack",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("serviceitemrack/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateServiceItemRack(int id, [FromBody] UpdateServiceItemRackRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Updating service item rack {Id}", id);
+
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Rack))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Rack is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Rack.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Rack must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllServiceItemRacksAsync();
+            var existingRacks = ConvertDataTableToServiceItemRacks(existingDataTable);
+            if (existingRacks.Any(r => r.Id != id && r.Rack.Equals(request.Rack.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This rack already exists",
+                    Count = 0
+                });
+            }
+
+            var success = await _dataService.UpdateServiceItemRackAsync(request);
+
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogOperationAsync("UpdateServiceItemRack", $"Updated service item rack {id} to {request.Rack}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Service item rack updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateServiceItemRack", $"Failed to update service item rack {id}", stopwatch.Elapsed);
+
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Service item rack not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateServiceItemRack", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error updating service item rack {Id}", id);
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the service item rack",
+                Count = 0
+            });
+        }
+    }
+
+    // Service Item Facility endpoints
+    [HttpGet("serviceitemfacility")]
+    public async Task<ActionResult<ApiResponse<List<ServiceItemFacilityDto>>>> GetServiceItemFacilities()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Getting all service item facilities");
+
+            var dataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var facilities = ConvertDataTableToServiceItemFacilities(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceItemFacilities", $"Retrieved {facilities.Count} service item facilities", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<ServiceItemFacilityDto>>
+            {
+                Success = true,
+                Message = "Service item facilities retrieved successfully",
+                Data = facilities,
+                Count = facilities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceItemFacilities", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error retrieving service item facilities");
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving service item facilities",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("serviceitemfacility")]
+    public async Task<ActionResult<ApiResponse<ServiceItemFacilityDto>>> CreateServiceItemFacility([FromBody] CreateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Creating new service item facility: {Facility}", request.Facility);
+
+            if (string.IsNullOrWhiteSpace(request.Facility))
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Facility is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Facility.Length > 50)
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Facility must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var existingFacilities = ConvertDataTableToServiceItemFacilities(existingDataTable);
+            if (existingFacilities.Any(f => f.Facility.Equals(request.Facility.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "This facility already exists",
+                    Count = 0
+                });
+            }
+
+            var newId = await _dataService.CreateServiceItemFacilityAsync(request);
+
+            if (newId.HasValue)
+            {
+                var newFacility = new ServiceItemFacilityDto
+                {
+                    Id = newId.Value,
+                    Facility = request.Facility.Trim()
+                };
+
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemFacility", $"Created service item facility - {request.Facility} with ID {newId.Value}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = true,
+                    Message = "Service item facility created successfully",
+                    Data = newFacility,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateServiceItemFacility", $"Failed to create service item facility - {request.Facility}", stopwatch.Elapsed);
+
+                return BadRequest(new ApiResponse<ServiceItemFacilityDto>
+                {
+                    Success = false,
+                    Message = "Failed to create service item facility",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceItemFacility", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error creating service item facility {Facility}", request.Facility);
+
+            return StatusCode(500, new ApiResponse<ServiceItemFacilityDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service item facility",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("serviceitemfacility/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateServiceItemFacility(int id, [FromBody] UpdateServiceItemFacilityRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            _logger.LogInformation("Updating service item facility {Id}", id);
+
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Facility))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Facility is required",
+                    Count = 0
+                });
+            }
+
+            if (request.Facility.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Facility must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllServiceItemFacilitiesAsync();
+            var existingFacilities = ConvertDataTableToServiceItemFacilities(existingDataTable);
+            if (existingFacilities.Any(f => f.Id != id && f.Facility.Equals(request.Facility.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This facility already exists",
+                    Count = 0
+                });
+            }
+
+            var success = await _dataService.UpdateServiceItemFacilityAsync(request);
+
+            stopwatch.Stop();
+
+            if (success)
+            {
+                await LogOperationAsync("UpdateServiceItemFacility", $"Updated service item facility {id} to {request.Facility}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Service item facility updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateServiceItemFacility", $"Failed to update service item facility {id}", stopwatch.Elapsed);
+
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Service item facility not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateServiceItemFacility", ex, stopwatch.Elapsed);
+
+            _logger.LogError(ex, "Error updating service item facility {Id}", id);
+
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the service item facility",
+                Count = 0
+            });
+        }
+    }
+
+    // User Pants Waist endpoints
+    [HttpGet("userpantswaist")]
+    public async Task<ActionResult<ApiResponse<List<UserPantsWaistDto>>>> GetUserPantsWaist()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user pants waist sizes");
+            
+            var dataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var pantsWaist = ConvertDataTableToUserPantsWaist(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserPantsWaist", $"Retrieved {pantsWaist.Count} user pants waist sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserPantsWaistDto>>
+            {
+                Success = true,
+                Message = "User pants waist sizes retrieved successfully",
+                Data = pantsWaist,
+                Count = pantsWaist.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user pants waist sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user pants waist sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userpantswaist")]
+    public async Task<ActionResult<ApiResponse<UserPantsWaistDto>>> CreateUserPantsWaist([FromBody] CreateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user pants waist size: {Size} ({Sex})", request.Size, request.Sex);
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var existingSizes = ConvertDataTableToUserPantsWaist(existingDataTable);
+            if (existingSizes.Any(s => s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "This pants waist size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserPantsWaistAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newPantsWaist = new UserPantsWaistDto
+                {
+                    Id = newId.Value,
+                    Size = request.Size.Trim(),
+                    Sex = request.Sex
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsWaist", $"Created user pants waist size - Size: {request.Size}, Sex: {request.Sex} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = true,
+                    Message = "User pants waist size created successfully",
+                    Data = newPantsWaist,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsWaist", $"Failed to create user pants waist size - {request.Size}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserPantsWaistDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user pants waist size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user pants waist size {Size}", request.Size);
+            
+            return StatusCode(500, new ApiResponse<UserPantsWaistDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user pants waist size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userpantswaist/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserPantsWaist(int id, [FromBody] UpdateUserPantsWaistRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user pants waist size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserPantsWaistAsync();
+            var existingSizes = ConvertDataTableToUserPantsWaist(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This pants waist size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserPantsWaistAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserPantsWaist", $"Updated user pants waist size {id} - Size: {request.Size}, Sex: {request.Sex}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User pants waist size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserPantsWaist", $"Failed to update user pants waist size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User pants waist size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserPantsWaist", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user pants waist size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user pants waist size",
+                Count = 0
+            });
+        }
+    }
+
+    // User Pants Length endpoints
+    [HttpGet("userpantslength")]
+    public async Task<ActionResult<ApiResponse<List<UserPantsLengthDto>>>> GetUserPantsLength()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user pants length sizes");
+            
+            var dataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var pantsLength = ConvertDataTableToUserPantsLength(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserPantsLength", $"Retrieved {pantsLength.Count} user pants length sizes", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserPantsLengthDto>>
+            {
+                Success = true,
+                Message = "User pants length sizes retrieved successfully",
+                Data = pantsLength,
+                Count = pantsLength.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user pants length sizes");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user pants length sizes",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userpantslength")]
+    public async Task<ActionResult<ApiResponse<UserPantsLengthDto>>> CreateUserPantsLength([FromBody] CreateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user pants length size: {Size} ({Sex})", request.Size, request.Sex);
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var existingSizes = ConvertDataTableToUserPantsLength(existingDataTable);
+            if (existingSizes.Any(s => s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "This pants length size already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserPantsLengthAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newPantsLength = new UserPantsLengthDto
+                {
+                    Id = newId.Value,
+                    Size = request.Size.Trim(),
+                    Sex = request.Sex
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsLength", $"Created user pants length size - Size: {request.Size}, Sex: {request.Sex} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = true,
+                    Message = "User pants length size created successfully",
+                    Data = newPantsLength,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserPantsLength", $"Failed to create user pants length size - {request.Size}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserPantsLengthDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user pants length size",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user pants length size {Size}", request.Size);
+            
+            return StatusCode(500, new ApiResponse<UserPantsLengthDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user pants length size",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userpantslength/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserPantsLength(int id, [FromBody] UpdateUserPantsLengthRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user pants length size {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Size) || !int.TryParse(request.Size, out var _))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be a valid number",
+                    Count = 0
+                });
+            }
+
+            if (request.Size.Length > 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Size must be no more than 2 characters",
+                    Count = 0
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Sex) || !new[] { "Male", "Female" }.Contains(request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Sex must be either 'Male' or 'Female'",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserPantsLengthAsync();
+            var existingSizes = ConvertDataTableToUserPantsLength(existingDataTable);
+            if (existingSizes.Any(s => s.Id != id && s.Size == request.Size.Trim() && s.Sex == request.Sex))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This pants length size already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserPantsLengthAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserPantsLength", $"Updated user pants length size {id} - Size: {request.Size}, Sex: {request.Sex}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User pants length size updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserPantsLength", $"Failed to update user pants length size {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User pants length size not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserPantsLength", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user pants length size {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user pants length size",
+                Count = 0
+            });
+        }
+    }
+
+    // User Relationship endpoints
+    [HttpGet("userrelationship")]
+    public async Task<ActionResult<ApiResponse<List<UserRelationshipDto>>>> GetUserRelationships()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Getting all user relationships");
+            
+            var dataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var relationships = ConvertDataTableToUserRelationships(dataTable);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserRelationships", $"Retrieved {relationships.Count} user relationships", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<UserRelationshipDto>>
+            {
+                Success = true,
+                Message = "User relationships retrieved successfully",
+                Data = relationships,
+                Count = relationships.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserRelationships", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving user relationships");
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving user relationships",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("userrelationship")]
+    public async Task<ActionResult<ApiResponse<UserRelationshipDto>>> CreateUserRelationship([FromBody] CreateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Creating new user relationship: {Relationship}", request.Relationship);
+            
+            if (string.IsNullOrWhiteSpace(request.Relationship) || request.Relationship.Length < 2)
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Relationship must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.Relationship.Length > 50)
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Relationship must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate
+            var existingDataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var existingRelationships = ConvertDataTableToUserRelationships(existingDataTable);
+            if (existingRelationships.Any(r => r.Relationship.Equals(request.Relationship.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "This relationship already exists",
+                    Count = 0
+                });
+            }
+            
+            var newId = await _dataService.CreateUserRelationshipAsync(request);
+            
+            if (newId.HasValue)
+            {
+                var newRelationship = new UserRelationshipDto
+                {
+                    Id = newId.Value,
+                    Relationship = request.Relationship.Trim()
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserRelationship", $"Created user relationship - {request.Relationship} with ID {newId.Value}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = true,
+                    Message = "User relationship created successfully",
+                    Data = newRelationship,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserRelationship", $"Failed to create user relationship - {request.Relationship}", stopwatch.Elapsed);
+                
+                return BadRequest(new ApiResponse<UserRelationshipDto>
+                {
+                    Success = false,
+                    Message = "Failed to create user relationship",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserRelationship", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating user relationship {Relationship}", request.Relationship);
+            
+            return StatusCode(500, new ApiResponse<UserRelationshipDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the user relationship",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("userrelationship/{id}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserRelationship(int id, [FromBody] UpdateUserRelationshipRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            _logger.LogInformation("Updating user relationship {Id}", id);
+            
+            if (id != request.Id)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "ID in URL does not match ID in request body",
+                    Count = 0
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.Relationship) || request.Relationship.Length < 2)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Relationship must be at least 2 characters long",
+                    Count = 0
+                });
+            }
+
+            if (request.Relationship.Length > 50)
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Relationship must be no more than 50 characters",
+                    Count = 0
+                });
+            }
+
+            // Check for duplicate (excluding current record)
+            var existingDataTable = await _dataService.GetAllUserRelationshipsAsync();
+            var existingRelationships = ConvertDataTableToUserRelationships(existingDataTable);
+            if (existingRelationships.Any(r => r.Id != id && r.Relationship.Equals(request.Relationship.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "This relationship already exists",
+                    Count = 0
+                });
+            }
+            
+            var success = await _dataService.UpdateUserRelationshipAsync(request);
+            
+            stopwatch.Stop();
+            
+            if (success)
+            {
+                await LogOperationAsync("UpdateUserRelationship", $"Updated user relationship {id} to {request.Relationship}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "User relationship updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                await LogOperationAsync("UpdateUserRelationship", $"Failed to update user relationship {id}", stopwatch.Elapsed);
+                
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User relationship not found or update failed",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserRelationship", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating user relationship {Id}", id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating the user relationship",
+                Count = 0
+            });
+        }
+    }
+
+    // User Emergency Contact endpoints
+    [HttpGet("employees/emergency-contacts/all")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>>> GetAllEmergencyContacts()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting emergency contacts for all employees");
+            
+            var contactsByUserId = await _dataService.GetAllEmergencyContactsAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAllEmergencyContacts", $"Retrieved emergency contacts for {contactsByUserId.Count} employees", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>
+            {
+                Success = true,
+                Message = $"Retrieved emergency contacts for {contactsByUserId.Count} employees",
+                Data = contactsByUserId,
+                Count = contactsByUserId.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAllEmergencyContacts", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving emergency contacts for all employees");
+            
+            return StatusCode(500, new ApiResponse<Dictionary<int, List<UserEmergencyContactDto>>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving emergency contacts",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("employees/{id:int}/emergency-contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<UserEmergencyContactDto>>>> GetUserEmergencyContacts(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting emergency contacts for employee {EmployeeId}", id);
+            
+            var contacts = await _dataService.GetUserEmergencyContactsAsync(id);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetUserEmergencyContacts", $"Retrieved {contacts.Count} emergency contacts for employee {id}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<UserEmergencyContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} emergency contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetUserEmergencyContacts", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving emergency contacts for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<List<UserEmergencyContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving emergency contacts",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("employees/{id:int}/emergency-contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<UserEmergencyContactDto>>> CreateUserEmergencyContact(int id, [FromBody] CreateUserEmergencyContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating emergency contact for employee {EmployeeId}", id);
+            
+            var newId = await _dataService.CreateUserEmergencyContactAsync(id, request);
+            
+            if (newId.HasValue)
+            {
+                var newContact = new UserEmergencyContactDto
+                {
+                    XuecId = newId.Value,
+                    UserId = id,
+                    RelationshipId = request.RelationshipId,
+                    Name = request.Name,
+                    Phone = request.Phone,
+                    InsertDateTime = DateTime.Now
+                };
+                
+                stopwatch.Stop();
+                await LogOperationAsync("CreateUserEmergencyContact", $"Created emergency contact {newId.Value} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<UserEmergencyContactDto>
+                {
+                    Success = true,
+                    Message = "Emergency contact created successfully",
+                    Data = newContact,
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return BadRequest(new ApiResponse<UserEmergencyContactDto>
+                {
+                    Success = false,
+                    Message = "Failed to create emergency contact",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating emergency contact for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<UserEmergencyContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating emergency contact",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("employees/{id:int}/emergency-contacts/{xuecId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateUserEmergencyContact(int id, int xuecId, [FromBody] UpdateUserEmergencyContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            // Ensure the request xuecId matches the route
+            request.XuecId = xuecId;
+            
+            var success = await _dataService.UpdateUserEmergencyContactAsync(id, request);
+            
+            if (success)
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("UpdateUserEmergencyContact", $"Updated emergency contact {xuecId} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Emergency contact updated successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Emergency contact not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating emergency contact",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpDelete("employees/{id:int}/emergency-contacts/{xuecId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteUserEmergencyContact(int id, int xuecId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            var success = await _dataService.DeleteUserEmergencyContactAsync(id, xuecId);
+            
+            if (success)
+            {
+                stopwatch.Stop();
+                await LogOperationAsync("DeleteUserEmergencyContact", $"Deleted emergency contact {xuecId} for employee {id}", stopwatch.Elapsed);
+                
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Message = "Emergency contact deleted successfully",
+                    Count = 1
+                });
+            }
+            else
+            {
+                stopwatch.Stop();
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Emergency contact not found",
+                    Count = 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteUserEmergencyContact", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error deleting emergency contact {XuecId} for employee {EmployeeId}", xuecId, id);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting emergency contact",
+                Count = 0
+            });
+        }
+    }
+
+    #endregion
+
+    #region Company Trades Management
+
+    [HttpGet("companies/{xcccId:int}/trades")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<LaborRateDto>>>> GetCompanyTrades(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting trades for company xcccId {XcccId}", xcccId);
+            
+            var trades = await _dataService.GetCompanyTradesAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyTrades", $"Retrieved {trades.Count} trades for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<LaborRateDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {trades.Count} trades",
+                Data = trades,
+                Count = trades.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyTrades", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<LaborRateDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving company trades"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/available-trades")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CompanyTradeDto>>>> GetAvailableTrades(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting available trades for company xcccId {XcccId}", xcccId);
+            
+            var trades = await _dataService.GetAvailableTradesForCompanyAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAvailableTrades", $"Retrieved {trades.Count} available trades", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CompanyTradeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {trades.Count} available trades",
+                Data = trades,
+                Count = trades.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAvailableTrades", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CompanyTradeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving available trades"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/checklists")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklists(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists for company xcccId {XcccId}", xcccId);
+            
+            var checklists = await _dataService.GetCompanyChecklistsAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyChecklists", $"Retrieved {checklists.Count} checklists", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklists.Count} checklists",
+                Data = checklists,
+                Count = checklists.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklists"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/checklists/detail")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CheckListDto>>>> GetCompanyChecklistsWithQuestions(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists with questions for company xcccId {XcccId}", xcccId);
+            
+            var checklists = await _dataService.GetCompanyChecklistsWithQuestionsAsync(xcccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyChecklistsWithQuestions", $"Retrieved {checklists.Count} checklists with questions", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklists.Count} checklists with questions",
+                Data = checklists,
+                Count = checklists.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyChecklistsWithQuestions", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklists with questions"
+            });
+        }
+    }
+
+    [HttpGet("checklist-types")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CheckListTypeDto>>>> GetCheckListTypes()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var types = await _dataService.GetCheckListTypesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCheckListTypes", $"Retrieved {types.Count} checklist types", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListTypeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {types.Count} checklist types",
+                Data = types,
+                Count = types.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCheckListTypes", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListTypeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklist types"
+            });
+        }
+    }
+
+    [HttpGet("checklist-answer-types")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<CheckListAnswerTypeDto>>>> GetCheckListAnswerTypes()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var types = await _dataService.GetCheckListAnswerTypesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCheckListAnswerTypes", $"Retrieved {types.Count} checklist answer types", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CheckListAnswerTypeDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {types.Count} checklist answer types",
+                Data = types,
+                Count = types.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCheckListAnswerTypes", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<CheckListAnswerTypeDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving checklist answer types"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/checklists")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CheckListDto>>> CreateCheckList(int xcccId, [FromBody] CreateCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating checklist '{Name}' for xcccId {XcccId}", request.ClName, xcccId);
+            
+            var checklist = await _dataService.CreateCheckListAsync(xcccId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateCheckList", $"Created checklist '{request.ClName}' for xcccId {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListDto>
+            {
+                Success = true,
+                Message = "Checklist created successfully",
+                Data = checklist,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCheckList", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the checklist"
+            });
+        }
+    }
+
+    [HttpPut("checklists/{clId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CheckListDto>>> UpdateCheckList(int clId, [FromBody] UpdateCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating checklist {ClId}", clId);
+            
+            var checklist = await _dataService.UpdateCheckListAsync(clId, request);
+            
+            if (checklist == null)
+            {
+                return NotFound(new ApiResponse<CheckListDto>
+                {
+                    Success = false,
+                    Message = $"Checklist {clId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateCheckList", $"Updated checklist {clId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListDto>
+            {
+                Success = true,
+                Message = "Checklist updated successfully",
+                Data = checklist,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCheckList", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the checklist"
+            });
+        }
+    }
+
+    [HttpPost("checklists/{clId:int}/questions")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> CreateCheckListQuestion(int clId, [FromBody] CreateCheckListQuestionRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating question for checklist {ClId}", clId);
+            
+            var question = await _dataService.CreateCheckListQuestionAsync(clId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateCheckListQuestion", $"Created question for checklist {clId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListQuestionDto>
+            {
+                Success = true,
+                Message = "Question created successfully",
+                Data = question,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCheckListQuestion", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListQuestionDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating the question"
+            });
+        }
+    }
+
+    [HttpPut("checklist-questions/{clqId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<CheckListQuestionDto>>> UpdateCheckListQuestion(int clqId, [FromBody] UpdateCheckListQuestionRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating question {ClqId}", clqId);
+            
+            var question = await _dataService.UpdateCheckListQuestionAsync(clqId, request);
+            
+            if (question == null)
+            {
+                return NotFound(new ApiResponse<CheckListQuestionDto>
+                {
+                    Success = false,
+                    Message = $"Question {clqId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateCheckListQuestion", $"Updated question {clqId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<CheckListQuestionDto>
+            {
+                Success = true,
+                Message = "Question updated successfully",
+                Data = question,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCheckListQuestion", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<CheckListQuestionDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the question"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/checklists/clone")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> CloneCheckLists(int xcccId, [FromBody] CloneCheckListRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Cloning checklists from xcccId {Source} to {Target}", xcccId, request.TargetXcccId);
+            
+            await _dataService.CloneCheckListsAsync(xcccId, request.TargetXcccId, request.ChecklistIds);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CloneCheckLists", $"Cloned checklists from xcccId {xcccId} to {request.TargetXcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Checklists cloned successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CloneCheckLists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while cloning checklists"
+            });
+        }
+    }
+
+    [HttpPost("companies/{xcccId:int}/trades")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<LaborRateDto>>> CreateCompanyTrade(int xcccId, [FromBody] CreateLaborRateRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating trade for company xcccId {XcccId}", xcccId);
+            
+            var laborRate = await _dataService.CreateCompanyTradeAsync(xcccId, request);
+            
+            stopwatch.Stop();
+            
+            // Get company and trade info for audit
+            var (_, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(laborRate.LrId);
+            
+            // Log critical audit with all created values
+            var newValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", request.LrDescriptionOverride },
+                { "LrNte", request.LrNte },
+                { "LrRateRegular", request.LrRateRegular },
+                { "LrRateOvertime", request.LrRateOvertime },
+                { "LrRateHoliday", request.LrRateHoliday },
+                { "LrRateSpecial", request.LrRateSpecial },
+                { "LrRateScheduledAfterHours", request.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", request.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", request.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", request.LrRateHelper },
+                { "LrRateHelperOvertime", request.LrRateHelperOvertime },
+                { "LrRateFlat", request.LrRateFlat },
+                { "LrFlatOrHourly", request.LrFlatOrHourly },
+                { "LrTripCharge", request.LrTripCharge },
+                { "LrMarkup", request.LrMarkup },
+                { "LrNote", request.LrNote }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Created - ID: {laborRate.LrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCompanyTrade", $"Created trade {laborRate.LrId} for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LaborRateDto>
+            {
+                Success = true,
+                Message = "Trade created successfully",
+                Data = laborRate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCompanyTrade", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<LaborRateDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating trade"
+            });
+        }
+    }
+
+    [HttpPut("companies/{xcccId:int}/trades/{lrId:int}")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<LaborRateDto>>> UpdateCompanyTrade(int xcccId, int lrId, [FromBody] UpdateLaborRateRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating trade {LrId} for company xcccId {XcccId}", lrId, xcccId);
+            
+            // Fetch old values before update for audit comparison
+            var (oldLaborRate, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(lrId);
+            if (oldLaborRate == null)
+            {
+                return NotFound(new ApiResponse<LaborRateDto>
+                {
+                    Success = false,
+                    Message = "Trade not found"
+                });
+            }
+            
+            var laborRate = await _dataService.UpdateCompanyTradeAsync(xcccId, lrId, request);
+            
+            if (laborRate == null)
+            {
+                return NotFound(new ApiResponse<LaborRateDto>
+                {
+                    Success = false,
+                    Message = "Trade not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details - show all fields
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", oldLaborRate.LrDescriptionOverride },
+                { "LrNte", oldLaborRate.LrNte },
+                { "LrRateRegular", oldLaborRate.LrRateRegular },
+                { "LrRateOvertime", oldLaborRate.LrRateOvertime },
+                { "LrRateHoliday", oldLaborRate.LrRateHoliday },
+                { "LrRateSpecial", oldLaborRate.LrRateSpecial },
+                { "LrRateScheduledAfterHours", oldLaborRate.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", oldLaborRate.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", oldLaborRate.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", oldLaborRate.LrRateHelper },
+                { "LrRateHelperOvertime", oldLaborRate.LrRateHelperOvertime },
+                { "LrRateFlat", oldLaborRate.LrRateFlat },
+                { "LrFlatOrHourly", oldLaborRate.LrFlatOrHourly },
+                { "LrTripCharge", oldLaborRate.LrTripCharge },
+                { "LrMarkup", oldLaborRate.LrMarkup },
+                { "LrNote", oldLaborRate.LrNote }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "LrDescriptionOverride", request.LrDescriptionOverride },
+                { "LrNte", request.LrNte },
+                { "LrRateRegular", request.LrRateRegular },
+                { "LrRateOvertime", request.LrRateOvertime },
+                { "LrRateHoliday", request.LrRateHoliday },
+                { "LrRateSpecial", request.LrRateSpecial },
+                { "LrRateScheduledAfterHours", request.LrRateScheduledAfterHours },
+                { "LrRateRegularDiscount", request.LrRateRegularDiscount },
+                { "LrRateRegularDiscountHoursLimit", request.LrRateRegularDiscountHoursLimit },
+                { "LrRateHelper", request.LrRateHelper },
+                { "LrRateHelperOvertime", request.LrRateHelperOvertime },
+                { "LrRateFlat", request.LrRateFlat },
+                { "LrFlatOrHourly", request.LrFlatOrHourly },
+                { "LrTripCharge", request.LrTripCharge },
+                { "LrMarkup", request.LrMarkup },
+                { "LrNote", request.LrNote }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Updated - ID: {lrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCompanyTrade", $"Updated trade {lrId} for company {xcccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LaborRateDto>
+            {
+                Success = true,
+                Message = "Trade updated successfully",
+                Data = laborRate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCompanyTrade", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<LaborRateDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating trade"
+            });
+        }
+    }
+
+    [HttpGet("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<List<int>>>> GetTradeChecklists(int xcccId, int lrId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting checklists for trade {LrId}", lrId);
+            
+            var checklistIds = await _dataService.GetTradeChecklistsAsync(lrId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetTradeChecklists", $"Retrieved {checklistIds.Count} checklists for trade {lrId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<int>>
+            {
+                Success = true,
+                Message = $"Retrieved {checklistIds.Count} checklists",
+                Data = checklistIds,
+                Count = checklistIds.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTradeChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<int>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving trade checklists"
+            });
+        }
+    }
+
+    [HttpPut("companies/{xcccId:int}/trades/{lrId:int}/checklists")]
+    [CompanyAdminOnly]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateTradeChecklists(int xcccId, int lrId, [FromBody] List<int> checklistIds)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating checklists for trade {LrId}", lrId);
+            
+            // Get old checklist IDs and names before update
+            var oldChecklistIds = await _dataService.GetTradeChecklistsAsync(lrId);
+            var oldChecklistNames = await _dataService.GetChecklistNamesByIdsAsync(xcccId, oldChecklistIds);
+            var newChecklistNames = await _dataService.GetChecklistNamesByIdsAsync(xcccId, checklistIds ?? new List<int>());
+            
+            // Get company and trade info for audit
+            var (_, companyName, tradeName) = await _dataService.GetLaborRateWithCompanyByIdAsync(lrId);
+            
+            await _dataService.UpdateTradeChecklistsAsync(lrId, checklistIds ?? new List<int>());
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with before/after checklist names
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Checklists", oldChecklistNames.Any() ? string.Join(", ", oldChecklistNames) : "null" }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Checklists", newChecklistNames.Any() ? string.Join(", ", newChecklistNames) : "null" }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Trade Checklists Updated - ID: {lrId} - {tradeName ?? "Unknown"}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateTradeChecklists", $"Updated checklists for trade {lrId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Checklists updated successfully",
+                Count = checklistIds?.Count ?? 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateTradeChecklists", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while updating trade checklists"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Company Contacts
+
+    [HttpGet("companies/{cId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactDto>>>> GetCompanyContacts(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contacts for company c_id {CId}", cId);
+            
+            var contacts = await _dataService.GetCompanyContactsAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyContacts", $"Retrieved {contacts.Count} contacts for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyContacts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contacts"
+            });
+        }
+    }
+
+    [HttpGet("contact-titles")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactTitleDto>>>> GetContactTitles()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contact titles");
+            
+            var titles = await _dataService.GetContactTitlesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetContactTitles", $"Retrieved {titles.Count} contact titles", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactTitleDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {titles.Count} contact titles",
+                Data = titles,
+                Count = titles.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetContactTitles", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactTitleDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contact titles"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> CreateContact(int cId, [FromBody] CreateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating contact for company c_id {CId}", cId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "First name is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Last name is required"
+                });
+            }
+            
+            var contact = await _dataService.CreateContactAsync(cId, request);
+            
+            stopwatch.Stop();
+            
+            // Get company name for audit
+            var (_, companyName) = await _dataService.GetContactWithCompanyByIdAsync(contact.ConId);
+            
+            // Log critical audit with all created values
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CtId", request.CtId },
+                { "CtTitle", contact.CtTitle },
+                { "ConFirstname", request.ConFirstname },
+                { "ConLastname", request.ConLastname },
+                { "ConEmail", request.ConEmail },
+                { "ConPhone", request.ConPhone },
+                { "ConMobile", request.ConMobile },
+                { "ConFax", request.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Created - ID: {contact.ConId} - {request.ConFirstname} {request.ConLastname}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateContact", $"Created contact {contact.ConId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact created successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating contact"
+            });
+        }
+    }
+
+    [HttpPut("contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> UpdateContact(int conId, [FromBody] UpdateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating contact {ConId}", conId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "First name is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Last name is required"
+                });
+            }
+            
+            // Fetch old values before update for audit comparison
+            var (oldContact, companyName) = await _dataService.GetContactWithCompanyByIdAsync(conId);
+            if (oldContact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            var contact = await _dataService.UpdateContactAsync(conId, request);
+            
+            if (contact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "CtId", oldContact.CtId },
+                { "CtTitle", oldContact.CtTitle },
+                { "ConFirstname", oldContact.ConFirstname },
+                { "ConLastname", oldContact.ConLastname },
+                { "ConEmail", oldContact.ConEmail },
+                { "ConPhone", oldContact.ConPhone },
+                { "ConMobile", oldContact.ConMobile },
+                { "ConFax", oldContact.ConFax }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CtId", request.CtId },
+                { "CtTitle", contact.CtTitle },
+                { "ConFirstname", request.ConFirstname },
+                { "ConLastname", request.ConLastname },
+                { "ConEmail", request.ConEmail },
+                { "ConPhone", request.ConPhone },
+                { "ConMobile", request.ConMobile },
+                { "ConFax", request.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Updated - ID: {conId} - {request.ConFirstname} {request.ConLastname}{(string.IsNullOrEmpty(companyName) ? "" : $" - {companyName}")}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateContact", $"Updated contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact updated successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating contact"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Company Addresses
+
+    [HttpGet("companies/{cId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressDto>>>> GetCompanyAddresses(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting addresses for company {CId}", cId);
+            
+            var addresses = await _dataService.GetCompanyAddressesAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyAddresses", $"Retrieved {addresses.Count} addresses for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {addresses.Count} addresses",
+                Data = addresses,
+                Count = addresses.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyAddresses", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving addresses"
+            });
+        }
+    }
+
+    [HttpGet("address-titles")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressTitleDto>>>> GetAddressTitles()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting address titles");
+            
+            var titles = await _dataService.GetAddressTitlesAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetAddressTitles", $"Retrieved {titles.Count} address titles", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressTitleDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {titles.Count} address titles",
+                Data = titles,
+                Count = titles.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetAddressTitles", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressTitleDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving address titles"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> CreateAddress(int cId, [FromBody] CreateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating address for company {CId}", cId);
+            
+            // Validate required fields
+            if (request.AtId <= 0 || string.IsNullOrWhiteSpace(request.AAddress1) || 
+                string.IsNullOrWhiteSpace(request.ACity) || string.IsNullOrWhiteSpace(request.AState) || 
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title, Address 1, City, State, and Zip are required"
+                });
+            }
+            
+            var address = await _dataService.CreateAddressAsync(cId, request);
+            
+            // Get company name for audit
+            var (addressForAudit, companyName) = await _dataService.GetAddressWithCompanyByIdAsync(address.AId);
+            
+            // Audit logging
+            SetAuditCriticalUserContext();
+            var newValues = new Dictionary<string, string>
+            {
+                ["AtId"] = address.AtId.ToString(),
+                ["AtTitle"] = address.AtTitle ?? "",
+                ["ADescription"] = address.ADescription ?? "",
+                ["AAddress1"] = address.AAddress1 ?? "",
+                ["AAddress2"] = address.AAddress2 ?? "",
+                ["ACity"] = address.ACity ?? "",
+                ["AState"] = address.AState ?? "",
+                ["AZip"] = address.AZip ?? "",
+                ["ALatitude"] = address.ALatitude ?? "",
+                ["ALongitude"] = address.ALongitude ?? ""
+            };
+            
+            var newValuesObj = new Dictionary<string, object?>
+            {
+                ["AtId"] = address.AtId,
+                ["AtTitle"] = address.AtTitle,
+                ["ADescription"] = address.ADescription,
+                ["AAddress1"] = address.AAddress1,
+                ["AAddress2"] = address.AAddress2,
+                ["ACity"] = address.ACity,
+                ["AState"] = address.AState,
+                ["AZip"] = address.AZip,
+                ["ALatitude"] = address.ALatitude,
+                ["ALongitude"] = address.ALongitude
+            };
+            
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Created - ID: {address.AId} - {address.AAddress1}, {address.ACity}, {address.AState} - {companyName}",
+                null,
+                newValuesObj,
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            );
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateAddress", $"Created address {address.AId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address created successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating address"
+            });
+        }
+    }
+
+    [HttpPut("addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> UpdateAddress(int aId, [FromBody] UpdateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating address {AId}", aId);
+            
+            // Validate required fields
+            if (request.AtId <= 0 || string.IsNullOrWhiteSpace(request.AAddress1) || 
+                string.IsNullOrWhiteSpace(request.ACity) || string.IsNullOrWhiteSpace(request.AState) || 
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title, Address 1, City, State, and Zip are required"
+                });
+            }
+            
+            // Get old values for audit
+            var (oldAddress, companyName) = await _dataService.GetAddressWithCompanyByIdAsync(aId);
+            if (oldAddress == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = $"Address {aId} not found"
+                });
+            }
+            
+            var address = await _dataService.UpdateAddressAsync(aId, request);
+            if (address == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = $"Address {aId} not found after update"
+                });
+            }
+            
+            // Audit logging with before/after values
+            SetAuditCriticalUserContext();
+            var oldValues = new Dictionary<string, object?>
+            {
+                ["AtId"] = oldAddress.AtId,
+                ["AtTitle"] = oldAddress.AtTitle,
+                ["ADescription"] = oldAddress.ADescription,
+                ["AAddress1"] = oldAddress.AAddress1,
+                ["AAddress2"] = oldAddress.AAddress2,
+                ["ACity"] = oldAddress.ACity,
+                ["AState"] = oldAddress.AState,
+                ["AZip"] = oldAddress.AZip,
+                ["ALatitude"] = oldAddress.ALatitude,
+                ["ALongitude"] = oldAddress.ALongitude
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                ["AtId"] = address.AtId,
+                ["AtTitle"] = address.AtTitle,
+                ["ADescription"] = address.ADescription,
+                ["AAddress1"] = address.AAddress1,
+                ["AAddress2"] = address.AAddress2,
+                ["ACity"] = address.ACity,
+                ["AState"] = address.AState,
+                ["AZip"] = address.AZip,
+                ["ALatitude"] = address.ALatitude,
+                ["ALongitude"] = address.ALongitude
+            };
+            
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Updated - ID: {address.AId} - {address.AAddress1}, {address.ACity}, {address.AState} - {companyName}",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00")
+            );
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateAddress", $"Updated address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address updated successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating address"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Company Locations
+
+    [HttpGet("companies/{cId:int}/locations")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<LocationDto>>>> GetCompanyLocations(int cId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting locations for company {CId}", cId);
+            
+            var locations = await _dataService.GetCompanyLocationsAsync(cId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCompanyLocations", $"Retrieved {locations.Count} locations for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<LocationDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {locations.Count} locations",
+                Data = locations,
+                Count = locations.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCompanyLocations", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving locations for company {CId}", cId);
+            
+            return StatusCode(500, new ApiResponse<List<LocationDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving locations"
+            });
+        }
+    }
+
+    [HttpPost("companies/{cId:int}/locations")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LocationDto>>> CreateLocation(int cId, [FromBody] CreateLocationRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating location for company {CId}", cId);
+            
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LLocation) || 
+                string.IsNullOrWhiteSpace(request.AAddress1) ||
+                string.IsNullOrWhiteSpace(request.ACity) ||
+                string.IsNullOrWhiteSpace(request.AState) ||
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = "Location, Address 1, City, State, and Zip are required"
+                });
+            }
+
+            var location = await _dataService.CreateLocationAsync(cId, request);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("CreateLocation", $"Created location {location.LId} for company {cId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LocationDto>
+            {
+                Success = true,
+                Message = "Location created successfully",
+                Data = location,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateLocation", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error creating location for company {CId}", cId);
+            
+            return StatusCode(500, new ApiResponse<LocationDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating location"
+            });
+        }
+    }
+
+    [HttpPut("locations/{lId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<LocationDto>>> UpdateLocation(int lId, [FromBody] UpdateLocationRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating location {LId}", lId);
+            
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(request.LLocation) || 
+                string.IsNullOrWhiteSpace(request.AAddress1) ||
+                string.IsNullOrWhiteSpace(request.ACity) ||
+                string.IsNullOrWhiteSpace(request.AState) ||
+                string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = "Location, Address 1, City, State, and Zip are required"
+                });
+            }
+
+            var location = await _dataService.UpdateLocationAsync(lId, request);
+            
+            if (location == null)
+            {
+                return NotFound(new ApiResponse<LocationDto>
+                {
+                    Success = false,
+                    Message = $"Location with ID {lId} not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateLocation", $"Updated location {lId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<LocationDto>
+            {
+                Success = true,
+                Message = "Location updated successfully",
+                Data = location,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateLocation", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating location {LId}", lId);
+            
+            return StatusCode(500, new ApiResponse<LocationDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating location"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Service Request Creation
+
+    [HttpGet("servicerequests/exists")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<bool>>> ServiceRequestNumberExists([FromQuery] string requestNumber)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(requestNumber))
+            {
+                return Ok(new ApiResponse<bool>
+                {
+                    Success = true,
+                    Message = "No request number provided",
+                    Data = false,
+                    Count = 0
+                });
+            }
+
+            var exists = await _dataService.ServiceRequestNumberExistsAsync(requestNumber);
+
+            stopwatch.Stop();
+            await LogOperationAsync("ServiceRequestNumberExists", $"Checked SR# '{requestNumber}' exists={exists}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<bool>
+            {
+                Success = true,
+                Message = exists ? "Service Request number already exists" : "Service Request number is available",
+                Data = exists,
+                Count = exists ? 1 : 0
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("ServiceRequestNumberExists", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error checking service request number {RequestNumber}", requestNumber);
+            return StatusCode(500, new ApiResponse<bool>
+            {
+                Success = false,
+                Message = "An error occurred while checking the service request number"
+            });
+        }
+    }
+
+    [HttpPost("servicerequests")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<CreateServiceRequestResponse>>> CreateServiceRequest([FromBody] CreateServiceRequestRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null)
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Request body is required"
+                });
+            }
+
+            // Minimum required identifiers for any SR (Accepted or Reject)
+            if (request.XcccId <= 0 || request.LId <= 0 || request.TId <= 0 || request.PId <= 0)
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Company, Location, Trade, and Priority are required"
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.SrRequestNumber) || string.IsNullOrWhiteSpace(request.WoWorkOrderNumber))
+            {
+                return BadRequest(new ApiResponse<CreateServiceRequestResponse>
+                {
+                    Success = false,
+                    Message = "Service Request number and Work Order number are required"
+                });
+            }
+
+            var result = await _dataService.InsertServiceRequestAsync(request, UserId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("CreateServiceRequest", $"Created SR {result.SrId} ({result.SrRequestNumber})", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<CreateServiceRequestResponse>
+            {
+                Success = true,
+                Message = "Service Request created successfully",
+                Data = result,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateServiceRequest", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error creating service request {RequestNumber}", request?.SrRequestNumber);
+            return StatusCode(500, new ApiResponse<CreateServiceRequestResponse>
+            {
+                Success = false,
+                Message = "An error occurred while creating the service request"
+            });
+        }
+    }
+
+    // Assign technicians to a just-created SR (New Service Request wizard, step 6).
+    // One WO per tech: first tech takes the primary WO, the rest get new numbered WOs.
+    [HttpPost("servicerequests/{srId:int}/technicians")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AssignServiceRequestTechniciansResponse>>> AssignServiceRequestTechnicians(int srId, [FromBody] AssignServiceRequestTechniciansRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null || request.Assignments == null || request.Assignments.Count == 0)
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "At least one technician assignment is required"
+                });
+            }
+
+            request.SrId = srId;
+
+            if (request.Assignments.Any(a => a.UId <= 0))
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "Each assignment requires a technician"
+                });
+            }
+
+            if (request.Assignments.Any(a => a.StartDateTimeUtc >= a.EndDateTimeUtc))
+            {
+                return BadRequest(new ApiResponse<AssignServiceRequestTechniciansResponse>
+                {
+                    Success = false,
+                    Message = "Each assignment's start must be before its end"
+                });
+            }
+
+            var result = await _dataService.AssignServiceRequestTechniciansAsync(request, UserId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("AssignServiceRequestTechnicians",
+                $"Assigned {result.WorkOrders.Count} technician(s) to SR {srId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<AssignServiceRequestTechniciansResponse>
+            {
+                Success = true,
+                Message = "Technicians assigned successfully",
+                Data = result,
+                Count = result.WorkOrders.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("AssignServiceRequestTechnicians", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error assigning technicians to service request {SrId}", srId);
+            return StatusCode(500, new ApiResponse<AssignServiceRequestTechniciansResponse>
+            {
+                Success = false,
+                Message = "An error occurred while assigning technicians"
+            });
+        }
+    }
+
+    // Double-booking check for the wizard: overlapping open WOs for each proposed
+    // tech + window. Informational only — the UI warns but still allows assignment.
+    [HttpPost("servicerequests/technician-conflicts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechScheduleConflictDto>>>> GetTechScheduleConflicts([FromBody] TechScheduleConflictsRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (request == null || request.Assignments == null || request.Assignments.Count == 0)
+            {
+                return Ok(new ApiResponse<List<TechScheduleConflictDto>>
+                {
+                    Success = true,
+                    Message = "No assignments to check",
+                    Data = new List<TechScheduleConflictDto>(),
+                    Count = 0
+                });
+            }
+
+            var conflicts = await _dataService.GetTechScheduleConflictsAsync(request);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetTechScheduleConflicts",
+                $"Checked {request.Assignments.Count} assignment(s), found {conflicts.Count} conflict(s)", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<TechScheduleConflictDto>>
+            {
+                Success = true,
+                Message = conflicts.Count > 0 ? "Schedule conflicts found" : "No schedule conflicts",
+                Data = conflicts,
+                Count = conflicts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTechScheduleConflicts", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error checking technician schedule conflicts");
+            return StatusCode(500, new ApiResponse<List<TechScheduleConflictDto>>
+            {
+                Success = false,
+                Message = "An error occurred while checking schedule conflicts"
+            });
+        }
+    }
+
+    // Trades + labor rates for a company, scoped for the New Service Request flow.
+    // Mirrors the CompanyAdminOnly GetCompanyTrades data but is available to any
+    // authenticated scheduler (creators are not necessarily company admins).
+    [HttpGet("servicerequests/companies/{xcccId:int}/laborrates")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<LaborRateDto>>>> GetServiceRequestLaborRates(int xcccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var laborRates = await _dataService.GetCompanyTradesAsync(xcccId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestLaborRates", $"Retrieved {laborRates.Count} labor rates for company {xcccId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<LaborRateDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {laborRates.Count} labor rates",
+                Data = laborRates,
+                Count = laborRates.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestLaborRates", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving labor rates for company {XcccId}", xcccId);
+            return StatusCode(500, new ApiResponse<List<LaborRateDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving labor rates"
+            });
+        }
+    }
+
+    // Record a client-side attachment upload failure to the audit log so it can be
+    // investigated later (office users won't check the browser console).
+    [HttpPost("servicerequests/attachment-error")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> LogServiceRequestAttachmentError([FromBody] ServiceRequestAttachmentErrorRequest request)
+    {
+        try
+        {
+            var detail = $"SR {request?.SrId}, file '{request?.FileName}': {request?.Message}";
+            await LogAuditErrorAsync("New Service Request - Attachment Upload Failed", new Exception(detail));
+            return Ok(new ApiResponse<object> { Success = true, Message = "Logged" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to log service request attachment error");
+            return StatusCode(500, new ApiResponse<object> { Success = false, Message = "Failed to log" });
+        }
+    }
+
+    // Per-company priorities (arrival-time SLAs) scoped for the New Service Request flow.
+    [HttpGet("servicerequests/companies/{companyId:int}/priorities")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CompanyPriorityDto>>>> GetServiceRequestPriorities(int companyId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var priorities = await _dataService.GetCompanyPrioritiesAsync(companyId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestPriorities", $"Retrieved {priorities.Count} priorities for company {companyId}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {priorities.Count} priorities",
+                Data = priorities,
+                Count = priorities.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestPriorities", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving priorities for company {CompanyId}", companyId);
+            return StatusCode(500, new ApiResponse<List<CompanyPriorityDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving priorities"
+            });
+        }
+    }
+
+    // Tech guidance: per-technician distance + 7-day utilization for a trade/job zip.
+    [HttpGet("servicerequests/tech-utilization")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<TechUtilizationDto>>>> GetServiceRequestTechUtilization([FromQuery] int tId, [FromQuery] string? zip)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (tId <= 0)
+            {
+                return BadRequest(new ApiResponse<List<TechUtilizationDto>>
+                {
+                    Success = false,
+                    Message = "A trade (tId) is required"
+                });
+            }
+
+            var techs = await _dataService.GetTechUtilizationAsync(tId, zip ?? string.Empty);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestTechUtilization", $"Retrieved {techs.Count} techs for trade {tId}, zip '{zip}'", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<List<TechUtilizationDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {techs.Count} technicians",
+                Data = techs,
+                Count = techs.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestTechUtilization", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error retrieving tech utilization for trade {TId}", tId);
+            return StatusCode(500, new ApiResponse<List<TechUtilizationDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving tech utilization"
+            });
+        }
+    }
+
+    // NTE guidance: recommended Not-To-Exceed from historical jobs for a company + sub-trade.
+    [HttpGet("servicerequests/nte-estimate")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<NteEstimateDto>>> GetServiceRequestNteEstimate([FromQuery] int xcccId, [FromQuery] int tId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (xcccId <= 0 || tId <= 0)
+            {
+                return BadRequest(new ApiResponse<NteEstimateDto>
+                {
+                    Success = false,
+                    Message = "Company (xcccId) and trade (tId) are required"
+                });
+            }
+
+            var estimate = await _dataService.GetNteEstimateAsync(xcccId, tId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("GetServiceRequestNteEstimate", $"NTE estimate for company {xcccId}, trade {tId}: {estimate.JobCount} jobs, enough={estimate.HasEnoughHistory}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<NteEstimateDto>
+            {
+                Success = true,
+                Message = "NTE estimate retrieved",
+                Data = estimate,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetServiceRequestNteEstimate", ex, stopwatch.Elapsed);
+            _logger.LogError(ex, "Error building NTE estimate for company {XcccId}, trade {TId}", xcccId, tId);
+            return StatusCode(500, new ApiResponse<NteEstimateDto>
+            {
+                Success = false,
+                Message = "An error occurred while building the NTE estimate"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Employee Attachments
+
+    [HttpGet("employees/{id:int}/attachments")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<EmployeeAttachmentDto>>>> GetEmployeeAttachments(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting attachments for employee {EmployeeId}", id);
+            
+            // Get attachments
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetEmployeeAttachments", $"Retrieved {attachments.Count} attachments for employee {id}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<EmployeeAttachmentDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {attachments.Count} attachments",
+                Data = attachments,
+                Count = attachments.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetEmployeeAttachments", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving attachments for employee {EmployeeId}", id);
+            
+            return StatusCode(500, new ApiResponse<List<EmployeeAttachmentDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving attachments",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/certifications-licensing")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<CertificationsLicensingReportDto>>>> GetCertificationsLicensingReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting certifications and licensing report");
+            
+            // Get all attachments with employee and type information
+            var reportData = await _dataService.GetCertificationsLicensingReportAsync();
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCertificationsLicensingReport", $"Retrieved {reportData.Count} attachment records", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {reportData.Count} certification and licensing records",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCertificationsLicensingReport", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving certifications and licensing report");
+            
+            return StatusCode(500, new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the report",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/certifications-licensing/tech")]
+    public async Task<ActionResult<ApiResponse<List<CertificationsLicensingReportDto>>>> GetTechCertificationsLicensingReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting tech certifications and licensing report for user {UserId}", UserId);
+            
+            // Get certifications and licensing for current user only
+            var reportData = await _dataService.GetTechCertificationsLicensingReportAsync(UserId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetTechCertificationsLicensingReport", $"Retrieved {reportData.Count} attachment records", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {reportData.Count} certification and licensing records",
+                Data = reportData,
+                Count = reportData.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetTechCertificationsLicensingReport", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error retrieving tech certifications and licensing report");
+            
+            return StatusCode(500, new ApiResponse<List<CertificationsLicensingReportDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the report",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/change-history")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetChangeHistory(
+        [FromQuery] string? fromDate = null,
+        [FromQuery] string? toDate = null,
+        [FromQuery] string? username = null,
+        [FromQuery] string? description = null,
+        [FromQuery] string? objectType = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting change history report. FromDate: {FromDate}, ToDate: {ToDate}, Page: {Page}", fromDate, toDate, page);
+            
+            // Parse dates from strings
+            DateTime startDate = DateTime.Now.AddDays(-30); // Default 30 days ago
+            DateTime endDate = DateTime.Now;
+            
+            if (!string.IsNullOrEmpty(fromDate) && DateTime.TryParse(fromDate, out var parsedFromDate))
+            {
+                startDate = parsedFromDate;
+            }
+            
+            if (!string.IsNullOrEmpty(toDate) && DateTime.TryParse(toDate, out var parsedToDate))
+            {
+                // Include the entire day by setting to end of day
+                endDate = parsedToDate.AddDays(1).AddSeconds(-1);
+            }
+            else
+            {
+                // Include the entire today
+                endDate = endDate.AddDays(1).AddSeconds(-1);
+            }
+            
+            // Validate pagination
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500; // Cap at 500 per page
+            
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            var records = new List<dynamic>();
+            int totalRecords = 0;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Get total count first
+                const string countSql = @"
+                    SELECT COUNT(*) as TotalCount
+                    FROM AuditCritical
+                    WHERE ac_insertdatetime >= @StartDate
+                    AND ac_insertdatetime <= @EndDate
+                    AND (@Username IS NULL OR @Username = '' OR ac_username LIKE '%' + @Username + '%')
+                    AND (@Description IS NULL OR @Description = '' OR ac_description LIKE '%' + @Description + '%')
+                    AND (@ObjectType IS NULL OR @ObjectType = '' OR ac_description LIKE '%' + @ObjectType + '%')";
+
+                using (var countCmd = new SqlCommand(countSql, connection))
+                {
+                    countCmd.Parameters.AddWithValue("@StartDate", startDate);
+                    countCmd.Parameters.AddWithValue("@EndDate", endDate);
+                    countCmd.Parameters.AddWithValue("@Username", (object?)username ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@Description", (object?)description ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@ObjectType", (object?)objectType ?? DBNull.Value);
+                    
+                    var result = await countCmd.ExecuteScalarAsync();
+                    totalRecords = result != null ? Convert.ToInt32(result) : 0;
+                }
+
+                // Get paginated records
+                const string dataSql = @"
+                    SELECT 
+                        ac_id,
+                        ac_insertdatetime,
+                        ac_username,
+                        ac_name,
+                        ac_description,
+                        ac_detail
+                    FROM AuditCritical
+                    WHERE ac_insertdatetime >= @StartDate
+                    AND ac_insertdatetime <= @EndDate
+                    AND (@Username IS NULL OR @Username = '' OR ac_username LIKE '%' + @Username + '%')
+                    AND (@Description IS NULL OR @Description = '' OR ac_description LIKE '%' + @Description + '%')
+                    AND (@ObjectType IS NULL OR @ObjectType = '' OR ac_description LIKE '%' + @ObjectType + '%')
+                    ORDER BY ac_insertdatetime DESC
+                    OFFSET @Offset ROWS
+                    FETCH NEXT @PageSize ROWS ONLY";
+
+                using (var dataCmd = new SqlCommand(dataSql, connection))
+                {
+                    dataCmd.Parameters.AddWithValue("@StartDate", startDate);
+                    dataCmd.Parameters.AddWithValue("@EndDate", endDate);
+                    dataCmd.Parameters.AddWithValue("@Username", (object?)username ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Description", (object?)description ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@ObjectType", (object?)objectType ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    dataCmd.Parameters.AddWithValue("@PageSize", pageSize);
+
+                    using (var reader = await dataCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                ac_id = reader["ac_id"],
+                                ac_insertdatetime = reader["ac_insertdatetime"],
+                                ac_username = reader["ac_username"]?.ToString() ?? string.Empty,
+                                ac_name = reader["ac_name"]?.ToString() ?? string.Empty,
+                                ac_description = reader["ac_description"]?.ToString() ?? string.Empty,
+                                ac_detail = reader["ac_detail"]?.ToString()
+                            });
+                        }
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} change history records",
+                Data = new
+                {
+                    records = records,
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    }
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving change history report");
+
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the change history",
+                Count = 0
+            });
+        }
+    }
+
+    // ============================================================
+    // Service Request Activity Report
+    //   - search-sr: prefix lookup on sr_requestnumber so the UI can show a picker
+    //   - sr-activity: paged ServiceRequestActivity rows for a given sr_id with action/entity/user filters
+    // ============================================================
+
+    [HttpGet("reports/sr-activity/search-sr")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> SearchServiceRequestForActivity(
+        [FromQuery] string? q = null,
+        [FromQuery] int limit = 25)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                return Ok(new ApiResponse<dynamic>
+                {
+                    Success = true,
+                    Message = "Empty query",
+                    Data = new { records = new List<dynamic>() },
+                    Count = 0
+                });
+            }
+
+            if (limit < 1) limit = 25;
+            if (limit > 100) limit = 100;
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            var records = new List<dynamic>();
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Contains match so "8444" finds "20260513-8444". Prefix matches still
+                // hit the index well enough at typical SR volumes; if performance becomes
+                // an issue, switch to prefix-only and add a full-text or trailing-substring
+                // strategy.
+                // Also matches by sr_id when q is purely numeric so callers (e.g. the
+                // Quote AI page) can bootstrap from ?srId=N via the same endpoint.
+                var trimmed = q.Trim();
+                var isNumeric = int.TryParse(trimmed, out var qAsInt);
+
+                const string sql = @"
+                    SELECT TOP (@Limit)
+                        sr.sr_id,
+                        sr.sr_requestnumber,
+                        sr.sr_summary,
+                        sr.sr_insertdatetime
+                    FROM ServiceRequest sr
+                    WHERE sr.sr_requestnumber LIKE '%' + @Q + '%'
+                       OR (@IsNumeric = 1 AND sr.sr_id = @QInt)
+                    ORDER BY sr.sr_insertdatetime DESC;";
+
+                using (var cmd = new SqlCommand(sql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@Q", trimmed);
+                    cmd.Parameters.AddWithValue("@Limit", limit);
+                    cmd.Parameters.AddWithValue("@IsNumeric", isNumeric ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@QInt", isNumeric ? (object)qAsInt : DBNull.Value);
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                sr_id = reader["sr_id"],
+                                sr_requestnumber = reader["sr_requestnumber"]?.ToString() ?? string.Empty,
+                                sr_summary = reader["sr_summary"]?.ToString() ?? string.Empty,
+                                sr_insertdatetime = reader["sr_insertdatetime"]
+                            });
+                        }
+                    }
+                }
+            }
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Found {records.Count} matching service request(s)",
+                Data = new { records = records },
+                Count = records.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching service requests for activity report");
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while searching service requests",
+                Count = 0
+            });
+        }
+    }
+
+    // Resolves the trip-charge cascade onto the DTO, in-place. Mirrors
+    // EvoData.UpdateServiceRequestTripChargeBilledToDefault. Sets amount,
+    // source, and a human summary used by the chip and PDF.
+    private static void ResolveTripCharge(
+        SrLaborContextDto dto,
+        decimal? tradeFlat,
+        decimal? srPercent,
+        decimal? companyPercent)
+    {
+        // 1. Trade-level flat dollar — wins outright when configured > 0.
+        if (tradeFlat.HasValue && tradeFlat.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(tradeFlat.Value, 2);
+            dto.TripChargeSource  = "trade-flat";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} (trade flat)";
+            return;
+        }
+
+        // 2/3. Percent-of-hourly — needs an hourly rate to compute against.
+        if (!dto.RatePerHour.HasValue || dto.RatePerHour.Value <= 0)
+        {
+            dto.TripChargeSource  = "none";
+            dto.TripChargeSummary = "Not configured";
+            return;
+        }
+
+        if (srPercent.HasValue && srPercent.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(dto.RatePerHour.Value * (srPercent.Value / 100m), 2);
+            dto.TripChargeSource  = "sr-percent";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} ({srPercent.Value:0.##}% of hourly)";
+            return;
+        }
+
+        if (companyPercent.HasValue && companyPercent.Value > 0)
+        {
+            dto.TripChargeAmount  = decimal.Round(dto.RatePerHour.Value * (companyPercent.Value / 100m), 2);
+            dto.TripChargeSource  = "company-percent";
+            dto.TripChargeSummary = $"${dto.TripChargeAmount:0.00} ({companyPercent.Value:0.##}% of hourly, company default)";
+            return;
+        }
+
+        dto.TripChargeSource  = "none";
+        dto.TripChargeSummary = "Not configured";
+    }
+
+    // Resolves the customer, call center, trade, and hourly labor rate for an
+    // SR. The active rate column on LaborRate is driven by LaborRateType.lrt_fieldname
+    // (e.g. 'lr_rateregular'), so we CASE on it to pull the right value. All
+    // joins are LEFT so the SR row itself always comes back even if rate config
+    // is missing — the UI shows a warning in that case.
+    [HttpGet("service-requests/{srId:int}/labor-context")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<SrLaborContextDto>>> GetServiceRequestLaborContext(int srId)
+    {
+        try
+        {
+            if (srId <= 0)
+                return BadRequest(new ApiResponse<SrLaborContextDto> { Success = false, Message = "srId is required" });
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+                return StatusCode(500, new ApiResponse<SrLaborContextDto> { Success = false, Message = "Database connection unavailable" });
+
+            const string sql = @"
+                SELECT
+                    sr.sr_id,
+                    sr.sr_requestnumber,
+                    c.c_name           AS Company,
+                    cc.cc_name         AS CallCenter,
+                    t.t_trade          AS Trade,
+                    lrt.lrt_laborratetype AS RateType,
+                    lrt.lrt_fieldname  AS RateField,
+                    CASE lrt.lrt_fieldname
+                        WHEN 'lr_rateregular'             THEN lr.lr_rateregular
+                        WHEN 'lr_rateovertime'            THEN lr.lr_rateovertime
+                        WHEN 'lr_rateholiday'             THEN lr.lr_rateholiday
+                        WHEN 'lr_ratespecial'             THEN lr.lr_ratespecial
+                        WHEN 'lr_ratescheduledafterhours' THEN lr.lr_ratescheduledafterhours
+                        WHEN 'lr_rateregulardiscount'     THEN lr.lr_rateregulardiscount
+                        ELSE NULL
+                    END                AS RateValue,
+                    lr.lr_tripcharge        AS TradeTripChargeFlat,    -- $ flat at trade level
+                    sr.sr_tripcharge_quote  AS SrTripChargePercent,    -- % of hourly on the SR
+                    xccc.xccc_tripcharge    AS CompanyTripChargePercent -- % of hourly company default
+                FROM ServiceRequest sr
+                LEFT JOIN xrefCompanyCallCenter xccc ON xccc.xccc_id = sr.xccc_id
+                LEFT JOIN Company c                  ON c.c_id      = xccc.c_id
+                LEFT JOIN CallCenter cc              ON cc.cc_id    = xccc.cc_id
+                LEFT JOIN Trade t                    ON t.t_id      = sr.t_id
+                LEFT JOIN LaborRateType lrt          ON lrt.lrt_id  = sr.lrt_id
+                LEFT JOIN LaborRate lr               ON lr.t_id = sr.t_id
+                                                     AND lr.xccc_id = sr.xccc_id
+                                                     AND lr.lr_flatorhourly = 'Hourly'
+                WHERE sr.sr_id = @SrId;";
+
+            using var connection = new SqlConnection(connectionString);
+            using var cmd = new SqlCommand(sql, connection);
+            cmd.Parameters.AddWithValue("@SrId", srId);
+            await connection.OpenAsync();
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+                return NotFound(new ApiResponse<SrLaborContextDto> { Success = false, Message = $"Service request {srId} not found" });
+
+            var dto = new SrLaborContextDto
+            {
+                SrId          = Convert.ToInt32(reader["sr_id"]),
+                RequestNumber = reader["sr_requestnumber"]?.ToString() ?? string.Empty,
+                Company       = reader["Company"]    as string,
+                CallCenter    = reader["CallCenter"] as string,
+                Trade         = reader["Trade"]      as string,
+                RateType      = reader["RateType"]   as string,
+                RateField     = reader["RateField"]  as string,
+                RatePerHour   = reader["RateValue"]  is decimal dec ? dec :
+                                reader["RateValue"]  is DBNull    ? null :
+                                Convert.ToDecimal(reader["RateValue"])
+            };
+
+            // Trip-charge cascade (matches evo's UpdateServiceRequestTripChargeBilledToDefault):
+            //   1. trade-flat $   (LaborRate.lr_tripcharge > 0)
+            //   2. sr-percent %   (sr.sr_tripcharge_quote * hourly / 100)
+            //   3. company-%      (xccc.xccc_tripcharge   * hourly / 100)
+            // All read in one shot from the same query above.
+            decimal? tradeFlat = reader["TradeTripChargeFlat"]        is DBNull ? null : Convert.ToDecimal(reader["TradeTripChargeFlat"]);
+            decimal? srPercent = reader["SrTripChargePercent"]        is DBNull ? null : Convert.ToDecimal(reader["SrTripChargePercent"]);
+            decimal? coPercent = reader["CompanyTripChargePercent"]   is DBNull ? null : Convert.ToDecimal(reader["CompanyTripChargePercent"]);
+
+            ResolveTripCharge(dto, tradeFlat, srPercent, coPercent);
+
+            reader.Close();
+
+            // Markup/tax inputs — same source the Quote AI calculator uses,
+            // returned alongside labor data so the UI chip can show a one-line
+            // summary ("Markup: tiered 15-30%") without a second round trip.
+            try
+            {
+                dto.MarkupConfig = await _markupConfigLoader.LoadAsync(srId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Markup config load failed for srId {SrId}; continuing without it", srId);
+            }
+
+            return Ok(new ApiResponse<SrLaborContextDto>
+            {
+                Success = true,
+                Message = "OK",
+                Data = dto,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading labor context for srId {SrId}", srId);
+            return StatusCode(500, new ApiResponse<SrLaborContextDto>
+            {
+                Success = false,
+                Message = "Failed to load labor context"
+            });
+        }
+    }
+
+    [HttpGet("reports/sr-activity")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetServiceRequestActivity(
+        [FromQuery] int srId,
+        [FromQuery] string? actions = null,    // comma-separated: "I,U,D"
+        [FromQuery] string? entities = null,   // comma-separated entity_name values
+        [FromQuery] string? users = null,      // comma-separated app_user values
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
+    {
+        try
+        {
+            if (srId <= 0)
+            {
+                return BadRequest(new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "srId is required",
+                    Count = 0
+                });
+            }
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 100;
+            if (pageSize > 500) pageSize = 500;
+
+            // Three-state filter semantics per dimension:
+            //   - param NULL (not present in query string) → no filter applied (show all)
+            //   - param present (incl. empty "") → apply explicit filter
+            //   - empty csv → STRING_SPLIT returns row with '' → matches nothing → 0 rows
+            // We normalize via SplitCsv so " I , U " becomes "I,U".
+            string? actionsCsv = actions == null ? null : string.Join(",", SplitCsv(actions));
+            string? entitiesCsv = entities == null ? null : string.Join(",", SplitCsv(entities));
+            string? usersCsv = users == null ? null : string.Join(",", SplitCsv(users));
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            // Build dynamic IN-clauses. STRING_SPLIT is available on SQL Server 2016+.
+            // Use NULL/empty sentinel to skip a filter.
+            string filterClause =
+                @" AND (@ActionsCsv IS NULL OR action IN (SELECT value FROM STRING_SPLIT(@ActionsCsv, ',')))" +
+                @" AND (@EntitiesCsv IS NULL OR entity_name IN (SELECT value FROM STRING_SPLIT(@EntitiesCsv, ',')))" +
+                @" AND (@UsersCsv IS NULL OR ISNULL(app_user, N'(none)') IN (SELECT value FROM STRING_SPLIT(@UsersCsv, ',')))";
+
+            var records = new List<dynamic>();
+            int totalRecords = 0;
+            List<dynamic> entityOptions = new List<dynamic>();
+            List<dynamic> userOptions = new List<dynamic>();
+            List<dynamic> actionOptions = new List<dynamic>();
+            string? srRequestNumber = null;
+            string? srSummary = null;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Look up the SR request number + summary for the response header
+                using (var srCmd = new SqlCommand("SELECT sr_requestnumber, sr_summary FROM ServiceRequest WHERE sr_id = @SrId", connection))
+                {
+                    srCmd.Parameters.AddWithValue("@SrId", srId);
+                    using (var reader = await srCmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            srRequestNumber = reader["sr_requestnumber"]?.ToString();
+                            srSummary = reader["sr_summary"]?.ToString();
+                        }
+                    }
+                }
+
+                // Identify "flip-flop" activity rows: a single-field UPDATE that's immediately
+                // reverted by another single-field UPDATE on the same entity within 3s
+                // (e.g. sr_tripcharge_worked_billed 125→100 followed by 100→125 in the same second).
+                // Both rows in the pair are stashed in a session-scoped temp table and excluded
+                // from the count, data, and option-count queries below.
+                //
+                // *_modifieddatetime columns are ignored when counting field diffs — they
+                // auto-stamp on every UPDATE and would otherwise mask all single-field updates.
+                const string flipFlopSql = @"
+                    CREATE TABLE #FlipFlopSraIds (sra_id BIGINT PRIMARY KEY);
+
+                    ;WITH UpdateCandidates AS (
+                        SELECT a.sra_id, a.sra_insertdatetime, a.entity_name, a.entity_id, a.old_values, a.new_values
+                        FROM dbo.ServiceRequestActivity a
+                        WHERE a.sr_id = @SrId AND a.action = 'U'
+                          AND EXISTS (
+                              SELECT 1 FROM dbo.ServiceRequestActivity b
+                              WHERE b.sr_id = a.sr_id AND b.action = 'U'
+                                AND b.entity_name = a.entity_name
+                                AND ISNULL(b.entity_id, -1) = ISNULL(a.entity_id, -1)
+                                AND b.sra_id <> a.sra_id
+                                AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
+                          )
+                    ),
+                    FieldDiffs AS (
+                        SELECT uc.sra_id, uc.sra_insertdatetime, uc.entity_name, uc.entity_id,
+                               ov.[key] AS field_name,
+                               ov.[value] AS old_val,
+                               nv.[value] AS new_val
+                        FROM UpdateCandidates uc
+                        CROSS APPLY OPENJSON(uc.old_values) ov
+                        CROSS APPLY (SELECT [value] FROM OPENJSON(uc.new_values) WHERE [key] = ov.[key]) nv
+                        WHERE ov.[key] NOT LIKE '%[_]modifieddatetime'
+                          AND ISNULL(ov.[value], N'') <> ISNULL(nv.[value], N'')
+                    ),
+                    SingleFieldUpdates AS (
+                        SELECT fd.sra_id, fd.sra_insertdatetime, fd.entity_name, fd.entity_id,
+                               fd.field_name, fd.old_val, fd.new_val
+                        FROM FieldDiffs fd
+                        WHERE fd.sra_id IN (SELECT sra_id FROM FieldDiffs GROUP BY sra_id HAVING COUNT(*) = 1)
+                    )
+                    INSERT INTO #FlipFlopSraIds (sra_id)
+                    SELECT DISTINCT a.sra_id
+                    FROM SingleFieldUpdates a
+                    INNER JOIN SingleFieldUpdates b
+                        ON a.entity_name = b.entity_name
+                       AND ISNULL(a.entity_id, -1) = ISNULL(b.entity_id, -1)
+                       AND a.field_name = b.field_name
+                       AND a.sra_id <> b.sra_id
+                       AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
+                       AND ISNULL(a.old_val, N'') = ISNULL(b.new_val, N'')
+                       AND ISNULL(a.new_val, N'') = ISNULL(b.old_val, N'');";
+
+                using (var flipFlopCmd = new SqlCommand(flipFlopSql, connection))
+                {
+                    flipFlopCmd.Parameters.AddWithValue("@SrId", srId);
+                    await flipFlopCmd.ExecuteNonQueryAsync();
+                }
+
+                const string flipFlopExclusion = " AND sra_id NOT IN (SELECT sra_id FROM #FlipFlopSraIds)";
+
+                // Count total filtered rows
+                string countSql = @"
+                    SELECT COUNT(*)
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + flipFlopExclusion + filterClause;
+
+                using (var countCmd = new SqlCommand(countSql, connection))
+                {
+                    countCmd.Parameters.AddWithValue("@SrId", srId);
+                    countCmd.Parameters.AddWithValue("@ActionsCsv", (object?)actionsCsv ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@EntitiesCsv", (object?)entitiesCsv ?? DBNull.Value);
+                    countCmd.Parameters.AddWithValue("@UsersCsv", (object?)usersCsv ?? DBNull.Value);
+                    var countResult = await countCmd.ExecuteScalarAsync();
+                    totalRecords = countResult != null ? Convert.ToInt32(countResult) : 0;
+                }
+
+                // Paged records
+                string dataSql = @"
+                    SELECT
+                        sra_id, sra_insertdatetime, sr_id, entity_name, entity_id, action,
+                        old_values, new_values, app_user, app_user_id, app_source, sql_login, host_name
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + flipFlopExclusion + filterClause + @"
+                    ORDER BY sra_insertdatetime DESC, sra_id DESC
+                    OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+                using (var dataCmd = new SqlCommand(dataSql, connection))
+                {
+                    dataCmd.Parameters.AddWithValue("@SrId", srId);
+                    dataCmd.Parameters.AddWithValue("@ActionsCsv", (object?)actionsCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@EntitiesCsv", (object?)entitiesCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@UsersCsv", (object?)usersCsv ?? DBNull.Value);
+                    dataCmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    dataCmd.Parameters.AddWithValue("@PageSize", pageSize);
+                    using (var reader = await dataCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            records.Add(new
+                            {
+                                sra_id = reader["sra_id"],
+                                sra_insertdatetime = reader["sra_insertdatetime"],
+                                sr_id = reader["sr_id"] == DBNull.Value ? null : (int?)Convert.ToInt32(reader["sr_id"]),
+                                entity_name = reader["entity_name"]?.ToString() ?? string.Empty,
+                                entity_id = reader["entity_id"] == DBNull.Value ? null : (long?)Convert.ToInt64(reader["entity_id"]),
+                                action = reader["action"]?.ToString() ?? string.Empty,
+                                old_values = reader["old_values"] == DBNull.Value ? null : reader["old_values"]?.ToString(),
+                                new_values = reader["new_values"] == DBNull.Value ? null : reader["new_values"]?.ToString(),
+                                app_user = reader["app_user"]?.ToString(),
+                                app_user_id = reader["app_user_id"] == DBNull.Value ? null : (int?)Convert.ToInt32(reader["app_user_id"]),
+                                app_source = reader["app_source"]?.ToString(),
+                                sql_login = reader["sql_login"]?.ToString(),
+                                host_name = reader["host_name"]?.ToString()
+                            });
+                        }
+                    }
+                }
+
+                // Filter option lists (unfiltered counts for this SR — so the sidebar shows everything available).
+                // Flip-flop rows are excluded here too, so the sidebar tallies match what's actually displayed.
+                string optionsSql = @"
+                    SELECT 'entity' AS kind, entity_name AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
+                    GROUP BY entity_name
+                    UNION ALL
+                    SELECT 'user' AS kind, ISNULL(app_user, N'(none)') AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
+                    GROUP BY ISNULL(app_user, N'(none)')
+                    UNION ALL
+                    SELECT 'action' AS kind, action AS value, COUNT(*) AS n
+                    FROM dbo.ServiceRequestActivity
+                    WHERE sr_id = @SrId" + flipFlopExclusion + @"
+                    GROUP BY action;";
+
+                using (var optCmd = new SqlCommand(optionsSql, connection))
+                {
+                    optCmd.Parameters.AddWithValue("@SrId", srId);
+                    using (var reader = await optCmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            var kind = reader["kind"]?.ToString();
+                            var item = new
+                            {
+                                value = reader["value"]?.ToString() ?? string.Empty,
+                                count = Convert.ToInt32(reader["n"])
+                            };
+                            if (kind == "entity") entityOptions.Add(item);
+                            else if (kind == "user") userOptions.Add(item);
+                            else if (kind == "action") actionOptions.Add(item);
+                        }
+                    }
+                }
+            }
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} activity record(s)",
+                Data = new
+                {
+                    sr_id = srId,
+                    sr_requestnumber = srRequestNumber,
+                    sr_summary = srSummary,
+                    records = records,
+                    options = new
+                    {
+                        actions = actionOptions,
+                        entities = entityOptions,
+                        users = userOptions
+                    },
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    }
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving service request activity report");
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the service request activity",
+                Count = 0
+            });
+        }
+    }
+
+    private static List<string> SplitCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return new List<string>();
+        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                  .Select(s => s.Trim())
+                  .Where(s => s.Length > 0)
+                  .ToList();
+    }
+
+    [HttpGet("reports/status-change-history")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetStatusChangeHistory(
+        [FromQuery] string? fromDate = null,
+        [FromQuery] string? toDate = null,
+        [FromQuery] string? statusIds = null,
+        [FromQuery] string? srRequestNumber = null,
+        [FromQuery] int? tradeId = null,
+        [FromQuery] string? mode = "primary",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            bool isSecondary = string.Equals(mode, "secondary", StringComparison.OrdinalIgnoreCase);
+            _logger.LogInformation("Getting status change history report. Mode: {Mode}, FromDate: {FromDate}, ToDate: {ToDate}, StatusIds: {StatusIds}, Page: {Page}", mode, fromDate, toDate, statusIds, page);
+
+            var statusIdList = new List<int>();
+            if (!string.IsNullOrWhiteSpace(statusIds))
+            {
+                foreach (var part in statusIds.Split(','))
+                {
+                    if (int.TryParse(part.Trim(), out var id)) statusIdList.Add(id);
+                }
+            }
+
+            DateTime startDate = DateTime.Now.AddDays(-30);
+            DateTime endDate = DateTime.Now;
+
+            if (!string.IsNullOrEmpty(fromDate) && DateTime.TryParse(fromDate, out var parsedFromDate))
+            {
+                startDate = parsedFromDate;
+            }
+
+            if (!string.IsNullOrEmpty(toDate) && DateTime.TryParse(toDate, out var parsedToDate))
+            {
+                endDate = parsedToDate.AddDays(1).AddSeconds(-1);
+            }
+            else
+            {
+                endDate = endDate.AddDays(1).AddSeconds(-1);
+            }
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500;
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            // Mode-dependent column fragments used in the SQL below.
+            string pkCol        = isSecondary ? "ssc.ssc_id" : "sc.sc_id";
+            string dateCol      = isSecondary ? "ssc.ssc_insertdatetime" : "sc.sc_insertdatetime";
+            string minutesCol   = isSecondary ? "ssc.ssc_minutesinpriorstatus" : "sc.sc_minutesinpriorstatus";
+            string priorIdCol   = isSecondary ? "ssc.ss_id_prior" : "sc.s_id_prior";
+            string newIdCol     = isSecondary ? "ssc.ss_id_new"   : "sc.s_id_new";
+            string priorNameCol = isSecondary ? "sprior.ss_statussecondary" : "sprior.s_status";
+            string newNameCol   = isSecondary ? "snew.ss_statussecondary"   : "snew.s_status";
+
+            string fromJoins;
+            if (isSecondary)
+            {
+                fromJoins = @"
+                FROM StatusSecondaryChange ssc WITH (NOLOCK)
+                LEFT JOIN statussecondary sprior WITH (NOLOCK) ON ssc.ss_id_prior = sprior.ss_id
+                LEFT JOIN statussecondary snew   WITH (NOLOCK) ON ssc.ss_id_new   = snew.ss_id
+                LEFT JOIN status sparent      WITH (NOLOCK) ON snew.s_id = sparent.s_id
+                LEFT JOIN status spriorparent WITH (NOLOCK) ON sprior.s_id = spriorparent.s_id
+                LEFT JOIN workorder wo WITH (NOLOCK) ON ssc.wo_id = wo.wo_id
+                LEFT JOIN servicerequest sr WITH (NOLOCK) ON wo.sr_id = sr.sr_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id";
+            }
+            else
+            {
+                fromJoins = @"
+                FROM StatusChange sc WITH (NOLOCK)
+                LEFT JOIN status sprior WITH (NOLOCK) ON sc.s_id_prior = sprior.s_id
+                LEFT JOIN status snew   WITH (NOLOCK) ON sc.s_id_new   = snew.s_id
+                LEFT JOIN servicerequest sr WITH (NOLOCK) ON sc.sr_id = sr.sr_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id";
+            }
+
+            // Summary/options share this WHERE (no status filter so summary keeps the full funnel).
+            string sharedWhereNoStatus = $@"
+                WHERE {dateCol} >= @StartDate
+                  AND {dateCol} <= @EndDate
+                  AND (@SrRequestNumber IS NULL OR @SrRequestNumber = ''
+                       OR sr.sr_requestnumber LIKE '%' + @SrRequestNumber + '%')
+                  AND (@TradeId IS NULL OR sr.t_id = @TradeId)";
+
+            // Detail count/page apply the status filter on top (either prior OR new side).
+            string statusClause = string.Empty;
+            if (statusIdList.Count > 0)
+            {
+                var paramNames = statusIdList.Select((_, i) => $"@StatusId{i}").ToList();
+                var joined = string.Join(",", paramNames);
+                statusClause = $" AND ({newIdCol} IN ({joined}) OR {priorIdCol} IN ({joined}))";
+            }
+            string detailWhere = sharedWhereNoStatus + statusClause;
+
+            void AddStatusIdParams(SqlCommand cmd)
+            {
+                for (int i = 0; i < statusIdList.Count; i++)
+                {
+                    cmd.Parameters.AddWithValue($"@StatusId{i}", statusIdList[i]);
+                }
+            }
+
+            int totalUniqueSrs = 0;
+            var summary = new List<dynamic>();
+            var statusOptions = new List<dynamic>();
+            int totalRecords = 0;
+            var records = new List<dynamic>();
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // 1) Total unique SRs (summary denominator — at SR level in either mode)
+                string totalSql = "SELECT COUNT(DISTINCT sr.sr_id) " + fromJoins + sharedWhereNoStatus;
+                using (var cmd = new SqlCommand(totalSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    var result = await cmd.ExecuteScalarAsync();
+                    totalUniqueSrs = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
+                }
+
+                // 2) Summary grouped by new status
+                string summaryIdCol   = isSecondary ? "snew.ss_id" : "snew.s_id";
+                string summaryNameCol = isSecondary ? "snew.ss_statussecondary" : "snew.s_status";
+                string summarySql = $@"
+                    SELECT {summaryIdCol} AS SIdNew,
+                           {summaryNameCol} AS StatusNew,
+                           COUNT(DISTINCT sr.sr_id) AS UniqueSrCount,
+                           COUNT(*) AS TransitionCount,
+                           CAST(COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT sr.sr_id), 0) AS DECIMAL(18,2)) AS AvgTransitionsPerSr
+                    {fromJoins} {sharedWhereNoStatus}
+                    GROUP BY {summaryIdCol}, {summaryNameCol}
+                    ORDER BY COUNT(DISTINCT sr.sr_id) DESC";
+                using (var cmd = new SqlCommand(summarySql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        int uniqueSr = reader["UniqueSrCount"] != DBNull.Value ? Convert.ToInt32(reader["UniqueSrCount"]) : 0;
+                        decimal percent = totalUniqueSrs > 0
+                            ? Math.Round((decimal)uniqueSr * 100m / totalUniqueSrs, 2)
+                            : 0m;
+                        summary.Add(new
+                        {
+                            sIdNew = reader["SIdNew"] != DBNull.Value ? Convert.ToInt32(reader["SIdNew"]) : (int?)null,
+                            statusNew = reader["StatusNew"]?.ToString() ?? string.Empty,
+                            uniqueSrCount = uniqueSr,
+                            percentOfSrs = percent,
+                            transitionCount = reader["TransitionCount"] != DBNull.Value ? Convert.ToInt32(reader["TransitionCount"]) : 0,
+                            avgTransitionsPerSr = reader["AvgTransitionsPerSr"] != DBNull.Value ? Convert.ToDecimal(reader["AvgTransitionsPerSr"]) : 0m
+                        });
+                    }
+                }
+
+                // 3) Status options for the pill row (secondary mode includes color + parent primary)
+                string optionsSql;
+                if (isSecondary)
+                {
+                    optionsSql = $@"
+                        SELECT DISTINCT snew.ss_id AS SId, snew.ss_statussecondary AS Status,
+                               snew.ss_color AS Color, sparent.s_id AS ParentSId, sparent.s_status AS ParentStatus
+                        {fromJoins} {sharedWhereNoStatus}
+                        AND snew.ss_id IS NOT NULL
+                        ORDER BY sparent.s_status, snew.ss_statussecondary";
+                }
+                else
+                {
+                    optionsSql = $@"
+                        SELECT DISTINCT snew.s_id AS SId, snew.s_status AS Status
+                        {fromJoins} {sharedWhereNoStatus}
+                        AND snew.s_id IS NOT NULL
+                        ORDER BY snew.s_status";
+                }
+                using (var cmd = new SqlCommand(optionsSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (isSecondary)
+                        {
+                            statusOptions.Add(new
+                            {
+                                sId = Convert.ToInt32(reader["SId"]),
+                                status = reader["Status"]?.ToString() ?? string.Empty,
+                                color = reader["Color"]?.ToString() ?? string.Empty,
+                                parentSId = reader["ParentSId"] != DBNull.Value ? Convert.ToInt32(reader["ParentSId"]) : (int?)null,
+                                parentStatus = reader["ParentStatus"]?.ToString() ?? string.Empty
+                            });
+                        }
+                        else
+                        {
+                            statusOptions.Add(new
+                            {
+                                sId = Convert.ToInt32(reader["SId"]),
+                                status = reader["Status"]?.ToString() ?? string.Empty
+                            });
+                        }
+                    }
+                }
+
+                // 4) Detail count
+                string countSql = "SELECT COUNT(*) " + fromJoins + detailWhere;
+                using (var cmd = new SqlCommand(countSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    AddStatusIdParams(cmd);
+                    var result = await cmd.ExecuteScalarAsync();
+                    totalRecords = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
+                }
+
+                // 5) Detail page
+                string dataSql = $@"
+                    SELECT
+                        {pkCol} AS ChangeId,
+                        {(isSecondary ? "ssc.wo_id" : "CAST(NULL AS int)")} AS WoId,
+                        {(isSecondary ? "wo.wo_workordernumber" : "CAST(NULL AS varchar(50))")} AS WoNumber,
+                        sr.sr_id AS SrId,
+                        sr.sr_requestnumber AS SrRequestNumber,
+                        t.t_trade AS Trade,
+                        {priorNameCol} AS StatusPrior,
+                        {newNameCol} AS StatusNew,
+                        {(isSecondary ? "spriorparent.s_status" : "CAST(NULL AS varchar(50))")} AS StatusPriorParent,
+                        {(isSecondary ? "sparent.s_status"      : "CAST(NULL AS varchar(50))")} AS StatusNewParent,
+                        {minutesCol} AS MinutesInPriorStatus,
+                        CAST({minutesCol} / 60.0   AS DECIMAL(18,2)) AS HoursInPriorStatus,
+                        CAST({minutesCol} / 1440.0 AS DECIMAL(18,2)) AS DaysInPriorStatus,
+                        {dateCol} AS ChangeDateTime
+                    {fromJoins} {detailWhere}
+                    ORDER BY {pkCol} DESC
+                    OFFSET @Offset ROWS
+                    FETCH NEXT @PageSize ROWS ONLY";
+                using (var cmd = new SqlCommand(dataSql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@StartDate", startDate);
+                    cmd.Parameters.AddWithValue("@EndDate", endDate);
+                    cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
+                    AddStatusIdParams(cmd);
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        records.Add(new
+                        {
+                            changeId = Convert.ToInt32(reader["ChangeId"]),
+                            woId = reader["WoId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["WoId"]),
+                            woNumber = reader["WoNumber"] == DBNull.Value ? null : reader["WoNumber"]?.ToString(),
+                            srId = reader["SrId"] != DBNull.Value ? Convert.ToInt32(reader["SrId"]) : (int?)null,
+                            srRequestNumber = reader["SrRequestNumber"]?.ToString() ?? string.Empty,
+                            trade = reader["Trade"]?.ToString() ?? string.Empty,
+                            statusPrior = reader["StatusPrior"] == DBNull.Value ? null : reader["StatusPrior"]?.ToString(),
+                            statusNew = reader["StatusNew"]?.ToString() ?? string.Empty,
+                            statusPriorParent = reader["StatusPriorParent"] == DBNull.Value ? null : reader["StatusPriorParent"]?.ToString(),
+                            statusNewParent = reader["StatusNewParent"] == DBNull.Value ? null : reader["StatusNewParent"]?.ToString(),
+                            minutesInPriorStatus = reader["MinutesInPriorStatus"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["MinutesInPriorStatus"]),
+                            hoursInPriorStatus = reader["HoursInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["HoursInPriorStatus"]),
+                            daysInPriorStatus = reader["DaysInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["DaysInPriorStatus"]),
+                            changeDateTime = reader["ChangeDateTime"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["ChangeDateTime"])
+                        });
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} status change records",
+                Data = new
+                {
+                    mode = isSecondary ? "secondary" : "primary",
+                    records = records,
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    },
+                    summary = summary,
+                    totalUniqueSrs = totalUniqueSrs,
+                    statusOptions = statusOptions
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving status change history report");
+
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the status change history",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPost("employees/{id:int}/attachments")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> CreateEmployeeAttachment(int id)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating attachment for employee {EmployeeId}", id);
+
+            // Validate request
+            if (!Request.HasFormContentType)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Request must include multipart form data",
+                    Count = 0
+                });
+            }
+
+            var form = await Request.ReadFormAsync();
+            var file = form.Files.FirstOrDefault();
+
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "No file provided",
+                    Count = 0
+                });
+            }
+
+            // Validate file size (5MB)
+            if (file.Length > 5 * 1024 * 1024)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "File size exceeds 5MB limit",
+                    Count = 0
+                });
+            }
+
+            // Validate file type
+            var allowedMimes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf" };
+            if (!allowedMimes.Contains(file.ContentType))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "File type not allowed. Only images (JPG, PNG, GIF, WEBP) and PDF are allowed.",
+                    Count = 0
+                });
+            }
+
+            // Parse form fields
+            string? description = form["description"];
+            if (!int.TryParse(form["uat_id"], out var uatId))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Invalid or missing attachment type ID",
+                    Count = 0
+                });
+            }
+
+            string? issuingAuthority = form["xua_issuingauthority"];
+            string? dateExpires = form["xua_dateexpires"];
+
+            // TODO: In production, upload file to backend storage (Azure blob, EvoWS, etc)
+            // For now, we'll use the existing EvoWS uploadAttachment flow
+            // This would require integration with the file upload service
+
+            // Create attachment (placeholder - integration point with file upload)
+            int? attachmentId = await UploadFileToAttachmentServiceAsync(file, description);
+
+            if (!attachmentId.HasValue)
+            {
+                stopwatch.Stop();
+                // Log detailed error info to audit table for investigation
+                await LogAuditAsync("CreateEmployeeAttachment", new { 
+                    employeeId = id, 
+                    fileName = file.FileName, 
+                    fileSize = file.Length, 
+                    error = "Failed to upload file to EvoWS attachment service",
+                    detail = "Check application logs for UploadFileToAttachmentServiceAsync entries for detailed EvoWS response"
+                }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                    
+                return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Failed to upload file to attachment service. Please check the server logs for details.",
+                    Count = 0
+                });
+            }
+
+            // Create xrefUserAttachment record
+            var createRequest = new CreateEmployeeAttachmentRequest
+            {
+                description = description ?? string.Empty,
+                uat_id = uatId,
+                xua_issuingauthority = issuingAuthority ?? string.Empty,
+                xua_dateexpires = dateExpires ?? "Not Applicable"
+            };
+
+            var xuaId = await _dataService.CreateEmployeeAttachmentAsync(id, createRequest, attachmentId.Value);
+
+            if (!xuaId.HasValue)
+            {
+                stopwatch.Stop();
+                await LogAuditAsync("CreateEmployeeAttachment", new { employeeId = id, attachmentId = attachmentId, error = "Failed to create employee attachment record in database" }, stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+                
+                return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Failed to create employee attachment record",
+                    Count = 0
+                });
+            }
+
+            // Retrieve the created attachment
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            var createdAttachment = attachments.FirstOrDefault(a => a.xua_id == xuaId.Value);
+
+            stopwatch.Stop();
+            await LogOperationAsync("CreateEmployeeAttachment", $"Created attachment {xuaId} for employee {id}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = true,
+                Message = "Attachment created successfully",
+                Data = createdAttachment,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateEmployeeAttachment", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "CreateEmployeeAttachment: Error creating attachment for employee {EmployeeId} - Message: {Message}, Type: {ExceptionType}", 
+                id, ex.Message, ex.GetType().Name);
+            
+            return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = false,
+                Message = $"An error occurred while creating the attachment: {ex.Message}",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpPut("employees/{id:int}/attachments/{xuaId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<EmployeeAttachmentDto>>> UpdateEmployeeAttachment(int id, int xuaId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating attachment {XuaId} for employee {EmployeeId}", xuaId, id);
+
+            if (!Request.HasFormContentType)
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Request must include multipart form data",
+                    Count = 0
+                });
+            }
+
+            var form = await Request.ReadFormAsync();
+            var file = form.Files.FirstOrDefault();
+
+            // Parse form fields
+            string? description = form["description"];
+            if (!int.TryParse(form["uat_id"], out var uatId))
+            {
+                return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Invalid or missing attachment type ID",
+                    Count = 0
+                });
+            }
+
+            string? issuingAuthority = form["xua_issuingauthority"];
+            string? dateExpires = form["xua_dateexpires"];
+
+            int? newAttachmentId = null;
+
+            // If file provided, upload it and replace
+            if (file != null && file.Length > 0)
+            {
+                // Validate file size (5MB)
+                if (file.Length > 5 * 1024 * 1024)
+                {
+                    return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "File size exceeds 5MB limit",
+                        Count = 0
+                    });
+                }
+
+                // Validate file type
+                var allowedMimes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf" };
+                if (!allowedMimes.Contains(file.ContentType))
+                {
+                    return BadRequest(new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "File type not allowed. Only images (JPG, PNG, GIF, WEBP) and PDF are allowed.",
+                        Count = 0
+                    });
+                }
+
+                // Upload new file
+                newAttachmentId = await UploadFileToAttachmentServiceAsync(file, description);
+
+                if (!newAttachmentId.HasValue)
+                {
+                    return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+                    {
+                        Success = false,
+                        Message = "Failed to upload file",
+                        Count = 0
+                    });
+                }
+            }
+
+            // Update the xrefUserAttachment record
+            var updateRequest = new UpdateEmployeeAttachmentRequest
+            {
+                description = description ?? string.Empty,
+                uat_id = uatId,
+                xua_issuingauthority = issuingAuthority ?? string.Empty,
+                xua_dateexpires = dateExpires ?? "Not Applicable"
+            };
+
+            var success = await _dataService.UpdateEmployeeAttachmentAsync(id, xuaId, updateRequest, newAttachmentId);
+
+            if (!success)
+            {
+                return NotFound(new ApiResponse<EmployeeAttachmentDto>
+                {
+                    Success = false,
+                    Message = "Attachment not found or update failed",
+                    Count = 0
+                });
+            }
+
+            // Retrieve the updated attachment
+            var attachments = await _dataService.GetEmployeeAttachmentsAsync(id);
+            var updatedAttachment = attachments.FirstOrDefault(a => a.xua_id == xuaId);
+
+            stopwatch.Stop();
+            await LogOperationAsync("UpdateEmployeeAttachment", $"Updated attachment {xuaId} for employee {id}", stopwatch.Elapsed);
+
+            return Ok(new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = true,
+                Message = "Attachment updated successfully",
+                Data = updatedAttachment,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateEmployeeAttachment", ex, stopwatch.Elapsed);
+            
+            _logger.LogError(ex, "Error updating attachment {XuaId} for employee {EmployeeId}", xuaId, id);
+            
+            return StatusCode(500, new ApiResponse<EmployeeAttachmentDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating the attachment",
+                Count = 0
+            });
+        }
+    }
+
+    // TODO: Implement file upload integration with EvoWS or Azure blob storage
+    private async Task<int?> UploadFileToAttachmentServiceAsync(IFormFile file, string? description)
+    {
+        if (file == null || file.Length == 0)
+        {
+            var emptyFileError = "File is null or empty";
+            _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message}", emptyFileError);
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "validation",
+                fileName = file?.FileName,
+                fileSize = file?.Length ?? 0,
+                error = emptyFileError
+            });
+            return null;
+        }
+
+        try
+        {
+            var uploadStartTime = DateTime.UtcNow;
+            _logger.LogInformation("UploadFileToAttachmentServiceAsync: Starting upload - FileName: {FileName}, ContentType: {ContentType}, Size: {FileSize} bytes", 
+                file.FileName, file.ContentType, file.Length);
+
+            // Create multipart form data to send to EvoWS ProcessAttachments endpoint
+            using (var form = new MultipartFormDataContent())
+            {
+                // Add file to form
+                var fileContent = new StreamContent(file.OpenReadStream());
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+                form.Add(fileContent, "file1", file.FileName);
+
+                // Add metadata
+                form.Add(new StringContent(UserId.ToString()), "u_id_submittedby");
+                form.Add(new StringContent(UserFullName), "submittedby");
+                form.Add(new StringContent(description ?? file.FileName), "Description");
+                form.Add(new StringContent("0"), "sr_id"); // 0 = employee attachment (not related to service request)
+
+                // Determine EvoWS base URL from configuration or use default
+                var evoWSBaseUrl = _configuration["EvoWS:BaseUrl"] ?? "https://localhost:44307";
+                var uploadUrl = $"{evoWSBaseUrl}/ws/api/file/ProcessAttachments";
+
+                // Log configuration details for debugging
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Environment configuration - EvoWS:BaseUrl config value: '{EvoWSBaseUrl}' (empty={IsEmpty}, null={IsNull})", 
+                    evoWSBaseUrl ?? "(null)", string.IsNullOrEmpty(evoWSBaseUrl), evoWSBaseUrl == null);
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Resolved upload URL - {UploadUrl}", uploadUrl);
+
+                _logger.LogInformation("UploadFileToAttachmentServiceAsync: Sending POST request to EvoWS - URL: {UploadUrl}, UserId: {UserId}, UserName: {UserName}", 
+                    uploadUrl, UserId, UserFullName);
+
+                // Call EvoWS ProcessAttachments endpoint
+                HttpResponseMessage response = null;
+                string responseContent = string.Empty;
+                
+                try
+                {
+                    response = await _httpClient.PostAsync(uploadUrl, form);
+                    responseContent = await response.Content.ReadAsStringAsync();
+
+                    _logger.LogInformation("UploadFileToAttachmentServiceAsync: EvoWS response - StatusCode: {StatusCode}, ReasonPhrase: {ReasonPhrase}, ContentLength: {ContentLength}", 
+                        response.StatusCode, response.ReasonPhrase, responseContent?.Length ?? 0);
+                    
+                    // ALWAYS log the full response content for debugging
+                    _logger.LogInformation("UploadFileToAttachmentServiceAsync: Full EvoWS response content: {ResponseContent}", responseContent ?? "(empty)");
+                }
+                catch (HttpRequestException httpEx)
+                {
+                    var httpErrorMsg = $"HTTP request failed: {httpEx.Message} | InnerException: {httpEx.InnerException?.Message}";
+                    _logger.LogError(httpEx, "UploadFileToAttachmentServiceAsync: {Message}", httpErrorMsg);
+                    
+                    // Log to audit table
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "http_request",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        error = httpErrorMsg,
+                        exceptionType = httpEx.GetType().Name
+                    });
+                    throw;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var failureMsg = $"EvoWS ProcessAttachments failed with status {response.StatusCode} ({response.ReasonPhrase}). Response: {responseContent}";
+                    _logger.LogError("UploadFileToAttachmentServiceAsync: {Message}", failureMsg);
+                    
+                    // Log to audit table with full error details
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "evows_error_response",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        httpStatusCode = response.StatusCode.ToString(),
+                        reasonPhrase = response.ReasonPhrase,
+                        evoWSResponse = responseContent
+                    });
+                    return null;
+                }
+
+                // Parse response from EvoWS
+                // Expected response: { att_id: number, FileName: string, ... }
+                try
+                {
+                    if (string.IsNullOrEmpty(responseContent))
+                    {
+                        var emptyResponseMsg = "EvoWS returned empty response content";
+                        _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message}", emptyResponseMsg);
+                        
+                        await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                            stage = "empty_response",
+                            fileName = file.FileName,
+                            fileSize = file.Length,
+                            uploadUrl = uploadUrl,
+                            userId = UserId,
+                            userName = UserFullName,
+                            error = emptyResponseMsg
+                        });
+                        return null;
+                    }
+
+                    using (JsonDocument doc = JsonDocument.Parse(responseContent))
+                    {
+                        var root = doc.RootElement;
+                        
+                        // Extract att_id from response
+                        if (root.TryGetProperty("att_id", out JsonElement attIdElement))
+                        {
+                            if (int.TryParse(attIdElement.GetRawText(), out int attId))
+                            {
+                                var durationMs = (DateTime.UtcNow - uploadStartTime).TotalMilliseconds;
+                                _logger.LogInformation("UploadFileToAttachmentServiceAsync: File uploaded successfully - att_id: {AttId}, Duration: {DurationMs}ms", attId, durationMs);
+                                
+                                // Log success to audit table
+                                await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                                    stage = "success",
+                                    fileName = file.FileName,
+                                    fileSize = file.Length,
+                                    uploadUrl = uploadUrl,
+                                    userId = UserId,
+                                    userName = UserFullName,
+                                    attId = attId,
+                                    durationMs = durationMs
+                                });
+                                
+                                return attId;
+                            }
+                        }
+
+                        var parseErrorMsg = "att_id not found or not parseable in response";
+                        _logger.LogWarning("UploadFileToAttachmentServiceAsync: {Message} - Response: {Response}", parseErrorMsg, responseContent);
+                        
+                        await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                            stage = "parse_error",
+                            fileName = file.FileName,
+                            fileSize = file.Length,
+                            uploadUrl = uploadUrl,
+                            userId = UserId,
+                            userName = UserFullName,
+                            error = parseErrorMsg,
+                            evoWSResponse = responseContent
+                        });
+                        return null;
+                    }
+                }
+                catch (System.Text.Json.JsonException jsonEx)
+                {
+                    var jsonErrorMsg = $"Failed to parse EvoWS response as JSON: {jsonEx.Message}";
+                    _logger.LogError(jsonEx, "UploadFileToAttachmentServiceAsync: {Message} - Response: {Response}", jsonErrorMsg, responseContent);
+                    
+                    await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                        stage = "json_parse_error",
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        uploadUrl = uploadUrl,
+                        userId = UserId,
+                        userName = UserFullName,
+                        error = jsonErrorMsg,
+                        exceptionType = jsonEx.GetType().Name,
+                        evoWSResponse = responseContent
+                    });
+                    return null;
+                }
+            }
+        }
+        catch (HttpRequestException httpEx)
+        {
+            var httpErrorMsg = $"HTTP request error: {httpEx.Message} | InnerException: {httpEx.InnerException?.Message}";
+            _logger.LogError(httpEx, "UploadFileToAttachmentServiceAsync: {Message}", httpErrorMsg);
+            
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "http_exception",
+                fileName = file.FileName,
+                fileSize = file.Length,
+                userId = UserId,
+                userName = UserFullName,
+                error = httpErrorMsg,
+                exceptionType = httpEx.GetType().Name
+            });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            var unexpectedErrorMsg = $"Unexpected error: {ex.Message} | Type: {ex.GetType().Name}";
+            _logger.LogError(ex, "UploadFileToAttachmentServiceAsync: {Message}", unexpectedErrorMsg);
+            
+            // Log configuration for debugging
+            var evoWSBaseUrl = _configuration["EvoWS:BaseUrl"] ?? "https://localhost:44307";
+            _logger.LogError("UploadFileToAttachmentServiceAsync: Configuration state at exception - EvoWS:BaseUrl='{EvoWSBaseUrl}' (null={IsNull}, empty={IsEmpty}), Full URL would be: {FullUrl}", 
+                evoWSBaseUrl ?? "(null)", evoWSBaseUrl == null, string.IsNullOrEmpty(evoWSBaseUrl), 
+                string.IsNullOrEmpty(evoWSBaseUrl) ? "(would be invalid)" : $"{evoWSBaseUrl}/ws/api/file/ProcessAttachments");
+            
+            await LogAuditAsync("UploadFileToAttachmentServiceAsync", new { 
+                stage = "unexpected_exception",
+                fileName = file.FileName,
+                fileSize = file.Length,
+                userId = UserId,
+                userName = UserFullName,
+                error = unexpectedErrorMsg,
+                exceptionType = ex.GetType().Name,
+                stackTrace = ex.StackTrace,
+                configuredBaseUrl = evoWSBaseUrl,
+                baseUrlIsEmpty = string.IsNullOrEmpty(evoWSBaseUrl)
+            });
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Call Center Contacts
+
+    [HttpGet("callcenters/{ccId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<ContactDto>>>> GetCallCenterContacts(int ccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting contacts for call center cc_id {CcId}", ccId);
+            
+            var contacts = await _dataService.GetCallCenterContactsAsync(ccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCallCenterContacts", $"Retrieved {contacts.Count} contacts for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<ContactDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {contacts.Count} contacts",
+                Data = contacts,
+                Count = contacts.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCallCenterContacts", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<ContactDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving contacts"
+            });
+        }
+    }
+
+    [HttpPost("callcenters/{ccId:int}/contacts")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> CreateCallCenterContact(int ccId, [FromBody] CreateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating contact for call center cc_id {CcId}", ccId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname) && string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "At least first name or last name is required"
+                });
+            }
+            
+            // Email validation if provided
+            if (!string.IsNullOrWhiteSpace(request.ConEmail) && !IsValidEmail(request.ConEmail))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Invalid email format"
+                });
+            }
+            
+            var contact = await _dataService.CreateCallCenterContactAsync(ccId, request);
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with new contact details
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CallCenterId", ccId },
+                { "Title", contact.CtTitle },
+                { "FirstName", contact.ConFirstname },
+                { "LastName", contact.ConLastname },
+                { "Email", contact.ConEmail },
+                { "Phone", contact.ConPhone },
+                { "Mobile", contact.ConMobile },
+                { "Fax", contact.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Created - {contact.ConFirstname} {contact.ConLastname} (ID: {contact.ConId})",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCallCenterContact", $"Created contact {contact.ConId} for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact created successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCallCenterContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating contact"
+            });
+        }
+    }
+
+    [HttpPut("callcenters/contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<ContactDto>>> UpdateCallCenterContact(int conId, [FromBody] UpdateContactRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating call center contact {ConId}", conId);
+            
+            // Validate required fields
+            if (request.CtId <= 0)
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ConFirstname) && string.IsNullOrWhiteSpace(request.ConLastname))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "At least first name or last name is required"
+                });
+            }
+            
+            // Email validation if provided
+            if (!string.IsNullOrWhiteSpace(request.ConEmail) && !IsValidEmail(request.ConEmail))
+            {
+                return BadRequest(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Invalid email format"
+                });
+            }
+            
+            // Get current contact data for audit logging (need to get all contacts to find this one)
+            // We'll need to fetch from all call centers since we don't have ccId in this endpoint
+            var allCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+            var allCallCenters = ConvertDataTableToCallCenters(allCallCentersDataTable);
+            ContactDto? currentContact = null;
+            
+            // Find the contact across all call centers
+            foreach (var cc in allCallCenters ?? new List<CallCenterDto>())
+            {
+                var contacts = await _dataService.GetCallCenterContactsAsync(cc.Id);
+                currentContact = contacts.FirstOrDefault(c => c.ConId == conId);
+                if (currentContact != null) break;
+            }
+            
+            var contact = await _dataService.UpdateCallCenterContactAsync(conId, request);
+            
+            if (contact == null)
+            {
+                return NotFound(new ApiResponse<ContactDto>
+                {
+                    Success = false,
+                    Message = "Contact not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Title", currentContact?.CtTitle },
+                { "FirstName", currentContact?.ConFirstname },
+                { "LastName", currentContact?.ConLastname },
+                { "Email", currentContact?.ConEmail },
+                { "Phone", currentContact?.ConPhone },
+                { "Mobile", currentContact?.ConMobile },
+                { "Fax", currentContact?.ConFax }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Title", contact.CtTitle },
+                { "FirstName", contact.ConFirstname },
+                { "LastName", contact.ConLastname },
+                { "Email", contact.ConEmail },
+                { "Phone", contact.ConPhone },
+                { "Mobile", contact.ConMobile },
+                { "Fax", contact.ConFax }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Contact Updated - {contact.ConFirstname} {contact.ConLastname} (ID: {conId})",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCallCenterContact", $"Updated contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<ContactDto>
+            {
+                Success = true,
+                Message = "Contact updated successfully",
+                Data = contact,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCallCenterContact", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<ContactDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating contact"
+            });
+        }
+    }
+
+    [HttpDelete("callcenters/{ccId:int}/contacts/{conId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterContactXref(int ccId, int conId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting contact xref for call center {CcId} and contact {ConId}", ccId, conId);
+            
+            // Get contact details before deletion for audit logging
+            var contacts = await _dataService.GetCallCenterContactsAsync(ccId);
+            var contactToDelete = contacts.FirstOrDefault(c => c.ConId == conId);
+            
+            var deleted = await _dataService.DeleteCallCenterContactXrefAsync(ccId, conId);
+            
+            if (!deleted)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Contact association not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with deleted contact details
+            if (contactToDelete != null)
+            {
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "CallCenterId", ccId },
+                    { "ContactId", conId },
+                    { "Title", contactToDelete.CtTitle },
+                    { "FirstName", contactToDelete.ConFirstname },
+                    { "LastName", contactToDelete.ConLastname },
+                    { "Email", contactToDelete.ConEmail },
+                    { "Phone", contactToDelete.ConPhone },
+                    { "Mobile", contactToDelete.ConMobile },
+                    { "Fax", contactToDelete.ConFax }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Contact Deleted - {contactToDelete.ConFirstname} {contactToDelete.ConLastname} (ID: {conId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+            }
+            
+            await LogOperationAsync("DeleteCallCenterContactXref", $"Deleted contact xref for call center {ccId} and contact {conId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Contact removed from call center successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteCallCenterContactXref", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting contact association"
+            });
+        }
+    }
+
+    #endregion
+
+    #region Call Center Addresses
+
+    [HttpGet("callcenters/{ccId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<List<AddressDto>>>> GetCallCenterAddresses(int ccId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting addresses for call center cc_id {CcId}", ccId);
+            
+            var addresses = await _dataService.GetCallCenterAddressesAsync(ccId);
+            
+            stopwatch.Stop();
+            await LogOperationAsync("GetCallCenterAddresses", $"Retrieved {addresses.Count} addresses for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<List<AddressDto>>
+            {
+                Success = true,
+                Message = $"Retrieved {addresses.Count} addresses",
+                Data = addresses,
+                Count = addresses.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("GetCallCenterAddresses", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<List<AddressDto>>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving addresses"
+            });
+        }
+    }
+
+    [HttpPost("callcenters/{ccId:int}/addresses")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> CreateCallCenterAddress(int ccId, [FromBody] CreateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Creating address for call center cc_id {CcId}", ccId);
+            
+            // Validate required fields
+            if (request.AtId <= 0)
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AAddress1))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address 1 is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ACity))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "City is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AState))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "State is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Zip is required"
+                });
+            }
+            
+            var address = await _dataService.CreateCallCenterAddressAsync(ccId, request);
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with new address details
+            var newValues = new Dictionary<string, object?>
+            {
+                { "CallCenterId", ccId },
+                { "Title", address.AtTitle },
+                { "Address1", address.AAddress1 },
+                { "Address2", address.AAddress2 },
+                { "City", address.ACity },
+                { "State", address.AState },
+                { "Zip", address.AZip },
+                { "Latitude", address.ALatitude },
+                { "Longitude", address.ALongitude }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Created - {address.AAddress1}, {address.ACity}, {address.AState} (ID: {address.AId})",
+                new Dictionary<string, object?>(), // Empty old values for create
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("CreateCallCenterAddress", $"Created address {address.AId} for call center {ccId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address created successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("CreateCallCenterAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while creating address"
+            });
+        }
+    }
+
+    [HttpPut("callcenters/addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<AddressDto>>> UpdateCallCenterAddress(int aId, [FromBody] UpdateAddressRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Updating call center address {AId}", aId);
+            
+            // Validate required fields
+            if (request.AtId <= 0)
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Title is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AAddress1))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address 1 is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.ACity))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "City is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AState))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "State is required"
+                });
+            }
+            
+            if (string.IsNullOrWhiteSpace(request.AZip))
+            {
+                return BadRequest(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Zip is required"
+                });
+            }
+            
+            // Get current address data for audit logging (need to get all addresses to find this one)
+            var allCallCentersDataTable = await _dataService.GetAllCallCentersAsync();
+            var allCallCenters = ConvertDataTableToCallCenters(allCallCentersDataTable);
+            AddressDto? currentAddress = null;
+            
+            // Find the address across all call centers
+            foreach (var cc in allCallCenters ?? new List<CallCenterDto>())
+            {
+                var addresses = await _dataService.GetCallCenterAddressesAsync(cc.Id);
+                currentAddress = addresses.FirstOrDefault(a => a.AId == aId);
+                if (currentAddress != null) break;
+            }
+            
+            var address = await _dataService.UpdateCallCenterAddressAsync(aId, request);
+            
+            if (address == null)
+            {
+                return NotFound(new ApiResponse<AddressDto>
+                {
+                    Success = false,
+                    Message = "Address not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with change details
+            var oldValues = new Dictionary<string, object?>
+            {
+                { "Title", currentAddress?.AtTitle },
+                { "Address1", currentAddress?.AAddress1 },
+                { "Address2", currentAddress?.AAddress2 },
+                { "City", currentAddress?.ACity },
+                { "State", currentAddress?.AState },
+                { "Zip", currentAddress?.AZip },
+                { "Latitude", currentAddress?.ALatitude },
+                { "Longitude", currentAddress?.ALongitude }
+            };
+            
+            var newValues = new Dictionary<string, object?>
+            {
+                { "Title", address.AtTitle },
+                { "Address1", address.AAddress1 },
+                { "Address2", address.AAddress2 },
+                { "City", address.ACity },
+                { "State", address.AState },
+                { "Zip", address.AZip },
+                { "Latitude", address.ALatitude },
+                { "Longitude", address.ALongitude }
+            };
+            
+            SetAuditCriticalUserContext();
+            await _auditCriticalService.LogChangeAsync(
+                $"Address Updated - {address.AAddress1}, {address.ACity}, {address.AState} (ID: {aId})",
+                oldValues,
+                newValues,
+                stopwatch.Elapsed.TotalSeconds.ToString("F3")
+            );
+            
+            await LogOperationAsync("UpdateCallCenterAddress", $"Updated address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<AddressDto>
+            {
+                Success = true,
+                Message = "Address updated successfully",
+                Data = address,
+                Count = 1
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("UpdateCallCenterAddress", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<AddressDto>
+            {
+                Success = false,
+                Message = "An error occurred while updating address"
+            });
+        }
+    }
+
+    [HttpDelete("callcenters/{ccId:int}/addresses/{aId:int}")]
+    [EvoAuthorize]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteCallCenterAddressXref(int ccId, int aId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Deleting address xref for call center {CcId} and address {AId}", ccId, aId);
+            
+            // Get address details before deletion for audit logging
+            var addresses = await _dataService.GetCallCenterAddressesAsync(ccId);
+            var addressToDelete = addresses.FirstOrDefault(a => a.AId == aId);
+            
+            var deleted = await _dataService.DeleteCallCenterAddressXrefAsync(ccId, aId);
+            
+            if (!deleted)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Address association not found"
+                });
+            }
+            
+            stopwatch.Stop();
+            
+            // Log critical audit with deleted address details
+            if (addressToDelete != null)
+            {
+                var oldValues = new Dictionary<string, object?>
+                {
+                    { "CallCenterId", ccId },
+                    { "AddressId", aId },
+                    { "Title", addressToDelete.AtTitle },
+                    { "Address1", addressToDelete.AAddress1 },
+                    { "Address2", addressToDelete.AAddress2 },
+                    { "City", addressToDelete.ACity },
+                    { "State", addressToDelete.AState },
+                    { "Zip", addressToDelete.AZip },
+                    { "Latitude", addressToDelete.ALatitude },
+                    { "Longitude", addressToDelete.ALongitude }
+                };
+                
+                SetAuditCriticalUserContext();
+                await _auditCriticalService.LogChangeAsync(
+                    $"Address Deleted - {addressToDelete.AAddress1}, {addressToDelete.ACity}, {addressToDelete.AState} (ID: {aId})",
+                    oldValues,
+                    new Dictionary<string, object?>(), // Empty new values for delete
+                    stopwatch.Elapsed.TotalSeconds.ToString("F3")
+                );
+            }
+            
+            await LogOperationAsync("DeleteCallCenterAddressXref", $"Deleted address xref for call center {ccId} and address {aId}", stopwatch.Elapsed);
+            
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Address removed from call center successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogErrorAsync("DeleteCallCenterAddressXref", ex, stopwatch.Elapsed);
+            
+            return StatusCode(500, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "An error occurred while deleting address association"
             });
         }
     }
