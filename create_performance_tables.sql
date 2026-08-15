@@ -95,7 +95,7 @@ BEGIN
         (1, 'PerformanceTarget', 'Perf.AchLaborTrip',         '60',       'Performance target: Ach Labor + Trip $/hr (higher is better)'),
         (1, 'PerformanceTarget', 'Perf.CallOuts',             '2.8',      'Performance target: Call Outs (lower is better)'),
         (1, 'PerformanceTarget', 'Perf.ServiceItemsPayback',  '2.5',      'Performance target: Service Items Payback (higher is better)'),
-        (1, 'PerformanceTarget', 'Perf.TruckFuelEfficiency',  '25',       'Performance target: Truck/Fuel Efficiency $/day (higher is better)'),
+        (1, 'PerformanceTarget', 'Perf.TruckFuelEfficiency',  '25',       'Performance target: Truck/Fuel Efficiency $/day (lower is better)'),
         (1, 'PerformanceTarget', 'Perf.GallonsPerDay',        '10',       'Performance target: Gallons Per Day (lower is better)'),
         (1, 'PerformanceTarget', 'Perf.GrossMargin',          '0.4',      'Performance target: Gross Margin (fraction; higher is better)'),
         (1, 'PerformanceTarget', 'Perf.ReceiptsViolations',   '5.6',      'Performance target: Receipts Violations (lower is better)'),

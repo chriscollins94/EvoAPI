@@ -8,9 +8,19 @@ using System.Diagnostics;
 
 namespace EvoAPI.Api.Controllers
 {
+    /// <summary>
+    /// Admin performance dashboard and uploads. Every endpoint here exposes other people's
+    /// data (named technicians, zones, upload history), so the class-level policy is
+    /// PerformanceOnly rather than EvoAuthorize: an action added without its own attribute
+    /// fails closed instead of falling back to "any logged-in user". The per-action
+    /// [PerformanceOnly] attributes are redundant with this and kept as documentation.
+    ///
+    /// Technician self-service lives in MyPerformanceController — do not add self-scoped
+    /// endpoints here, and do not loosen this attribute to share one with technicians.
+    /// </summary>
     [ApiController]
     [Route("EvoApi/performance")]
-    [EvoAuthorize]
+    [PerformanceOnly]
     public class PerformanceController : BaseController
     {
         private readonly IPerformanceRepository _performanceRepository;

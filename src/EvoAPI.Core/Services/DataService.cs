@@ -122,6 +122,7 @@ public class DataService : IDataService
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
                         ISNULL(sr.sr_811required, 0) AS Is811Required,
+                        ISNULL(xccc.xccc_collectpaymentonsite, 0) AS CollectPaymentOnSite,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
                         ISNULL(CAST(sr.sr_quickbooks_docnumber AS varchar(20)), '') AS InvoiceNumber,
                         ROW_NUMBER() OVER (
@@ -179,6 +180,7 @@ public class DataService : IDataService
                     Escalated,
                     ScheduleLock,
                     Is811Required,
+                    CollectPaymentOnSite,
                     ActionableNote,
                     InvoiceNumber
                 FROM RankedOrders

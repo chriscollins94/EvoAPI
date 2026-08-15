@@ -73,6 +73,39 @@ public class PerformanceZoneDto
 }
 
 /// <summary>
+/// One row of the technician-facing peer comparison (MyPerformanceController).
+///
+/// Values only, by design. There is no UserId, name, employee number, zone or upload id
+/// for anyone other than the caller — the caller's own row is flagged with IsSelf and is
+/// the only row that carries a DisplayName. A technician holding this payload has no way
+/// to attach a name to any other row.
+///
+/// This is deliberately a separate type from PerformanceEmployeeDto rather than that DTO
+/// with fields nulled out: a field added to the employee DTO later must not be able to
+/// ride along into a technician's response. Keep it that way.
+/// </summary>
+public class PerformancePeerDto
+{
+    public bool IsSelf { get; set; }
+    public string? DisplayName { get; set; }
+    public DateTime ReportDate { get; set; }
+
+    public decimal? Utilization { get; set; }
+    public decimal? AchLaborTrip { get; set; }
+    public decimal? CallOuts { get; set; }
+    public decimal? ServiceItemsPayback { get; set; }
+    public decimal? TruckFuelEfficiency { get; set; }
+    public decimal? GallonsPerDay { get; set; }
+    public decimal? GrossMargin { get; set; }
+    public decimal? ReceiptsViolations { get; set; }
+    public decimal? Callbacks { get; set; }
+    public decimal? PendingTechInfo { get; set; }
+    public decimal? PositiveQtrPct { get; set; }
+    public string? ProfitGrade { get; set; }
+    public decimal? HealthScore { get; set; }
+}
+
+/// <summary>
 /// A configurable metric target (ConfigSetting row, cs_type = 'PerformanceTarget').
 /// </summary>
 public class PerformanceTargetDto

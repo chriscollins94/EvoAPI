@@ -291,6 +291,72 @@ public class PerformanceRepository : IPerformanceRepository
         return result.ToList();
     }
 
+    public async Task<PerformanceEmployeeDto?> GetMyLatestPerformanceAsync(int userId)
+    {
+        var sql = $@"
+            WITH Ranked AS (
+                SELECT pe.*, pu.pfu_reportdate,
+                       ROW_NUMBER() OVER (PARTITION BY pe.u_id ORDER BY pu.pfu_reportdate DESC, pu.pfu_insertdatetime DESC) AS rn
+                FROM dbo.PerformanceEmployee pe
+                INNER JOIN dbo.PerformanceUpload pu ON pu.pfu_id = pe.pfu_id
+                WHERE pe.u_id = @UserId
+            )
+            SELECT
+                pe.u_id              AS UserId,
+                u.u_firstname        AS FirstName,
+                u.u_lastname         AS LastName,
+                u.u_employeenumber   AS EmployeeNumber,
+                z.z_acronym          AS ZoneAcronym,
+                pe.pfu_id            AS UploadId,
+                pe.pfu_reportdate    AS ReportDate,
+                {EmployeeMetricColumns}
+            FROM Ranked pe
+            INNER JOIN [user] u ON u.u_id = pe.u_id
+            LEFT JOIN zone z ON z.z_id = u.z_id
+            WHERE pe.rn = 1";
+
+        using var connection = new SqlConnection(_connectionString);
+        return await connection.QueryFirstOrDefaultAsync<PerformanceEmployeeDto>(sql, new { UserId = userId });
+    }
+
+    // Peer comparison for the technician-facing dashboard. The caller sees where they sit
+    // among everyone, but the identifying columns are never selected for anyone else — not
+    // nulled after the fact, simply never read. A column that isn't in the projection cannot
+    // leak, however the result is later mapped or serialized.
+    //
+    // No zone is returned and no zone filter is offered: narrowing to a two-person zone would
+    // identify people by elimination.
+    //
+    // Ordering matters as much as the columns. Alphabetical order would let anyone holding the
+    // roster count down the list and name every row, so rows are ordered by health score
+    // (nulls last) — position carries no identity signal.
+    public async Task<List<PerformancePeerDto>> GetPeerComparisonAsync(int userId)
+    {
+        var sql = $@"
+            WITH Ranked AS (
+                SELECT pe.*, pu.pfu_reportdate,
+                       ROW_NUMBER() OVER (PARTITION BY pe.u_id ORDER BY pu.pfu_reportdate DESC, pu.pfu_insertdatetime DESC) AS rn
+                FROM dbo.PerformanceEmployee pe
+                INNER JOIN dbo.PerformanceUpload pu ON pu.pfu_id = pe.pfu_id
+            )
+            SELECT
+                CAST(CASE WHEN pe.u_id = @UserId THEN 1 ELSE 0 END AS bit) AS IsSelf,
+                CASE WHEN pe.u_id = @UserId
+                     THEN LTRIM(RTRIM(ISNULL(u.u_firstname, '') + ' ' + ISNULL(u.u_lastname, '')))
+                END                  AS DisplayName,
+                pe.pfu_reportdate    AS ReportDate,
+                {EmployeeMetricColumns}
+            FROM Ranked pe
+            INNER JOIN [user] u ON u.u_id = pe.u_id
+            WHERE pe.rn = 1
+            ORDER BY CASE WHEN pe.pe_healthscore IS NULL THEN 1 ELSE 0 END,
+                     pe.pe_healthscore DESC";
+
+        using var connection = new SqlConnection(_connectionString);
+        var result = await connection.QueryAsync<PerformancePeerDto>(sql, new { UserId = userId });
+        return result.ToList();
+    }
+
     public async Task<List<PerformanceZoneDto>> GetLatestZonePerformanceAsync()
     {
         var sql = $@"
@@ -367,6 +433,13 @@ public class PerformanceRepository : IPerformanceRepository
 
         // One row per distinct service request the tech touched (any work order);
         // an SR has a single trade + call center, so DISTINCT on sr_id is safe.
+        //
+        // Administrative time (vacation, training, doctor's appointments, personal, etc.)
+        // is excluded from the job-mix charts: it isn't billable job work, and its
+        // subtrades otherwise crowd out the real trades. Filtering on the parent trade
+        // drops all 13 Administrative subtrades from the subtrade chart at the same time.
+        // The Administrative* call centers are filtered too — today they carry only
+        // Administrative-trade SRs, so this is a safety net rather than a second cut.
         const string sql = @"
             SELECT DISTINCT
                 sr.sr_id,
@@ -385,7 +458,9 @@ public class PerformanceRepository : IPerformanceRepository
             WHERE xwou.u_id = @UserId
               AND sr.sr_insertdatetime >= DATEADD(DAY, -@LookbackDays, GETDATE())
               AND s.s_status <> 'Rejected'
-              AND c.c_name NOT IN ('Metro Pipe Program', 'Metro Pipe Program 2')";
+              AND c.c_name NOT IN ('Metro Pipe Program', 'Metro Pipe Program 2')
+              AND ISNULL(tp.t_trade, t.t_trade) <> 'Administrative'
+              AND cc.cc_name NOT LIKE 'Administrative%'";
 
         var rows = (await connection.QueryAsync<(int SrId, string? ParentTrade, string? SubTrade, string? CallCenter)>(
             sql, new { UserId = userId, LookbackDays = lookbackDays })).ToList();

@@ -18,6 +18,11 @@ public interface IPerformanceRepository
 
     Task<List<PerformanceEmployeeDto>> GetLatestEmployeePerformanceAsync();
     Task<List<PerformanceEmployeeDto>> GetEmployeeHistoryAsync(int userId);
+
+    // Technician-facing (MyPerformanceController): self only, plus an anonymized peer set.
+    Task<PerformanceEmployeeDto?> GetMyLatestPerformanceAsync(int userId);
+    Task<List<PerformancePeerDto>> GetPeerComparisonAsync(int userId);
+
     Task<List<PerformanceZoneDto>> GetLatestZonePerformanceAsync();
     Task<List<PerformanceZoneDto>> GetZoneHistoryAsync(int zoneId);
 
