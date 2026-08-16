@@ -9,6 +9,8 @@ public interface IDataService
     Task<DataTable> GetWorkOrdersScheduleAsync(int numberOfDays, int? technicianId = null);
     Task<bool> UpdateWorkOrderEscalatedAsync(UpdateWorkOrderEscalatedRequest request);
     Task<bool> UpdateWorkOrderScheduleLockAsync(UpdateWorkOrderScheduleLockRequest request);
+    Task<CreateCustomerInquiryResult> CreateCustomerInquiryAsync(CreateCustomerInquiryRequest request, int userId, string userFullName);
+    Task<CustomerInquiryEligibilityDto?> GetCustomerInquiryEligibilityAsync(int srId);
     Task<DataTable> GetAllPrioritiesAsync();
     Task<bool> UpdatePriorityAsync(UpdatePriorityRequest request);
     Task<DataTable> GetAllStatusSecondariesAsync();

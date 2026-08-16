@@ -38,6 +38,7 @@ public class CreateLocationRequest
     public string? LHours { get; set; }
     public string? LNote { get; set; }
     public string? LEmail { get; set; }
+    public bool LActive { get; set; } = true;
 }
 
 public class UpdateLocationRequest
@@ -54,4 +55,5 @@ public class UpdateLocationRequest
     public string? LHours { get; set; }
     public string? LNote { get; set; }
     public string? LEmail { get; set; }
+    public bool LActive { get; set; } = true;
 }

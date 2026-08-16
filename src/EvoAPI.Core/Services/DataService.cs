@@ -447,6 +447,387 @@ public class DataService : IDataService
         }
     }
 
+    // Status snapshot plus the configured cooldown, shared by the create and eligibility paths.
+    // StatusSecondaryChange is keyed on wo_id, so the latest change row is when the current
+    // status began. Pass @u_id = 0 when the caller does not need the user's name resolved.
+    private const string CustomerInquiryContextSql = @"
+        SELECT TOP 1
+            sr.sr_requestnumber,
+            wo.wo_id,
+            wo.ss_id,
+            ISNULL(ss.ss_statussecondary, '') AS ss_statussecondary,
+            (SELECT MAX(ssc.ssc_insertdatetime)
+             FROM StatusSecondaryChange ssc WITH (NOLOCK)
+             WHERE ssc.wo_id = wo.wo_id) AS status_start,
+            ISNULL(TRY_CAST((SELECT TOP 1 cs_value FROM ConfigSetting
+                             WHERE cs_type = 'CustomerInquiry' AND cs_identifier = 'CooldownHours') AS INT), 24) AS cooldown_hours,
+            ISNULL((SELECT u_firstname + ' ' + u_lastname FROM [user] WHERE u_id = @u_id), '') AS user_fullname
+        FROM servicerequest sr
+        INNER JOIN workorder wo ON sr.wo_id_primary = wo.wo_id
+        LEFT JOIN StatusSecondary ss ON wo.ss_id = ss.ss_id
+        WHERE sr.sr_id = @sr_id";
+
+    // Most recent inquiry on this service request still inside the cooldown window, if any.
+    // {0} carries the lock hint: the create path takes UPDLOCK/HOLDLOCK so two people
+    // submitting at once serialize on the same key range instead of both passing the check.
+    private const string CustomerInquiryLastSqlFormat = @"
+        SELECT TOP 1
+            ci.ci_insertdatetime,
+            ci.ci_note,
+            ISNULL(u.u_firstname + ' ' + u.u_lastname, '') AS logged_by
+        FROM CustomerInquiry ci {0}
+        LEFT JOIN [user] u ON ci.u_id = u.u_id
+        WHERE ci.sr_id = @sr_id
+          AND ci.ci_active = 1
+          AND ci.ci_insertdatetime > DATEADD(HOUR, -@cooldown_hours, @now)
+        ORDER BY ci.ci_insertdatetime DESC";
+
+    /// Logs a customer inquiry against a service request and leaves the matching
+    /// WorkOrderNote on its primary work order. Refuses when another inquiry was logged
+    /// on the same service request inside the configured cooldown window.
+    public async Task<CreateCustomerInquiryResult> CreateCustomerInquiryAsync(CreateCustomerInquiryRequest request, int userId, string userFullName)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            using var transaction = connection.BeginTransaction();
+
+            string requestNumber;
+            int woId;
+            int? ssId;
+            string statusName;
+            DateTime? statusStart;
+            int cooldownHours;
+            string dbFullName;
+
+            using (var command = new SqlCommand(CustomerInquiryContextSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                command.Parameters.Add("@u_id", SqlDbType.Int).Value = userId;
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    // No such service request, or it has no primary work order to note against.
+                    transaction.Rollback();
+                    return new CreateCustomerInquiryResult { Status = CustomerInquiryCreateStatus.ServiceRequestNotFound };
+                }
+
+                requestNumber = reader["sr_requestnumber"] as string ?? string.Empty;
+                woId = Convert.ToInt32(reader["wo_id"]);
+                ssId = reader["ss_id"] == DBNull.Value ? null : Convert.ToInt32(reader["ss_id"]);
+                statusName = reader["ss_statussecondary"] as string ?? string.Empty;
+                statusStart = reader["status_start"] == DBNull.Value ? null : AsUtc(reader["status_start"]);
+                cooldownHours = Convert.ToInt32(reader["cooldown_hours"]);
+                dbFullName = reader["user_fullname"] as string ?? string.Empty;
+            }
+
+            var now = DateTime.UtcNow;
+            int? minutesInStatus = statusStart.HasValue
+                ? Math.Max(0, (int)Math.Round((now - statusStart.Value).TotalMinutes))
+                : null;
+
+            // Duplicate guard. Held inside the transaction so concurrent submits cannot both pass.
+            if (cooldownHours > 0)
+            {
+                var lastSql = string.Format(CustomerInquiryLastSqlFormat, "WITH (UPDLOCK, HOLDLOCK)");
+                using var command = new SqlCommand(lastSql, connection, transaction);
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                command.Parameters.Add("@cooldown_hours", SqlDbType.Int).Value = cooldownHours;
+                command.Parameters.Add("@now", SqlDbType.DateTime).Value = now;
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var lastAt = AsUtc(reader["ci_insertdatetime"]);
+                    var lastBy = reader["logged_by"] as string ?? string.Empty;
+                    var lastNote = reader["ci_note"] as string;
+                    reader.Close();
+                    transaction.Rollback();
+
+                    stopwatch.Stop();
+                    await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                    {
+                        Name = "DataService",
+                        Description = "CreateCustomerInquiry",
+                        Detail = $"Refused duplicate customer inquiry for service request {request.SrId} ({requestNumber}) " +
+                                 $"by user {userId}; last logged {lastAt:u} by {lastBy}, cooldown {cooldownHours}h",
+                        ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                        MachineName = Environment.MachineName
+                    });
+
+                    return new CreateCustomerInquiryResult
+                    {
+                        Status = CustomerInquiryCreateStatus.WithinCooldown,
+                        Eligibility = new CustomerInquiryEligibilityDto
+                        {
+                            SrId = request.SrId,
+                            CanLog = false,
+                            CooldownHours = cooldownHours,
+                            RequestNumber = requestNumber,
+                            SecondaryStatus = statusName,
+                            MinutesInStatus = minutesInStatus,
+                            LastInquiryDateTime = lastAt,
+                            LastInquiryUser = lastBy,
+                            LastInquiryNote = lastNote,
+                            NextAllowedDateTime = lastAt.AddHours(cooldownHours)
+                        }
+                    };
+                }
+            }
+
+            var noteUser = !string.IsNullOrWhiteSpace(userFullName) ? userFullName.Trim()
+                : !string.IsNullOrWhiteSpace(dbFullName) ? dbFullName.Trim()
+                : "Unknown";
+
+            const string insertSql = @"
+                INSERT INTO CustomerInquiry
+                (
+                    sr_id,
+                    wo_id,
+                    u_id,
+                    ss_id,
+                    ci_statusstartdatetime,
+                    ci_minutesinstatus,
+                    ci_note,
+                    ci_active,
+                    ci_insertdatetime
+                )
+                VALUES
+                (
+                    @sr_id,
+                    @wo_id,
+                    @u_id,
+                    @ss_id,
+                    @status_start,
+                    @minutes_in_status,
+                    @note,
+                    1,
+                    @now
+                );
+
+                SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+            int ciId;
+            using (var command = new SqlCommand(insertSql, connection, transaction))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = request.SrId;
+                command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                command.Parameters.Add("@u_id", SqlDbType.Int).Value = userId;
+                command.Parameters.Add("@ss_id", SqlDbType.Int).Value = (object?)ssId ?? DBNull.Value;
+                command.Parameters.Add("@status_start", SqlDbType.DateTime).Value = (object?)statusStart ?? DBNull.Value;
+                command.Parameters.Add("@minutes_in_status", SqlDbType.Int).Value = (object?)minutesInStatus ?? DBNull.Value;
+                command.Parameters.Add("@note", SqlDbType.NVarChar, -1).Value = (object?)note ?? DBNull.Value;
+                command.Parameters.Add("@now", SqlDbType.DateTime).Value = now;
+
+                var result = await command.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                {
+                    throw new InvalidOperationException($"Failed to insert CustomerInquiry for ServiceRequest {request.SrId}");
+                }
+                ciId = Convert.ToInt32(result);
+            }
+
+            var noteText = "Customer Inquiry logged - Status: " +
+                           (string.IsNullOrWhiteSpace(statusName) ? "Unknown" : statusName) +
+                           (minutesInStatus.HasValue ? $" (in status {FormatMinutesInStatus(minutesInStatus.Value)})" : string.Empty) +
+                           "." +
+                           (note == null ? string.Empty : $" Note: {note}");
+
+            const string noteSql = @"
+                INSERT INTO WorkOrderNote (wo_id, won_note, won_public, won_user)
+                VALUES (@wo_id, @won_note, 0, @won_user);";
+
+            using (var command = new SqlCommand(noteSql, connection, transaction))
+            {
+                command.Parameters.Add("@wo_id", SqlDbType.Int).Value = woId;
+                command.Parameters.Add("@won_note", SqlDbType.NVarChar, -1).Value = noteText;
+                command.Parameters.Add("@won_user", SqlDbType.VarChar, 100).Value = Left(noteUser, 100) ?? "Unknown";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            transaction.Commit();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCustomerInquiry",
+                Detail = $"Logged customer inquiry {ciId} for service request {request.SrId} ({requestNumber}) " +
+                         $"by user {userId}, status '{statusName}', {minutesInStatus?.ToString() ?? "unknown"} minutes in status",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return new CreateCustomerInquiryResult
+            {
+                Status = CustomerInquiryCreateStatus.Created,
+                Inquiry = new CustomerInquiryDto
+                {
+                    CiId = ciId,
+                    SrId = request.SrId,
+                    WoId = woId,
+                    UId = userId,
+                    SsId = ssId,
+                    SecondaryStatus = statusName,
+                    RequestNumber = requestNumber,
+                    StatusStartDateTime = statusStart,
+                    MinutesInStatus = minutesInStatus,
+                    Note = note,
+                    InsertDateTime = now
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateCustomerInquiry",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating customer inquiry for service request {Id}", request.SrId);
+            throw;
+        }
+    }
+
+    /// Whether a service request can take a new inquiry right now, plus the live status
+    /// detail the inquiry modal shows. Returns null when the service request does not
+    /// exist or has no primary work order.
+    public async Task<CustomerInquiryEligibilityDto?> GetCustomerInquiryEligibilityAsync(int srId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        try
+        {
+            using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            string requestNumber;
+            string statusName;
+            DateTime? statusStart;
+            int cooldownHours;
+
+            using (var command = new SqlCommand(CustomerInquiryContextSql, connection))
+            {
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                command.Parameters.Add("@u_id", SqlDbType.Int).Value = 0;
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    return null;
+                }
+
+                requestNumber = reader["sr_requestnumber"] as string ?? string.Empty;
+                statusName = reader["ss_statussecondary"] as string ?? string.Empty;
+                statusStart = reader["status_start"] == DBNull.Value ? null : AsUtc(reader["status_start"]);
+                cooldownHours = Convert.ToInt32(reader["cooldown_hours"]);
+            }
+
+            var now = DateTime.UtcNow;
+            var eligibility = new CustomerInquiryEligibilityDto
+            {
+                SrId = srId,
+                CanLog = true,
+                CooldownHours = cooldownHours,
+                RequestNumber = requestNumber,
+                SecondaryStatus = statusName,
+                MinutesInStatus = statusStart.HasValue
+                    ? Math.Max(0, (int)Math.Round((now - statusStart.Value).TotalMinutes))
+                    : null
+            };
+
+            if (cooldownHours > 0)
+            {
+                var lastSql = string.Format(CustomerInquiryLastSqlFormat, "WITH (NOLOCK)");
+                using var command = new SqlCommand(lastSql, connection);
+                command.Parameters.Add("@sr_id", SqlDbType.Int).Value = srId;
+                command.Parameters.Add("@cooldown_hours", SqlDbType.Int).Value = cooldownHours;
+                command.Parameters.Add("@now", SqlDbType.DateTime).Value = now;
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var lastAt = AsUtc(reader["ci_insertdatetime"]);
+                    eligibility.CanLog = false;
+                    eligibility.LastInquiryDateTime = lastAt;
+                    eligibility.LastInquiryUser = reader["logged_by"] as string ?? string.Empty;
+                    eligibility.LastInquiryNote = reader["ci_note"] as string;
+                    eligibility.NextAllowedDateTime = lastAt.AddHours(cooldownHours);
+                }
+            }
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCustomerInquiryEligibility",
+                Detail = $"Checked customer inquiry eligibility for service request {srId} ({requestNumber}): " +
+                         $"{(eligibility.CanLog ? "allowed" : "within cooldown")}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return eligibility;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetCustomerInquiryEligibility",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error checking customer inquiry eligibility for service request {Id}", srId);
+            throw;
+        }
+    }
+
+    /// SQL datetimes come back with Kind Unspecified; these columns are all stored UTC,
+    /// so stamp them so they serialize with a Z and are not read as local time by callers.
+    private static DateTime AsUtc(object value) =>
+        DateTime.SpecifyKind(Convert.ToDateTime(value), DateTimeKind.Utc);
+
+    /// Human-readable duration for the generated work order note, e.g. "3d 4h".
+    private static string FormatMinutesInStatus(int minutes)
+    {
+        if (minutes < 0) minutes = 0;
+
+        var days = minutes / 1440;
+        var hours = (minutes % 1440) / 60;
+        var remainingMinutes = minutes % 60;
+
+        if (days > 0) return $"{days}d {hours}h";
+        if (hours > 0) return $"{hours}h {remainingMinutes}m";
+        return $"{remainingMinutes}m";
+    }
+
     public async Task<DataTable> GetAllPrioritiesAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -14200,7 +14581,7 @@ order by sr.sr_insertdatetime
             // Now create the location
             const string createLocationSql = @"
                 INSERT INTO location (c_id, a_id, l_location, l_phone, l_hours, l_note, l_email, l_active, l_insertdatetime)
-                VALUES (@cId, @aId, @lLocation, @lPhone, @lHours, @lNote, @lEmail, 1, GETDATE());
+                VALUES (@cId, @aId, @lLocation, @lPhone, @lHours, @lNote, @lEmail, @lActive, GETDATE());
                 SELECT CAST(SCOPE_IDENTITY() as int);";
 
             int lId;
@@ -14214,6 +14595,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@lHours", SqlDbType.VarChar).Value = (object?)request.LHours ?? DBNull.Value;
                 command.Parameters.Add("@lNote", SqlDbType.VarChar).Value = (object?)request.LNote ?? DBNull.Value;
                 command.Parameters.Add("@lEmail", SqlDbType.VarChar).Value = (object?)request.LEmail ?? DBNull.Value;
+                command.Parameters.Add("@lActive", SqlDbType.Bit).Value = request.LActive;
 
                 await connection.OpenAsync();
                 var result = await command.ExecuteScalarAsync();
@@ -14324,6 +14706,7 @@ order by sr.sr_insertdatetime
                     l_hours = @lHours,
                     l_note = @lNote,
                     l_email = @lEmail,
+                    l_active = @lActive,
                     l_modifieddatetime = GETDATE()
                 WHERE l_id = @lId";
 
@@ -14336,6 +14719,7 @@ order by sr.sr_insertdatetime
                 command.Parameters.Add("@lHours", SqlDbType.VarChar).Value = (object?)request.LHours ?? DBNull.Value;
                 command.Parameters.Add("@lNote", SqlDbType.VarChar).Value = (object?)request.LNote ?? DBNull.Value;
                 command.Parameters.Add("@lEmail", SqlDbType.VarChar).Value = (object?)request.LEmail ?? DBNull.Value;
+                command.Parameters.Add("@lActive", SqlDbType.Bit).Value = request.LActive;
 
                 await connection.OpenAsync();
                 await command.ExecuteNonQueryAsync();

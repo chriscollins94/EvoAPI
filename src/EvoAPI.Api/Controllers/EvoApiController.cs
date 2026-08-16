@@ -3397,6 +3397,139 @@ public class EvoApiController : BaseController
                 });
             }
         }
+
+        [HttpPost("customer-inquiries")]
+        [AdminOnly]
+        public async Task<ActionResult<ApiResponse<CustomerInquiryDto>>> CreateCustomerInquiry([FromBody] CreateCustomerInquiryRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                if (request.SrId <= 0)
+                {
+                    return BadRequest(new ApiResponse<CustomerInquiryDto>
+                    {
+                        Success = false,
+                        Message = "A valid service request id is required",
+                        Count = 0
+                    });
+                }
+
+                _logger.LogInformation("Logging customer inquiry for service request {SrId} by user {UserId}", request.SrId, UserId);
+
+                // u_id comes from the JWT, never from the request body.
+                var result = await _dataService.CreateCustomerInquiryAsync(request, UserId, UserFullName);
+
+                stopwatch.Stop();
+
+                if (result.Status == CustomerInquiryCreateStatus.ServiceRequestNotFound)
+                {
+                    return NotFound(new ApiResponse<CustomerInquiryDto>
+                    {
+                        Success = false,
+                        Message = "Service request not found, or it has no primary work order to log against",
+                        Count = 0
+                    });
+                }
+
+                if (result.Status == CustomerInquiryCreateStatus.WithinCooldown)
+                {
+                    var blocked = result.Eligibility!;
+                    var loggedBy = string.IsNullOrWhiteSpace(blocked.LastInquiryUser) ? "another user" : blocked.LastInquiryUser;
+
+                    return Conflict(new ApiResponse<CustomerInquiryDto>
+                    {
+                        Success = false,
+                        Message = $"A customer inquiry was already logged for this request by {loggedBy}. " +
+                                  $"Inquiries must be at least {blocked.CooldownHours} hours apart.",
+                        Count = 0
+                    });
+                }
+
+                await LogOperationAsync("CreateCustomerInquiry", $"Customer inquiry {result.Inquiry!.CiId} logged for service request {request.SrId}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<CustomerInquiryDto>
+                {
+                    Success = true,
+                    Message = "Customer inquiry logged successfully",
+                    Data = result.Inquiry,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateCustomerInquiry", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error logging customer inquiry for service request {SrId}", request.SrId);
+
+                return StatusCode(500, new ApiResponse<CustomerInquiryDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while logging the customer inquiry",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpGet("customer-inquiries/eligibility")]
+        [AdminOnly]
+        public async Task<ActionResult<ApiResponse<CustomerInquiryEligibilityDto>>> GetCustomerInquiryEligibility([FromQuery] int srId)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                if (srId <= 0)
+                {
+                    return BadRequest(new ApiResponse<CustomerInquiryEligibilityDto>
+                    {
+                        Success = false,
+                        Message = "A valid service request id is required",
+                        Count = 0
+                    });
+                }
+
+                var eligibility = await _dataService.GetCustomerInquiryEligibilityAsync(srId);
+
+                stopwatch.Stop();
+
+                if (eligibility == null)
+                {
+                    return NotFound(new ApiResponse<CustomerInquiryEligibilityDto>
+                    {
+                        Success = false,
+                        Message = "Service request not found, or it has no primary work order to log against",
+                        Count = 0
+                    });
+                }
+
+                await LogOperationAsync("GetCustomerInquiryEligibility", $"Checked customer inquiry eligibility for service request {srId}", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<CustomerInquiryEligibilityDto>
+                {
+                    Success = true,
+                    Message = "Customer inquiry eligibility retrieved successfully",
+                    Data = eligibility,
+                    Count = 1
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetCustomerInquiryEligibility", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error checking customer inquiry eligibility for service request {SrId}", srId);
+
+                return StatusCode(500, new ApiResponse<CustomerInquiryEligibilityDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while checking customer inquiry eligibility",
+                    Count = 0
+                });
+            }
+        }
     #endregion
 
 
@@ -10733,6 +10866,307 @@ public class EvoApiController : BaseController
             {
                 Success = false,
                 Message = "An error occurred while retrieving the status change history",
+                Count = 0
+            });
+        }
+    }
+
+    [HttpGet("reports/customer-inquiries")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<dynamic>>> GetCustomerInquiriesReport(
+        [FromQuery] string? fromDate = null,
+        [FromQuery] string? toDate = null,
+        [FromQuery] string? srRequestNumber = null,
+        [FromQuery] int? userId = null,
+        [FromQuery] int? ssId = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            _logger.LogInformation("Getting customer inquiries report. FromDate: {FromDate}, ToDate: {ToDate}, Page: {Page}", fromDate, toDate, page);
+
+            // Dates arrive as plain calendar days. ci_insertdatetime is stored UTC, so the
+            // comparison converts to Central rather than matching UTC days against local ones.
+            DateTime startDate = DateTime.Now.AddDays(-30).Date;
+            DateTime endDate = DateTime.Now.Date;
+
+            if (!string.IsNullOrEmpty(fromDate) && DateTime.TryParse(fromDate, out var parsedFromDate))
+            {
+                startDate = parsedFromDate.Date;
+            }
+            if (!string.IsNullOrEmpty(toDate) && DateTime.TryParse(toDate, out var parsedToDate))
+            {
+                endDate = parsedToDate.Date;
+            }
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500;
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                return StatusCode(500, new ApiResponse<dynamic>
+                {
+                    Success = false,
+                    Message = "Database connection unavailable",
+                    Count = 0
+                });
+            }
+
+            const string fromJoins = @"
+                FROM CustomerInquiry ci WITH (NOLOCK)
+                LEFT JOIN servicerequest sr WITH (NOLOCK) ON ci.sr_id = sr.sr_id
+                LEFT JOIN statussecondary ss WITH (NOLOCK) ON ci.ss_id = ss.ss_id
+                LEFT JOIN [user] u WITH (NOLOCK) ON ci.u_id = u.u_id
+                LEFT JOIN trade t WITH (NOLOCK) ON sr.t_id = t.t_id
+                LEFT JOIN xrefCompanyCallCenter xccc WITH (NOLOCK) ON sr.xccc_id = xccc.xccc_id
+                LEFT JOIN company c WITH (NOLOCK) ON xccc.c_id = c.c_id
+                LEFT JOIN callcenter cc WITH (NOLOCK) ON xccc.cc_id = cc.cc_id
+                LEFT JOIN location l WITH (NOLOCK) ON sr.l_id = l.l_id";
+
+            // Date window plus SR search. Dropdown options are built from this so they do not
+            // collapse to the single value already picked.
+            const string baseWhere = @"
+                WHERE ci.ci_active = 1
+                  AND CAST(ci.ci_insertdatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time' AS DATE)
+                      BETWEEN @StartDate AND @EndDate
+                  AND (@SrRequestNumber IS NULL OR @SrRequestNumber = ''
+                       OR sr.sr_requestnumber LIKE '%' + @SrRequestNumber + '%')";
+
+            // Stats, summary and detail all reflect every filter.
+            const string detailWhere = baseWhere + @"
+                  AND (@UserId IS NULL OR ci.u_id = @UserId)
+                  AND (@SsId IS NULL OR ci.ss_id = @SsId)";
+
+            void AddBaseParams(SqlCommand cmd)
+            {
+                cmd.Parameters.AddWithValue("@StartDate", startDate);
+                cmd.Parameters.AddWithValue("@EndDate", endDate);
+                cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
+            }
+
+            void AddDetailParams(SqlCommand cmd)
+            {
+                AddBaseParams(cmd);
+                cmd.Parameters.AddWithValue("@UserId", (object?)userId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@SsId", (object?)ssId ?? DBNull.Value);
+            }
+
+            dynamic stats = new { };
+            var summary = new List<dynamic>();
+            var userOptions = new List<dynamic>();
+            var statusOptions = new List<dynamic>();
+            var records = new List<dynamic>();
+            int totalRecords = 0;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+
+                // 1) Headline stats. RepeatSrCount is the point of the report: requests the
+                //    customer came back about more than once inside the window.
+                string statsSql = $@"
+                    SELECT
+                        COUNT(*) AS TotalInquiries,
+                        COUNT(DISTINCT ci.sr_id) AS UniqueSrCount,
+                        SUM(CASE WHEN ci.ci_note IS NOT NULL AND LTRIM(RTRIM(ci.ci_note)) <> '' THEN 1 ELSE 0 END) AS WithNoteCount,
+                        CAST(AVG(CAST(ci.ci_minutesinstatus AS FLOAT)) AS DECIMAL(18,2)) AS AvgMinutesInStatus,
+                        COUNT(DISTINCT CASE WHEN ci.SrInquiryCount > 1 THEN ci.sr_id END) AS RepeatSrCount
+                    FROM (
+                        SELECT ci.sr_id,
+                               ci.ci_note,
+                               ci.ci_minutesinstatus,
+                               COUNT(*) OVER (PARTITION BY ci.sr_id) AS SrInquiryCount
+                        {fromJoins} {detailWhere}
+                    ) ci";
+                using (var cmd = new SqlCommand(statsSql, connection))
+                {
+                    AddDetailParams(cmd);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        stats = new
+                        {
+                            totalInquiries = reader["TotalInquiries"] != DBNull.Value ? Convert.ToInt32(reader["TotalInquiries"]) : 0,
+                            uniqueSrCount = reader["UniqueSrCount"] != DBNull.Value ? Convert.ToInt32(reader["UniqueSrCount"]) : 0,
+                            repeatSrCount = reader["RepeatSrCount"] != DBNull.Value ? Convert.ToInt32(reader["RepeatSrCount"]) : 0,
+                            withNoteCount = reader["WithNoteCount"] != DBNull.Value ? Convert.ToInt32(reader["WithNoteCount"]) : 0,
+                            avgMinutesInStatus = reader["AvgMinutesInStatus"] != DBNull.Value ? Convert.ToDecimal(reader["AvgMinutesInStatus"]) : (decimal?)null
+                        };
+                    }
+                }
+
+                // 2) Which statuses customers chase on, and how long those jobs had been sitting.
+                string summarySql = $@"
+                    SELECT
+                        ci.ss_id AS SsId,
+                        ISNULL(ss.ss_statussecondary, '(unknown)') AS StatusName,
+                        COUNT(*) AS InquiryCount,
+                        COUNT(DISTINCT ci.sr_id) AS UniqueSrCount,
+                        CAST(AVG(CAST(ci.ci_minutesinstatus AS FLOAT)) AS DECIMAL(18,2)) AS AvgMinutesInStatus,
+                        MAX(ci.ci_minutesinstatus) AS MaxMinutesInStatus
+                    {fromJoins} {detailWhere}
+                    GROUP BY ci.ss_id, ss.ss_statussecondary
+                    ORDER BY COUNT(*) DESC";
+                using (var cmd = new SqlCommand(summarySql, connection))
+                {
+                    AddDetailParams(cmd);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        summary.Add(new
+                        {
+                            ssId = reader["SsId"] != DBNull.Value ? Convert.ToInt32(reader["SsId"]) : (int?)null,
+                            statusName = reader["StatusName"]?.ToString() ?? string.Empty,
+                            inquiryCount = reader["InquiryCount"] != DBNull.Value ? Convert.ToInt32(reader["InquiryCount"]) : 0,
+                            uniqueSrCount = reader["UniqueSrCount"] != DBNull.Value ? Convert.ToInt32(reader["UniqueSrCount"]) : 0,
+                            avgMinutesInStatus = reader["AvgMinutesInStatus"] != DBNull.Value ? Convert.ToDecimal(reader["AvgMinutesInStatus"]) : (decimal?)null,
+                            maxMinutesInStatus = reader["MaxMinutesInStatus"] != DBNull.Value ? Convert.ToInt32(reader["MaxMinutesInStatus"]) : (int?)null
+                        });
+                    }
+                }
+
+                // 3) Filter dropdown options, from the date window only.
+                string userOptionsSql = $@"
+                    SELECT DISTINCT ci.u_id AS UserId, ISNULL(u.u_firstname + ' ' + u.u_lastname, '(unknown)') AS UserName
+                    {fromJoins} {baseWhere}
+                    ORDER BY UserName";
+                using (var cmd = new SqlCommand(userOptionsSql, connection))
+                {
+                    AddBaseParams(cmd);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        userOptions.Add(new
+                        {
+                            userId = Convert.ToInt32(reader["UserId"]),
+                            userName = reader["UserName"]?.ToString() ?? string.Empty
+                        });
+                    }
+                }
+
+                string statusOptionsSql = $@"
+                    SELECT DISTINCT ci.ss_id AS SsId, ISNULL(ss.ss_statussecondary, '(unknown)') AS StatusName, ss.ss_color AS Color
+                    {fromJoins} {baseWhere}
+                      AND ci.ss_id IS NOT NULL
+                    ORDER BY StatusName";
+                using (var cmd = new SqlCommand(statusOptionsSql, connection))
+                {
+                    AddBaseParams(cmd);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        statusOptions.Add(new
+                        {
+                            ssId = Convert.ToInt32(reader["SsId"]),
+                            statusName = reader["StatusName"]?.ToString() ?? string.Empty,
+                            color = reader["Color"]?.ToString() ?? string.Empty
+                        });
+                    }
+                }
+
+                // 4) Detail count
+                string countSql = "SELECT COUNT(*) " + fromJoins + detailWhere;
+                using (var cmd = new SqlCommand(countSql, connection))
+                {
+                    AddDetailParams(cmd);
+                    var result = await cmd.ExecuteScalarAsync();
+                    totalRecords = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
+                }
+
+                // 5) Detail page. InquiryNumberForSr numbers repeat calls on the same request
+                //    inside the window, so a "3rd time asking" row is obvious at a glance.
+                string dataSql = $@"
+                    SELECT * FROM (
+                        SELECT
+                            ci.ci_id AS CiId,
+                            ci.sr_id AS SrId,
+                            sr.sr_requestnumber AS SrRequestNumber,
+                            cc.cc_name AS CallCenter,
+                            c.c_name AS Company,
+                            l.l_location AS Location,
+                            t.t_trade AS Trade,
+                            ISNULL(ss.ss_statussecondary, '') AS StatusName,
+                            ss.ss_color AS StatusColor,
+                            ci.ci_minutesinstatus AS MinutesInStatus,
+                            ci.ci_note AS Note,
+                            ci.ci_insertdatetime AS LoggedDateTime,
+                            ISNULL(u.u_firstname + ' ' + u.u_lastname, '') AS LoggedBy,
+                            ROW_NUMBER() OVER (PARTITION BY ci.sr_id ORDER BY ci.ci_insertdatetime ASC) AS InquiryNumberForSr,
+                            COUNT(*) OVER (PARTITION BY ci.sr_id) AS InquiryCountForSr
+                        {fromJoins} {detailWhere}
+                    ) x
+                    ORDER BY x.CiId DESC
+                    OFFSET @Offset ROWS
+                    FETCH NEXT @PageSize ROWS ONLY";
+                using (var cmd = new SqlCommand(dataSql, connection))
+                {
+                    AddDetailParams(cmd);
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        records.Add(new
+                        {
+                            ciId = Convert.ToInt32(reader["CiId"]),
+                            srId = reader["SrId"] != DBNull.Value ? Convert.ToInt32(reader["SrId"]) : (int?)null,
+                            srRequestNumber = reader["SrRequestNumber"]?.ToString() ?? string.Empty,
+                            callCenter = reader["CallCenter"]?.ToString() ?? string.Empty,
+                            company = reader["Company"]?.ToString() ?? string.Empty,
+                            location = reader["Location"]?.ToString() ?? string.Empty,
+                            trade = reader["Trade"]?.ToString() ?? string.Empty,
+                            statusName = reader["StatusName"]?.ToString() ?? string.Empty,
+                            statusColor = reader["StatusColor"]?.ToString() ?? string.Empty,
+                            minutesInStatus = reader["MinutesInStatus"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["MinutesInStatus"]),
+                            note = reader["Note"] == DBNull.Value ? null : reader["Note"]?.ToString(),
+                            loggedDateTime = reader["LoggedDateTime"] == DBNull.Value
+                                ? (DateTime?)null
+                                : DateTime.SpecifyKind(Convert.ToDateTime(reader["LoggedDateTime"]), DateTimeKind.Utc),
+                            loggedBy = reader["LoggedBy"]?.ToString() ?? string.Empty,
+                            inquiryNumberForSr = reader["InquiryNumberForSr"] != DBNull.Value ? Convert.ToInt32(reader["InquiryNumberForSr"]) : 1,
+                            inquiryCountForSr = reader["InquiryCountForSr"] != DBNull.Value ? Convert.ToInt32(reader["InquiryCountForSr"]) : 1
+                        });
+                    }
+                }
+            }
+
+            stopwatch.Stop();
+
+            return Ok(new ApiResponse<dynamic>
+            {
+                Success = true,
+                Message = $"Retrieved {records.Count} customer inquiry records",
+                Data = new
+                {
+                    records = records,
+                    pagination = new
+                    {
+                        currentPage = page,
+                        pageSize = pageSize,
+                        totalRecords = totalRecords,
+                        totalPages = (int)Math.Ceiling((double)totalRecords / pageSize)
+                    },
+                    stats = stats,
+                    summary = summary,
+                    userOptions = userOptions,
+                    statusOptions = statusOptions
+                },
+                Count = totalRecords
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(ex, "Error retrieving customer inquiries report");
+
+            return StatusCode(500, new ApiResponse<dynamic>
+            {
+                Success = false,
+                Message = "An error occurred while retrieving the customer inquiries report",
                 Count = 0
             });
         }
