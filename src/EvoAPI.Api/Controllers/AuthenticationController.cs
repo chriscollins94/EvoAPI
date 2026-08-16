@@ -56,6 +56,14 @@ public class AuthenticationController : BaseController
                 userRequires2fa = Convert.ToInt32(userCheckResult.Rows[0]["u_2fa"]) == 1;
             }
 
+            // Weekly2faCode feature flag (ConfigSetting cs_type='featureflag'): when off,
+            // skip the 3-digit code handling entirely — the password is used as typed.
+            if (userRequires2fa && !await _authenticationService.IsWeekly2faCodeEnabledAsync())
+            {
+                _logger.LogInformation("Weekly2faCode feature flag is off - skipping 2FA code for user: {Username}", request.Username);
+                userRequires2fa = false;
+            }
+
             // Handle 2FA: Only process 3-digit code if user requires 2FA
             var password = request.Password;
             var require2fa = false;

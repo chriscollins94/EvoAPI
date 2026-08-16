@@ -260,6 +260,7 @@ public class PerformanceRepository : IPerformanceRepository
             INNER JOIN [user] u ON u.u_id = pe.u_id
             LEFT JOIN zone z ON z.z_id = u.z_id
             WHERE pe.rn = 1
+              AND u.u_active = 1
             ORDER BY u.u_firstname, u.u_lastname";
 
         using var connection = new SqlConnection(_connectionString);

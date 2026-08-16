@@ -15,6 +15,13 @@ public interface IAuthenticationService
     string CalculateSecureCode();
 
     /// <summary>
+    /// Whether the weekly 3-digit login code is enabled
+    /// (ConfigSetting cs_type='featureflag', cs_identifier='Weekly2faCode').
+    /// Missing/unparseable row counts as enabled so the flag fails safe.
+    /// </summary>
+    Task<bool> IsWeekly2faCodeEnabledAsync();
+
+    /// <summary>
     /// Retrieves user permissions and functions from the database
     /// </summary>
     Task<List<string>> GetUserPermissionsAsync(string username);

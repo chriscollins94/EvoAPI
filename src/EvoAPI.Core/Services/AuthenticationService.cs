@@ -57,7 +57,8 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // If account requires 2FA but no valid code was provided, reject
-        if (userRequires2fa && !require2fa)
+        // (unless the Weekly2faCode feature flag has the code disabled globally)
+        if (userRequires2fa && !require2fa && await IsWeekly2faCodeEnabledAsync())
         {
             _logger.LogWarning("2FA required but not provided for user: {Username}", username);
             throw new UnauthorizedAccessException("Invalid username or password");
@@ -194,8 +195,20 @@ public class AuthenticationService : IAuthenticationService
             : result.PadLeft(3, '0');
         
         _logger.LogInformation("2FA Code: {Code}", code);
-        
+
         return code;
+    }
+
+    public async Task<bool> IsWeekly2faCodeEnabledAsync()
+    {
+        // Anything other than an explicit off value ('0'/'false') keeps the
+        // code required, so a missing or mistyped row can't silently drop 2FA.
+        var value = await _dataService.GetConfigSettingValueAsync("featureflag", "Weekly2faCode");
+        var enabled = !string.Equals(value?.Trim(), "0", StringComparison.OrdinalIgnoreCase)
+                   && !string.Equals(value?.Trim(), "false", StringComparison.OrdinalIgnoreCase);
+
+        _logger.LogInformation("Weekly2faCode feature flag: cs_value={Value}, enabled={Enabled}", value ?? "(missing)", enabled);
+        return enabled;
     }
 
     public async Task<List<string>> GetUserPermissionsAsync(string username)
