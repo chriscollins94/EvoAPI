@@ -21,12 +21,14 @@ public class AttackPointDto
     public string t_trade { get; set; } = string.Empty;
     public int hours_since_last_note { get; set; }
     public int days_in_current_status { get; set; }
+    public int CustomerInquiryCount { get; set; }
     public int AttackCallCenter { get; set; }
     public int AttackPriority { get; set; }
     public int AttackStatusSecondary { get; set; }
     public int AttackHoursSinceLastNote { get; set; }
     public int AttackDaysInStatus { get; set; }
     public int AttackActionableDate { get; set; }
+    public int AttackCustomerInquiry { get; set; }
     public int AttackPoints { get; set; }
 }
 

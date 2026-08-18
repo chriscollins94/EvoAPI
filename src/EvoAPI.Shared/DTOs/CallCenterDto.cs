@@ -116,3 +116,29 @@ public class CreateAttackPointActionableDateRequest
     public int Days { get; set; }
     public int Attack { get; set; }
 }
+
+// Attack Point Customer Inquiry DTOs
+public class AttackPointCustomerInquiryDto
+{
+    public int Id { get; set; }
+    public DateTime InsertDateTime { get; set; }
+    public DateTime? ModifiedDateTime { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public int Attack { get; set; }
+}
+
+public class UpdateAttackPointCustomerInquiryRequest
+{
+    public int Id { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public int Attack { get; set; }
+}
+
+public class CreateAttackPointCustomerInquiryRequest
+{
+    public string Description { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public int Attack { get; set; }
+}

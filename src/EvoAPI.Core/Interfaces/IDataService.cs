@@ -22,12 +22,18 @@ public interface IDataService
     Task<DataTable> GetAllAttackPointNotesAsync();
     Task<bool> UpdateAttackPointNoteAsync(UpdateAttackPointNoteRequest request);
     Task<int?> CreateAttackPointNoteAsync(CreateAttackPointNoteRequest request);
+    Task<bool> DeleteAttackPointNoteAsync(int id);
     Task<DataTable> GetAllAttackPointActionableDatesAsync();
     Task<bool> UpdateAttackPointActionableDateAsync(UpdateAttackPointActionableDateRequest request);
     Task<int?> CreateAttackPointActionableDateAsync(CreateAttackPointActionableDateRequest request);
     Task<DataTable> GetAllAttackPointStatusAsync();
     Task<bool> UpdateAttackPointStatusAsync(UpdateAttackPointStatusRequest request);
     Task<int?> CreateAttackPointStatusAsync(CreateAttackPointStatusRequest request);
+    Task<bool> DeleteAttackPointStatusAsync(int id);
+    Task<DataTable> GetAllAttackPointCustomerInquiriesAsync();
+    Task<bool> UpdateAttackPointCustomerInquiryAsync(UpdateAttackPointCustomerInquiryRequest request);
+    Task<int?> CreateAttackPointCustomerInquiryAsync(CreateAttackPointCustomerInquiryRequest request);
+    Task<bool> DeleteAttackPointCustomerInquiryAsync(int id);
     Task<DataTable> GetAttackPointsAsync(int topCount = 15);
 
     // Backlog methods

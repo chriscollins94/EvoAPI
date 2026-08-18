@@ -1687,6 +1687,394 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<bool> DeleteAttackPointNoteAsync(int id)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.AttackPointNote
+                WHERE apn_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", id }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointNote",
+                Detail = $"Deleted attack point note {id}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointNote",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error deleting attack point note {Id}", id);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteAttackPointStatusAsync(int id)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.AttackPointStatus
+                WHERE aps_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", id }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointStatus",
+                Detail = $"Deleted attack point status {id}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointStatus",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error deleting attack point status {Id}", id);
+            throw;
+        }
+    }
+
+    // Attack Point Customer Inquiry methods
+    public async Task<DataTable> GetAllAttackPointCustomerInquiriesAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                SELECT
+                    apci_id as Id,
+                    apci_insertdatetime as InsertDateTime,
+                    apci_modifieddatetime as ModifiedDateTime,
+                    apci_description as Description,
+                    apci_count as Count,
+                    apci_attack as Attack
+                FROM dbo.AttackPointCustomerInquiry
+                ORDER BY apci_count";
+
+            var result = await ExecuteQueryAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllAttackPointCustomerInquiries",
+                Detail = $"Retrieved {result.Rows.Count} attack point customer inquiry records",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetAllAttackPointCustomerInquiries",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving attack point customer inquiry records");
+            throw;
+        }
+    }
+
+    public async Task<bool> UpdateAttackPointCustomerInquiryAsync(EvoAPI.Shared.DTOs.UpdateAttackPointCustomerInquiryRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                UPDATE dbo.AttackPointCustomerInquiry
+                SET
+                    apci_description = @Description,
+                    apci_count = @Count,
+                    apci_attack = @Attack,
+                    apci_modifieddatetime = GETDATE()
+                WHERE apci_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", request.Id },
+                { "@Description", request.Description },
+                { "@Count", request.Count },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttackPointCustomerInquiry",
+                Detail = $"Updated attack point customer inquiry {request.Id} - {request.Count} inquiries. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "UpdateAttackPointCustomerInquiry",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error updating attack point customer inquiry {Id}", request.Id);
+            throw;
+        }
+    }
+
+    public async Task<int?> CreateAttackPointCustomerInquiryAsync(EvoAPI.Shared.DTOs.CreateAttackPointCustomerInquiryRequest request)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                INSERT INTO dbo.AttackPointCustomerInquiry
+                (apci_description, apci_count, apci_attack, apci_insertdatetime, apci_modifieddatetime)
+                VALUES
+                (@Description, @Count, @Attack, GETDATE(), GETDATE());
+
+                SELECT SCOPE_IDENTITY() as NewId;";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Description", request.Description },
+                { "@Count", request.Count },
+                { "@Attack", request.Attack }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var newId = await command.ExecuteScalarAsync();
+
+            if (newId != null && int.TryParse(newId.ToString(), out var id))
+            {
+                stopwatch.Stop();
+                await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+                {
+                    Name = "DataService",
+                    Description = "CreateAttackPointCustomerInquiry",
+                    Detail = $"Created new attack point customer inquiry '{request.Count} inquiries' with ID {id}",
+                    ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                    MachineName = Environment.MachineName
+                });
+
+                return id;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "CreateAttackPointCustomerInquiry",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error creating attack point customer inquiry {Count}", request.Count);
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteAttackPointCustomerInquiryAsync(int id)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+                DELETE FROM dbo.AttackPointCustomerInquiry
+                WHERE apci_id = @Id";
+
+            var parameters = new Dictionary<string, object>
+            {
+                { "@Id", id }
+            };
+
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                throw new InvalidOperationException("No connection string found");
+            }
+
+            using var connection = new SqlConnection(connectionString);
+            connection.ConnectionString += ";Connection Timeout=30;";
+
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 30;
+
+            foreach (var param in parameters)
+            {
+                command.Parameters.AddWithValue(param.Key, param.Value);
+            }
+
+            await connection.OpenAsync();
+            var rowsAffected = await command.ExecuteNonQueryAsync();
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointCustomerInquiry",
+                Detail = $"Deleted attack point customer inquiry {id}. Rows affected: {rowsAffected}",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return rowsAffected > 0;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "DeleteAttackPointCustomerInquiry",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error deleting attack point customer inquiry {Id}", id);
+            throw;
+        }
+    }
+
     // Attack Point Actionable Date methods
     public async Task<DataTable> GetAllAttackPointActionableDatesAsync()
     {
@@ -4400,6 +4788,7 @@ public class DataService : IDataService
             IF OBJECT_ID('tempdb..#BaseData') IS NOT NULL DROP TABLE #BaseData;
             IF OBJECT_ID('tempdb..#WorkOrderNotes') IS NOT NULL DROP TABLE #WorkOrderNotes;
             IF OBJECT_ID('tempdb..#StatusChanges') IS NOT NULL DROP TABLE #StatusChanges;
+            IF OBJECT_ID('tempdb..#CustomerInquiries') IS NOT NULL DROP TABLE #CustomerInquiries;
 
             -- Base set: ALL qualifying work orders
             SELECT DISTINCT wo.wo_id
@@ -4432,6 +4821,22 @@ public class DataService : IDataService
 
             CREATE CLUSTERED INDEX IX_SSC ON #StatusChanges(wo_id);
 
+            -- Active customer inquiries logged during the current secondary status window.
+            -- ci_insertdatetime and ssc_insertdatetime are both stored UTC, so compare directly.
+            -- A work order with no status change row has never changed status, so every
+            -- active inquiry on it counts as ""current status"".
+            SELECT sr.sr_id, COUNT(*) as inquiry_count
+            INTO #CustomerInquiries
+            FROM CustomerInquiry ci WITH (NOLOCK)
+            INNER JOIN servicerequest sr WITH (NOLOCK) ON ci.sr_id = sr.sr_id
+            INNER JOIN #BaseData bd ON sr.wo_id_primary = bd.wo_id
+            LEFT JOIN #StatusChanges ssc ON ssc.wo_id = sr.wo_id_primary
+            WHERE ci.ci_active = 1
+            AND (ssc.latest_status_datetime IS NULL OR ci.ci_insertdatetime >= ssc.latest_status_datetime)
+            GROUP BY sr.sr_id;
+
+            CREATE CLUSTERED INDEX IX_CI ON #CustomerInquiries(sr_id);
+
             -- Main query using pre-filtered data
             WITH ranked_results AS (
                 -- Zone-based admin assignment (commercial + residential, all WOs go through this path)
@@ -4454,6 +4859,7 @@ public class DataService : IDataService
                         ELSE DATEDIFF(HOUR, won.latest_note_datetime, GETDATE())
                     END as hours_since_last_note,
                     ISNULL(DATEDIFF(DAY, ssc.latest_status_datetime, GETDATE()), 0) as days_in_current_status,
+                    ISNULL(ci_agg.inquiry_count, 0) as customer_inquiry_count,
                     cc.cc_attack as AttackCallCenter,
                     p.p_attack as AttackPriority, 
                     ss.ss_attack as AttackStatusSecondary,
@@ -4487,6 +4893,12 @@ public class DataService : IDataService
                             AND apad_id > 1)
                         ORDER BY CASE WHEN sr.sr_datenextstep IS NULL THEN 0 ELSE apad_days END ASC
                     ), 0) as AttackActionableDate,
+                    ISNULL((
+                        SELECT TOP 1 apci_attack
+                        FROM AttackPointCustomerInquiry WITH (NOLOCK)
+                        WHERE ISNULL(ci_agg.inquiry_count, 0) >= apci_count
+                        ORDER BY apci_count DESC, apci_id DESC
+                    ), 0) as AttackCustomerInquiry,
                     admin_user.u_id as admin_u_id,
                     admin_user.u_firstname as admin_firstname,
                     admin_user.u_lastname as admin_lastname,
@@ -4512,20 +4924,21 @@ public class DataService : IDataService
                 INNER JOIN [user] admin_user WITH (NOLOCK) ON xazss.u_id = admin_user.u_id
                 LEFT JOIN #WorkOrderNotes won ON won.wo_id = wo.wo_id
                 LEFT JOIN #StatusChanges ssc ON ssc.wo_id = wo.wo_id
+                LEFT JOIN #CustomerInquiries ci_agg ON ci_agg.sr_id = sr.sr_id
                 WHERE sr.s_id NOT IN (9, 6)
                 AND c.c_name NOT IN ('Metro Pipe Program')
             ),
             final_with_attack_points AS (
                 SELECT *,
                     (AttackPriority + AttackStatusSecondary + AttackDaysInStatus +
-                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) as AttackPoints,
+                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate + AttackCustomerInquiry) as AttackPoints,
                     CASE
                         WHEN is_escalated = 1 THEN NULL
                         WHEN cc_name = 'Administrative' THEN NULL
                         ELSE ROW_NUMBER() OVER (
                             PARTITION BY admin_u_id
                             ORDER BY (AttackPriority + AttackStatusSecondary + AttackDaysInStatus +
-                                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate) DESC
+                                    AttackHoursSinceLastNote + AttackCallCenter + AttackActionableDate + AttackCustomerInquiry) DESC
                         )
                     END as rn_non_escalated
                 FROM ranked_results
@@ -4549,12 +4962,14 @@ public class DataService : IDataService
                 t_trade,
                 hours_since_last_note,
                 days_in_current_status,
+                customer_inquiry_count,
                 AttackCallCenter,
                 AttackPriority,
                 AttackStatusSecondary,
                 AttackHoursSinceLastNote,
                 AttackDaysInStatus,
                 AttackActionableDate,
+                AttackCustomerInquiry,
                 AttackPoints,
                 is_escalated
             FROM final_with_attack_points
@@ -4565,6 +4980,7 @@ public class DataService : IDataService
             DROP TABLE #BaseData;
             DROP TABLE #WorkOrderNotes;
             DROP TABLE #StatusChanges;
+            DROP TABLE #CustomerInquiries;
             ";
 
             

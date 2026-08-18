@@ -437,6 +437,49 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpGet("attackpointcustomerinquiries")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<List<AttackPointCustomerInquiryDto>>>> GetAttackPointCustomerInquiries()
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                _logger.LogInformation("Getting all attack point customer inquiry records");
+
+                // Get data from service
+                var dataTable = await _dataService.GetAllAttackPointCustomerInquiriesAsync();
+                var attackPointCustomerInquiries = ConvertDataTableToAttackPointCustomerInquiries(dataTable);
+
+                stopwatch.Stop();
+
+                // Log successful operation
+                await LogOperationAsync("GetAttackPointCustomerInquiries", $"Retrieved {attackPointCustomerInquiries.Count} attack point customer inquiry records", stopwatch.Elapsed);
+
+                return Ok(new ApiResponse<List<AttackPointCustomerInquiryDto>>
+                {
+                    Success = true,
+                    Message = "Attack point customer inquiry records retrieved successfully",
+                    Data = attackPointCustomerInquiries,
+                    Count = attackPointCustomerInquiries.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("GetAttackPointCustomerInquiries", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error retrieving attack point customer inquiry records");
+
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while retrieving attack point customer inquiry records",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpGet("zones/legacy")]
         public async Task<ActionResult<ApiResponse<List<ZoneDto>>>> GetZonesLegacy()
         {
@@ -2207,6 +2250,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPost("statusassignments")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<AdminZoneStatusAssignmentDto>>> CreateStatusAssignment([FromBody] CreateAdminZoneStatusAssignmentRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2411,6 +2455,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPut("priorities/{id}")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> UpdatePriority(int id, [FromBody] UpdatePriorityRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2484,6 +2529,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPut("statussecondaries/{id}")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> UpdateStatusSecondary(int id, [FromBody] UpdateStatusSecondaryRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2766,6 +2812,7 @@ public class EvoApiController : BaseController
 
         // Attack Point Notes endpoints
         [HttpPut("attackpointnotes/{id}")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointNote(int id, [FromBody] UpdateAttackPointNoteRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2836,6 +2883,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPost("attackpointnotes")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<AttackPointNoteDto>>> CreateAttackPointNote([FromBody] CreateAttackPointNoteRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2910,8 +2958,72 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpDelete("attackpointnotes/{id}")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteAttackPointNote(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                // apn_id = 1 is the sentinel "no note ever logged" row hardcoded in the
+                // attack point scoring query - it must never be deleted.
+                if (id == 1)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Attack point note 1 is the built-in 'no note ever logged' record used by the scoring query and cannot be deleted",
+                        Count = 0
+                    });
+                }
+
+                var success = await _dataService.DeleteAttackPointNoteAsync(id);
+
+                stopwatch.Stop();
+
+                if (success)
+                {
+                    await LogOperationAsync("DeleteAttackPointNote", $"Deleted attack point note {id}", stopwatch.Elapsed);
+
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point note deleted successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("DeleteAttackPointNote", $"Failed to delete attack point note {id}", stopwatch.Elapsed);
+
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to delete attack point note",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteAttackPointNote", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error deleting attack point note {Id}", id);
+
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting the attack point note",
+                    Count = 0
+                });
+            }
+        }
+
         // Attack Point Actionable Date endpoints
         [HttpPut("attackpointactionabledates/{id}")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointActionableDate(int id, [FromBody] UpdateAttackPointActionableDateRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2982,6 +3094,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPost("attackpointactionabledates")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<AttackPointActionableDateDto>>> CreateAttackPointActionableDate([FromBody] CreateAttackPointActionableDateRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -3058,6 +3171,7 @@ public class EvoApiController : BaseController
 
         // Attack Point Status endpoints
         [HttpPut("attackpointstatus/{id}")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointStatus(int id, [FromBody] UpdateAttackPointStatusRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -3128,6 +3242,7 @@ public class EvoApiController : BaseController
         }
 
         [HttpPost("attackpointstatus")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<AttackPointStatusDto>>> CreateAttackPointStatus([FromBody] CreateAttackPointStatusRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -3201,7 +3316,258 @@ public class EvoApiController : BaseController
             }
         }
 
+        [HttpDelete("attackpointstatus/{id}")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteAttackPointStatus(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                var success = await _dataService.DeleteAttackPointStatusAsync(id);
+
+                stopwatch.Stop();
+
+                if (success)
+                {
+                    await LogOperationAsync("DeleteAttackPointStatus", $"Deleted attack point status {id}", stopwatch.Elapsed);
+
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point status deleted successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("DeleteAttackPointStatus", $"Failed to delete attack point status {id}", stopwatch.Elapsed);
+
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to delete attack point status",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteAttackPointStatus", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error deleting attack point status {Id}", id);
+
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting the attack point status",
+                    Count = 0
+                });
+            }
+        }
+
+        // Attack Point Customer Inquiry endpoints
+        [HttpPut("attackpointcustomerinquiries/{id}")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<object>>> UpdateAttackPointCustomerInquiry(int id, [FromBody] UpdateAttackPointCustomerInquiryRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                if (id != request.Id)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "ID mismatch between URL and request body",
+                        Count = 0
+                    });
+                }
+
+                if (request.Count < 0)
+                {
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Inquiry count must be non-negative",
+                        Count = 0
+                    });
+                }
+
+                var success = await _dataService.UpdateAttackPointCustomerInquiryAsync(request);
+
+                stopwatch.Stop();
+
+                if (success)
+                {
+                    await LogOperationAsync("UpdateAttackPointCustomerInquiry", $"Updated attack point customer inquiry {id} - {request.Count} inquiries", stopwatch.Elapsed);
+
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point customer inquiry updated successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("UpdateAttackPointCustomerInquiry", $"Failed to update attack point customer inquiry {id}", stopwatch.Elapsed);
+
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to update attack point customer inquiry",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("UpdateAttackPointCustomerInquiry", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error updating attack point customer inquiry {Id}", id);
+
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while updating the attack point customer inquiry",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpPost("attackpointcustomerinquiries")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<AttackPointCustomerInquiryDto>>> CreateAttackPointCustomerInquiry([FromBody] CreateAttackPointCustomerInquiryRequest request)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                _logger.LogInformation("Creating new attack point customer inquiry: {Count} inquiries", request.Count);
+
+                // Validate the request
+                if (request.Count < 0)
+                {
+                    return BadRequest(new ApiResponse<AttackPointCustomerInquiryDto>
+                    {
+                        Success = false,
+                        Message = "Inquiry count must be non-negative",
+                        Count = 0
+                    });
+                }
+
+                var newId = await _dataService.CreateAttackPointCustomerInquiryAsync(request);
+
+                if (newId.HasValue)
+                {
+                    // Create the DTO to return
+                    var newAttackPointCustomerInquiry = new AttackPointCustomerInquiryDto
+                    {
+                        Id = newId.Value,
+                        Description = request.Description,
+                        Count = request.Count,
+                        Attack = request.Attack,
+                        InsertDateTime = DateTime.Now,
+                        ModifiedDateTime = DateTime.Now
+                    };
+
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointCustomerInquiry", $"Created attack point customer inquiry - {request.Count} inquiries with ID {newId.Value}", stopwatch.Elapsed);
+
+                    return Ok(new ApiResponse<AttackPointCustomerInquiryDto>
+                    {
+                        Success = true,
+                        Message = "Attack point customer inquiry created successfully",
+                        Data = newAttackPointCustomerInquiry,
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    stopwatch.Stop();
+                    await LogOperationAsync("CreateAttackPointCustomerInquiry", $"Failed to create attack point customer inquiry - {request.Count} inquiries", stopwatch.Elapsed);
+
+                    return BadRequest(new ApiResponse<AttackPointCustomerInquiryDto>
+                    {
+                        Success = false,
+                        Message = "Failed to create attack point customer inquiry",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("CreateAttackPointCustomerInquiry", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error creating attack point customer inquiry {Count}", request.Count);
+
+                return StatusCode(500, new ApiResponse<AttackPointCustomerInquiryDto>
+                {
+                    Success = false,
+                    Message = "An error occurred while creating the attack point customer inquiry",
+                    Count = 0
+                });
+            }
+        }
+
+        [HttpDelete("attackpointcustomerinquiries/{id}")]
+        [AttackPointsOnly]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteAttackPointCustomerInquiry(int id)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            try
+            {
+                var success = await _dataService.DeleteAttackPointCustomerInquiryAsync(id);
+
+                stopwatch.Stop();
+
+                if (success)
+                {
+                    await LogOperationAsync("DeleteAttackPointCustomerInquiry", $"Deleted attack point customer inquiry {id}", stopwatch.Elapsed);
+
+                    return Ok(new ApiResponse<object>
+                    {
+                        Success = true,
+                        Message = "Attack point customer inquiry deleted successfully",
+                        Count = 1
+                    });
+                }
+                else
+                {
+                    await LogOperationAsync("DeleteAttackPointCustomerInquiry", $"Failed to delete attack point customer inquiry {id}", stopwatch.Elapsed);
+
+                    return BadRequest(new ApiResponse<object>
+                    {
+                        Success = false,
+                        Message = "Failed to delete attack point customer inquiry",
+                        Count = 0
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await LogErrorAsync("DeleteAttackPointCustomerInquiry", ex, stopwatch.Elapsed);
+
+                _logger.LogError(ex, "Error deleting attack point customer inquiry {Id}", id);
+
+                return StatusCode(500, new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "An error occurred while deleting the attack point customer inquiry",
+                    Count = 0
+                });
+            }
+        }
+
         [HttpDelete("statusassignments")]
+        [AttackPointsOnly]
         public async Task<ActionResult<ApiResponse<object>>> DeleteStatusAssignment([FromBody] DeleteAdminZoneStatusAssignmentRequest request)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -3845,6 +4211,28 @@ public class EvoApiController : BaseController
         return attackPointStatus;
     }
 
+    private static List<AttackPointCustomerInquiryDto> ConvertDataTableToAttackPointCustomerInquiries(DataTable dataTable)
+    {
+        var attackPointCustomerInquiries = new List<AttackPointCustomerInquiryDto>();
+
+        foreach (DataRow row in dataTable.Rows)
+        {
+            var attackPointCustomerInquiry = new AttackPointCustomerInquiryDto
+            {
+                Id = Convert.ToInt32(row["Id"]),
+                InsertDateTime = Convert.ToDateTime(row["InsertDateTime"]),
+                ModifiedDateTime = row["ModifiedDateTime"] != DBNull.Value ? Convert.ToDateTime(row["ModifiedDateTime"]) : null,
+                Description = row["Description"]?.ToString() ?? string.Empty,
+                Count = Convert.ToInt32(row["Count"]),
+                Attack = Convert.ToInt32(row["Attack"])
+            };
+
+            attackPointCustomerInquiries.Add(attackPointCustomerInquiry);
+        }
+
+        return attackPointCustomerInquiries;
+    }
+
     private static List<ZoneDto> ConvertDataTableToZones(DataTable dataTable)
     {
         var zones = new List<ZoneDto>();
@@ -4002,12 +4390,14 @@ public class EvoApiController : BaseController
                 t_trade = CleanString(row["t_trade"]),
                 hours_since_last_note = row["hours_since_last_note"] != DBNull.Value ? Convert.ToInt32(row["hours_since_last_note"]) : 0,
                 days_in_current_status = row["days_in_current_status"] != DBNull.Value ? Convert.ToInt32(row["days_in_current_status"]) : 0,
+                CustomerInquiryCount = row["customer_inquiry_count"] != DBNull.Value ? Convert.ToInt32(row["customer_inquiry_count"]) : 0,
                 AttackCallCenter = row["AttackCallCenter"] != DBNull.Value ? Convert.ToInt32(row["AttackCallCenter"]) : 0,
                 AttackPriority = row["AttackPriority"] != DBNull.Value ? Convert.ToInt32(row["AttackPriority"]) : 0,
                 AttackStatusSecondary = row["AttackStatusSecondary"] != DBNull.Value ? Convert.ToInt32(row["AttackStatusSecondary"]) : 0,
                 AttackHoursSinceLastNote = row["AttackHoursSinceLastNote"] != DBNull.Value ? Convert.ToInt32(row["AttackHoursSinceLastNote"]) : 0,
                 AttackDaysInStatus = row["AttackDaysInStatus"] != DBNull.Value ? Convert.ToInt32(row["AttackDaysInStatus"]) : 0,
                 AttackActionableDate = row["AttackActionableDate"] != DBNull.Value ? Convert.ToInt32(row["AttackActionableDate"]) : 0,
+                AttackCustomerInquiry = row["AttackCustomerInquiry"] != DBNull.Value ? Convert.ToInt32(row["AttackCustomerInquiry"]) : 0,
                 AttackPoints = row["AttackPoints"] != DBNull.Value ? Convert.ToInt32(row["AttackPoints"]) : 0
             };
 
