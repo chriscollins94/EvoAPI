@@ -10935,27 +10935,42 @@ public class EvoApiController : BaseController
     public async Task<ActionResult<ApiResponse<dynamic>>> GetStatusChangeHistory(
         [FromQuery] string? fromDate = null,
         [FromQuery] string? toDate = null,
-        [FromQuery] string? statusIds = null,
+        [FromQuery] string? statusIdsPrior = null,
+        [FromQuery] string? statusIdsNew = null,
         [FromQuery] string? srRequestNumber = null,
         [FromQuery] int? tradeId = null,
         [FromQuery] string? mode = "primary",
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
+        [FromQuery] int pageSize = 50,
+        [FromQuery] bool exportOnly = false,
+        [FromQuery] int? afterId = null,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDir = null)
     {
         var stopwatch = Stopwatch.StartNew();
         try
         {
             bool isSecondary = string.Equals(mode, "secondary", StringComparison.OrdinalIgnoreCase);
-            _logger.LogInformation("Getting status change history report. Mode: {Mode}, FromDate: {FromDate}, ToDate: {ToDate}, StatusIds: {StatusIds}, Page: {Page}", mode, fromDate, toDate, statusIds, page);
+            _logger.LogInformation("Getting status change history report. Mode: {Mode}, FromDate: {FromDate}, ToDate: {ToDate}, StatusIdsPrior: {StatusIdsPrior}, StatusIdsNew: {StatusIdsNew}, Page: {Page}", mode, fromDate, toDate, statusIdsPrior, statusIdsNew, page);
 
-            var statusIdList = new List<int>();
-            if (!string.IsNullOrWhiteSpace(statusIds))
+            static List<int> ParseIdCsv(string? csv)
             {
-                foreach (var part in statusIds.Split(','))
+                var list = new List<int>();
+                if (!string.IsNullOrWhiteSpace(csv))
                 {
-                    if (int.TryParse(part.Trim(), out var id)) statusIdList.Add(id);
+                    foreach (var part in csv.Split(','))
+                    {
+                        if (int.TryParse(part.Trim(), out var id)) list.Add(id);
+                    }
                 }
+                return list;
             }
+
+            var priorIdList = ParseIdCsv(statusIdsPrior);
+            var newIdList = ParseIdCsv(statusIdsNew);
+            // Sentinel 0 on the prior side means "no prior status" (first transition).
+            bool priorIncludesNone = priorIdList.Contains(0);
+            var priorRealIds = priorIdList.Where(id => id != 0).ToList();
 
             DateTime startDate = DateTime.Now.AddDays(-30);
             DateTime endDate = DateTime.Now;
@@ -11001,6 +11016,8 @@ public class EvoApiController : BaseController
             string fromJoins;
             if (isSecondary)
             {
+                // LEFT JOINs keep orphaned change rows from hard-deleted work orders;
+                // the detail query flags them (WoDeleted) so the UI can label them.
                 fromJoins = @"
                 FROM StatusSecondaryChange ssc WITH (NOLOCK)
                 LEFT JOIN statussecondary sprior WITH (NOLOCK) ON ssc.ss_id_prior = sprior.ss_id
@@ -11029,21 +11046,80 @@ public class EvoApiController : BaseController
                        OR sr.sr_requestnumber LIKE '%' + @SrRequestNumber + '%')
                   AND (@TradeId IS NULL OR sr.t_id = @TradeId)";
 
-            // Detail count/page apply the status filter on top (either prior OR new side).
+            // Detail count/page apply the status filters on top; each side filters independently.
             string statusClause = string.Empty;
-            if (statusIdList.Count > 0)
+            if (newIdList.Count > 0)
             {
-                var paramNames = statusIdList.Select((_, i) => $"@StatusId{i}").ToList();
-                var joined = string.Join(",", paramNames);
-                statusClause = $" AND ({newIdCol} IN ({joined}) OR {priorIdCol} IN ({joined}))";
+                var joined = string.Join(",", newIdList.Select((_, i) => $"@StatusIdNew{i}"));
+                statusClause += $" AND {newIdCol} IN ({joined})";
+            }
+            if (priorIdList.Count > 0)
+            {
+                var priorParts = new List<string>();
+                if (priorRealIds.Count > 0)
+                {
+                    var joined = string.Join(",", priorRealIds.Select((_, i) => $"@StatusIdPrior{i}"));
+                    priorParts.Add($"{priorIdCol} IN ({joined})");
+                }
+                if (priorIncludesNone)
+                {
+                    priorParts.Add($"{priorIdCol} IS NULL");
+                }
+                statusClause += $" AND ({string.Join(" OR ", priorParts)})";
             }
             string detailWhere = sharedWhereNoStatus + statusClause;
 
+            // Detail-only joins: who made this transition (u_id stamped by the status
+            // triggers) and who made the previous one for the same SR/WO — i.e. who
+            // put it into the prior status. Kept out of fromJoins so the summary,
+            // options, and count queries stay lean.
+            string detailUserJoins = isSecondary
+                ? @"
+                LEFT JOIN [user] unew WITH (NOLOCK) ON ssc.u_id = unew.u_id
+                OUTER APPLY (SELECT TOP 1 p.u_id FROM StatusSecondaryChange p WITH (NOLOCK)
+                             WHERE p.wo_id = ssc.wo_id AND p.ssc_id < ssc.ssc_id
+                             ORDER BY p.ssc_id DESC) prevchange
+                LEFT JOIN [user] uprior WITH (NOLOCK) ON prevchange.u_id = uprior.u_id"
+                : @"
+                LEFT JOIN [user] unew WITH (NOLOCK) ON sc.u_id = unew.u_id
+                OUTER APPLY (SELECT TOP 1 p.u_id FROM StatusChange p WITH (NOLOCK)
+                             WHERE p.sr_id = sc.sr_id AND p.sc_id < sc.sc_id
+                             ORDER BY p.sc_id DESC) prevchange
+                LEFT JOIN [user] uprior WITH (NOLOCK) ON prevchange.u_id = uprior.u_id";
+
+            // Quote amount per SR, mirroring the schedule screen: for-quote service
+            // items at (base*qty)+tax+markup (per-line 2dp round, stored percentages —
+            // kept current by RecalculateServiceRequestMarkup on SR load) plus quoted
+            // labor at rate*hours. Same in both modes; sr is joined in each.
+            const string quoteJoins = @"
+                OUTER APPLY (
+                    SELECT SUM(ROUND(
+                        (x.xwosi_basecost * x.xwosi_quantity)
+                        + (x.xwosi_basecost * x.xwosi_quantity) * ISNULL(x.xwosi_percentagetax, 0) / 100.0
+                        + ((x.xwosi_basecost * x.xwosi_quantity)
+                           + (x.xwosi_basecost * x.xwosi_quantity) * ISNULL(x.xwosi_percentagetax, 0) / 100.0)
+                          * (ISNULL(x.xwosi_percentagemarkup, 0) + ISNULL(x.xwosi_percentagemarkupsupplier, 0)) / 100.0
+                    , 2)) AS amt
+                    FROM xrefWorkOrderServiceItem x WITH (NOLOCK)
+                    INNER JOIN workorder qwo WITH (NOLOCK) ON x.wo_id = qwo.wo_id
+                    INNER JOIN serviceitem qsi WITH (NOLOCK) ON x.si_id = qsi.si_id
+                    WHERE qwo.sr_id = sr.sr_id AND x.xwosi_forquote = 1
+                ) quoteitems
+                OUTER APPLY (
+                    SELECT SUM(tq.tq_rate * tq.tq_hours) AS amt
+                    FROM TimeQuoted tq WITH (NOLOCK)
+                    WHERE tq.sr_id = sr.sr_id
+                ) quotetime";
+
             void AddStatusIdParams(SqlCommand cmd)
             {
-                for (int i = 0; i < statusIdList.Count; i++)
+                for (int i = 0; i < newIdList.Count; i++)
                 {
-                    cmd.Parameters.AddWithValue($"@StatusId{i}", statusIdList[i]);
+                    cmd.Parameters.AddWithValue($"@StatusIdNew{i}", newIdList[i]);
+                }
+                for (int i = 0; i < priorRealIds.Count; i++)
+                {
+                    cmd.Parameters.AddWithValue($"@StatusIdPrior{i}", priorRealIds[i]);
                 }
             }
 
@@ -11056,6 +11132,11 @@ public class EvoApiController : BaseController
             using (var connection = new SqlConnection(connectionString))
             {
                 await connection.OpenAsync();
+
+                // Export mode skips the summary/options/count queries entirely — the
+                // export loop only needs the detail rows and pages by keyset cursor.
+                if (!exportOnly)
+                {
 
                 // 1) Total unique SRs (summary denominator — at SR level in either mode)
                 string totalSql = "SELECT COUNT(DISTINCT sr.sr_id) " + fromJoins + sharedWhereNoStatus;
@@ -11169,14 +11250,45 @@ public class EvoApiController : BaseController
                     totalRecords = result != null && result != DBNull.Value ? Convert.ToInt32(result) : 0;
                 }
 
-                // 5) Detail page
+                } // end !exportOnly
+
+                // 5) Detail page. Export mode pages by keyset (pk < afterId) instead of
+                // OFFSET so deep pages don't re-scan everything before them.
+                string afterClause = afterId.HasValue ? $" AND {pkCol} < @AfterId" : string.Empty;
+
+                // Column-header sorting: whitelist of sort keys → SQL expressions.
+                // Aliases (QuoteAmount/PriorSetBy/NewSetBy) are legal in ORDER BY.
+                // Export/keyset paging requires pk order, so custom sort is ignored there.
+                string sortDirection = string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "ASC" : "DESC";
+                string? sortExpr = (sortBy ?? string.Empty).ToLowerInvariant() switch
+                {
+                    "changedate" => dateCol,
+                    "sr" => "sr.sr_requestnumber",
+                    "wo" when isSecondary => "wo.wo_workordernumber",
+                    "trade" => "t.t_trade",
+                    "totaldue" => "sr.sr_totaldue",
+                    "quote" => "QuoteAmount",
+                    "statusprior" => priorNameCol,
+                    "statusnew" => newNameCol,
+                    "priorby" => "PriorSetBy",
+                    "newby" => "NewSetBy",
+                    "minutes" => minutesCol,
+                    _ => null
+                };
+                string orderByClause = (sortExpr != null && !exportOnly && !afterId.HasValue)
+                    ? $"{sortExpr} {sortDirection}, {pkCol} DESC"
+                    : $"{pkCol} DESC";
                 string dataSql = $@"
                     SELECT
                         {pkCol} AS ChangeId,
                         {(isSecondary ? "ssc.wo_id" : "CAST(NULL AS int)")} AS WoId,
                         {(isSecondary ? "wo.wo_workordernumber" : "CAST(NULL AS varchar(50))")} AS WoNumber,
+                        {(isSecondary ? "CASE WHEN wo.wo_id IS NULL THEN 1 ELSE 0 END" : "CAST(0 AS int)")} AS WoDeleted,
                         sr.sr_id AS SrId,
                         sr.sr_requestnumber AS SrRequestNumber,
+                        sr.sr_totaldue AS SrTotalDue,
+                        CASE WHEN quoteitems.amt IS NULL AND quotetime.amt IS NULL THEN NULL
+                             ELSE ISNULL(quoteitems.amt, 0) + ISNULL(quotetime.amt, 0) END AS QuoteAmount,
                         t.t_trade AS Trade,
                         {priorNameCol} AS StatusPrior,
                         {newNameCol} AS StatusNew,
@@ -11185,9 +11297,13 @@ public class EvoApiController : BaseController
                         {minutesCol} AS MinutesInPriorStatus,
                         CAST({minutesCol} / 60.0   AS DECIMAL(18,2)) AS HoursInPriorStatus,
                         CAST({minutesCol} / 1440.0 AS DECIMAL(18,2)) AS DaysInPriorStatus,
-                        {dateCol} AS ChangeDateTime
-                    {fromJoins} {detailWhere}
-                    ORDER BY {pkCol} DESC
+                        {dateCol} AS ChangeDateTime,
+                        CASE WHEN uprior.u_id IS NULL THEN NULL
+                             ELSE LTRIM(RTRIM(ISNULL(uprior.u_firstname, '') + ' ' + ISNULL(uprior.u_lastname, ''))) END AS PriorSetBy,
+                        CASE WHEN unew.u_id IS NULL THEN NULL
+                             ELSE LTRIM(RTRIM(ISNULL(unew.u_firstname, '') + ' ' + ISNULL(unew.u_lastname, ''))) END AS NewSetBy
+                    {fromJoins} {detailUserJoins} {quoteJoins} {detailWhere}{afterClause}
+                    ORDER BY {orderByClause}
                     OFFSET @Offset ROWS
                     FETCH NEXT @PageSize ROWS ONLY";
                 using (var cmd = new SqlCommand(dataSql, connection))
@@ -11197,7 +11313,8 @@ public class EvoApiController : BaseController
                     cmd.Parameters.AddWithValue("@SrRequestNumber", (object?)srRequestNumber ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@TradeId", (object?)tradeId ?? DBNull.Value);
                     AddStatusIdParams(cmd);
-                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    if (afterId.HasValue) cmd.Parameters.AddWithValue("@AfterId", afterId.Value);
+                    cmd.Parameters.AddWithValue("@Offset", afterId.HasValue ? 0 : (page - 1) * pageSize);
                     cmd.Parameters.AddWithValue("@PageSize", pageSize);
                     using var reader = await cmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
@@ -11207,8 +11324,11 @@ public class EvoApiController : BaseController
                             changeId = Convert.ToInt32(reader["ChangeId"]),
                             woId = reader["WoId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["WoId"]),
                             woNumber = reader["WoNumber"] == DBNull.Value ? null : reader["WoNumber"]?.ToString(),
+                            woDeleted = reader["WoDeleted"] != DBNull.Value && Convert.ToInt32(reader["WoDeleted"]) == 1,
                             srId = reader["SrId"] != DBNull.Value ? Convert.ToInt32(reader["SrId"]) : (int?)null,
                             srRequestNumber = reader["SrRequestNumber"]?.ToString() ?? string.Empty,
+                            srTotalDue = reader["SrTotalDue"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["SrTotalDue"]),
+                            quoteAmount = reader["QuoteAmount"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["QuoteAmount"]),
                             trade = reader["Trade"]?.ToString() ?? string.Empty,
                             statusPrior = reader["StatusPrior"] == DBNull.Value ? null : reader["StatusPrior"]?.ToString(),
                             statusNew = reader["StatusNew"]?.ToString() ?? string.Empty,
@@ -11217,7 +11337,9 @@ public class EvoApiController : BaseController
                             minutesInPriorStatus = reader["MinutesInPriorStatus"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["MinutesInPriorStatus"]),
                             hoursInPriorStatus = reader["HoursInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["HoursInPriorStatus"]),
                             daysInPriorStatus = reader["DaysInPriorStatus"] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader["DaysInPriorStatus"]),
-                            changeDateTime = reader["ChangeDateTime"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["ChangeDateTime"])
+                            changeDateTime = reader["ChangeDateTime"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["ChangeDateTime"]),
+                            priorSetBy = reader["PriorSetBy"] == DBNull.Value ? null : reader["PriorSetBy"]?.ToString(),
+                            newSetBy = reader["NewSetBy"] == DBNull.Value ? null : reader["NewSetBy"]?.ToString()
                         });
                     }
                 }

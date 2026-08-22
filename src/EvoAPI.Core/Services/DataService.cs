@@ -15,14 +15,47 @@ public class DataService : IDataService
     private readonly IAuditService _auditService;
     private readonly IFleetmaticsService _fleetmaticsService;
     private readonly IGoogleMapsService _googleMapsService;
+    private readonly IUserContext? _userContext;
 
-    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService, IFleetmaticsService fleetmaticsService, IGoogleMapsService googleMapsService)
+    public DataService(ILogger<DataService> logger, IConfiguration configuration, IAuditService auditService, IFleetmaticsService fleetmaticsService, IGoogleMapsService googleMapsService, IUserContext? userContext = null)
     {
         _logger = logger;
         _configuration = configuration;
         _auditService = auditService;
         _fleetmaticsService = fleetmaticsService;
         _googleMapsService = googleMapsService;
+        _userContext = userContext;
+    }
+
+    /// <summary>
+    /// Stamps SESSION_CONTEXT (app_user, app_user_id, app_source) on an open
+    /// connection so DB triggers can attribute writes to the signed-in user —
+    /// mirrors ApplySessionContext in the legacy Evo.DataLayer. Pass userId to
+    /// override the ambient HTTP user (e.g. explicit createdByUserId params).
+    /// Never throws; unattributed writes just leave trigger u_id NULL.
+    /// </summary>
+    private async Task ApplySessionContextAsync(SqlConnection connection, int? userId = null)
+    {
+        var uid = userId ?? _userContext?.UserId;
+        var username = _userContext?.Username;
+        if (uid == null && string.IsNullOrEmpty(username)) return;
+
+        try
+        {
+            const string sql =
+                @"EXEC sp_set_session_context @key = N'app_user',    @value = @username;
+                  EXEC sp_set_session_context @key = N'app_user_id', @value = @userId;
+                  EXEC sp_set_session_context @key = N'app_source',  @value = N'EvoAPI';";
+
+            using var cmd = new SqlCommand(sql, connection);
+            cmd.Parameters.AddWithValue("@username", (object?)username ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@userId", (object?)uid ?? DBNull.Value);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to set session context; write will be unattributed");
+        }
     }
 
     public async Task<ConfigSettingDto?> GetConfigSettingAsync(string identifier)
@@ -4333,9 +4366,12 @@ public class DataService : IDataService
         }
         
         await connection.OpenAsync();
+        // Some INSERT flows run through this helper (SELECT SCOPE_IDENTITY()),
+        // so stamp user context here as well as in ExecuteNonQueryAsync.
+        await ApplySessionContextAsync(connection);
         using var adapter = new SqlDataAdapter(command);
         adapter.Fill(dataTable);
-        
+
         return dataTable;
     }
 
@@ -4364,8 +4400,9 @@ public class DataService : IDataService
         }
         
         await connection.OpenAsync();
+        await ApplySessionContextAsync(connection);
         var rowsAffected = await command.ExecuteNonQueryAsync();
-        
+
         return rowsAffected;
     }
 
@@ -14049,6 +14086,7 @@ order by sr.sr_insertdatetime
         {
             using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
+            await ApplySessionContextAsync(connection, createdByUserId);
             using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
             {
                 // 1) Insert ServiceRequest. sr_tripcharge_quote mirrors sr_tripcharge_worked and
@@ -14286,6 +14324,7 @@ order by sr.sr_insertdatetime
         {
             using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
+            await ApplySessionContextAsync(connection, assignedByUserId);
             using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
 
             // SR context: primary WO (id, number, description, whether already assigned),

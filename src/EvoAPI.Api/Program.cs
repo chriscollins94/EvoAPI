@@ -144,6 +144,8 @@ if (!isAzureEnvironment && (builder.Environment.IsDevelopment() || builder.Envir
 builder.Services.AddControllers();
 
 // Register application services
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IUserContext, EvoAPI.Api.Services.HttpUserContext>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuditCriticalService, AuditCriticalService>();
 builder.Services.AddScoped<IDataService, DataService>();
@@ -228,6 +230,10 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.IUserConsentRepository,
 // Performance upload/dashboard (employee + zone Excel snapshots)
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPerformanceRepository,
     EvoAPI.Infrastructure.Repositories.PerformanceRepository>();
+
+// Office performance dashboard (live status/inquiry metrics per admin assignment)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IOfficePerformanceRepository,
+    EvoAPI.Infrastructure.Repositories.OfficePerformanceRepository>();
 
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
