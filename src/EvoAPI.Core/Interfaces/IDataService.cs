@@ -55,6 +55,7 @@ public interface IDataService
     
     // User Management methods
     Task<DataTable> GetAllUsersForManagementAsync();
+    Task<DataTable> GetUsersChatInfoAsync();
     Task<DataTable> GetUserByIdAsync(int userId);
     Task<int?> CreateUserAsync(CreateUserRequest request);
     Task<bool> UpdateUserAsync(UpdateUserRequest request);

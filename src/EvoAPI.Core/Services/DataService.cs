@@ -2304,6 +2304,16 @@ public class DataService : IDataService
         }
     }
 
+    public async Task<DataTable> GetUsersChatInfoAsync()
+    {
+        // Minimal user info for the Chat Admin page: enough to label TalkJS
+        // participants and flag inactive employees, nothing sensitive.
+        const string sql = @"
+            SELECT u_id, u_firstname, u_lastname, u_email, u_active
+            FROM dbo.[User]";
+        return await ExecuteQueryAsync(sql);
+    }
+
     public async Task<DataTable> GetAllUsersForManagementAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

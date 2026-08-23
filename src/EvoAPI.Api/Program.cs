@@ -207,6 +207,13 @@ builder.Services.AddHttpClient<IQuickBooksService, QuickBooksService>(client =>
     client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-QuickBooksClient/1.0");
 });
 
+// Register HttpClient and TalkJS chat admin service (company chat participant management)
+builder.Services.AddHttpClient<IChatService, ChatService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "EvoAPI-ChatClient/1.0");
+});
+
 // Register NTE notification service (background loop + ACS SMS/Email).
 // Config (thresholds, ACS creds, message templates) lives in ConfigSetting -
 // edit there to retune without redeploying.
