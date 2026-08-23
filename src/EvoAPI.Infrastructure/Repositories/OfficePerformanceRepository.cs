@@ -11,9 +11,12 @@ namespace EvoAPI.Infrastructure.Repositories;
 /// this page — everything is computed on read from ServiceRequest, StatusSecondaryChange,
 /// StatusChange and CustomerInquiry.
 ///
-/// Attribution model: an admin's numbers cover the zones where they hold at least one
-/// row in xrefAdminZoneStatusSecondary. Assignments carry no history, so this year's
-/// numbers always reflect TODAY'S matrix, even for months before an assignment changed.
+/// Attribution model: the headline workload cards and monthly trend cover the zones
+/// where the admin holds at least one row in xrefAdminZoneStatusSecondary; the
+/// time-in-status and customer-inquiry sections are stricter — they count only the
+/// exact (zone, status) cells assigned to the admin, because admins are graded on
+/// what they are assigned to. Assignments carry no history, so this year's numbers
+/// always reflect TODAY'S matrix, even for months before an assignment changed.
 ///
 /// A service request's zone follows the attack-list convention: the primary work order's
 /// first assigned tech → [user].z_id → zone, falling back to the denormalized
@@ -86,13 +89,19 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         DECLARE @NowCentral DATETIME = CONVERT(DATETIME, @NowUtc AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time');
         DECLARE @YearStart DATETIME = DATEADD(HOUR, 6, CONVERT(DATETIME, DATEFROMPARTS(YEAR(@NowCentral), 1, 1)));
 
-        -- Zones the admin holds at least one status assignment in; @ZoneId narrows the metrics
-        SELECT DISTINCT z.z_id
-        INTO #AdminZones
+        -- The admin's exact (zone, status) assignments — the grading scope for the
+        -- time-in-status and customer-inquiry sections; @ZoneId narrows to one zone
+        SELECT DISTINCT xazss.z_id, xazss.ss_id
+        INTO #AdminCells
         FROM xrefAdminZoneStatusSecondary xazss WITH (NOLOCK)
-        INNER JOIN zone z WITH (NOLOCK) ON z.z_id = xazss.z_id
         WHERE xazss.u_id = @UserId
-          AND (@ZoneId IS NULL OR z.z_id = @ZoneId);
+          AND (@ZoneId IS NULL OR xazss.z_id = @ZoneId);
+
+        -- Zones with at least one assignment of any status — the broader scope for
+        -- the headline workload cards and the monthly trend
+        SELECT DISTINCT z_id
+        INTO #AdminZones
+        FROM #AdminCells;
 
         -- Status groups reported on. Named groups resolve by ss_code; 'Complete-Other'
         -- is the rest of the Complete family.
@@ -129,6 +138,7 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         -- convention), else the SR's denormalized zone number. SRs outside the admin's
         -- zone set drop out here, which scopes every result set below.
         SELECT sr.sr_id,
+               COALESCE(tz.z_id, zf.z_id) AS z_id,
                sr.sr_insertdatetime,
                sr.s_id,
                sr.wo_id_primary,
@@ -177,12 +187,14 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
             GROUP BY sz.sr_id, sz.sr_insertdatetime
         ) i;
 
-        -- RS4: times each status was entered this year (primary work order only)
+        -- RS4: times each status was entered this year (primary work order only).
+        -- Counts only in zones where the admin is assigned THAT status.
         SELECT g.group_key AS GroupKey, COUNT(*) AS Entries
         FROM StatusSecondaryChange ssc WITH (NOLOCK)
         INNER JOIN #StatusGroups g ON g.ss_id = ssc.ss_id_new
         INNER JOIN workorder wo WITH (NOLOCK) ON wo.wo_id = ssc.wo_id
         INNER JOIN #SrZone sz ON sz.sr_id = wo.sr_id AND sz.wo_id_primary = ssc.wo_id
+        INNER JOIN #AdminCells ac ON ac.z_id = sz.z_id AND ac.ss_id = ssc.ss_id_new
         WHERE ssc.ssc_insertdatetime >= @YearStart
         GROUP BY g.group_key;
 
@@ -195,6 +207,7 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         INNER JOIN #StatusGroups g ON g.ss_id = ssc.ss_id_prior
         INNER JOIN workorder wo WITH (NOLOCK) ON wo.wo_id = ssc.wo_id
         INNER JOIN #SrZone sz ON sz.sr_id = wo.sr_id AND sz.wo_id_primary = ssc.wo_id
+        INNER JOIN #AdminCells ac ON ac.z_id = sz.z_id AND ac.ss_id = ssc.ss_id_prior
         WHERE ssc.ssc_insertdatetime >= @YearStart
         GROUP BY g.group_key;
 
@@ -206,6 +219,7 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
                AVG(CAST(DATEDIFF(MINUTE, cs.status_start, @NowUtc) AS FLOAT)) AS AvgMinutes
         FROM #SrZone sz
         INNER JOIN #StatusGroups g ON g.ss_id = sz.ss_id_current
+        INNER JOIN #AdminCells ac ON ac.z_id = sz.z_id AND ac.ss_id = sz.ss_id_current
         CROSS APPLY (
             SELECT COALESCE(MAX(ssc.ssc_insertdatetime), sz.sr_insertdatetime) AS status_start
             FROM StatusSecondaryChange ssc WITH (NOLOCK)
@@ -223,6 +237,7 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         FROM CustomerInquiry ci WITH (NOLOCK)
         INNER JOIN #StatusGroups g ON g.ss_id = ci.ss_id
         INNER JOIN #SrZone sz ON sz.sr_id = ci.sr_id
+        INNER JOIN #AdminCells ac ON ac.z_id = sz.z_id AND ac.ss_id = ci.ss_id
         WHERE ci.ci_active = 1
           AND ci.ci_insertdatetime >= @YearStart
         GROUP BY g.group_key;
@@ -247,6 +262,19 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         ) i
         GROUP BY MONTH(i.first_invoiced AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time');
 
+        -- RS10: which status groups the admin is assigned at all, and in which zones.
+        -- Groups absent here render as ""not assigned"" rather than zero.
+        SELECT x.group_key AS GroupKey,
+               STRING_AGG(z.z_acronym, ', ') WITHIN GROUP (ORDER BY z.z_acronym) AS ZoneList
+        FROM (
+            SELECT DISTINCT g.group_key, ac.z_id
+            FROM #StatusGroups g
+            INNER JOIN #AdminCells ac ON ac.ss_id = g.ss_id
+        ) x
+        INNER JOIN zone z WITH (NOLOCK) ON z.z_id = x.z_id
+        GROUP BY x.group_key;
+
+        DROP TABLE #AdminCells;
         DROP TABLE #AdminZones;
         DROP TABLE #StatusGroups;
         DROP TABLE #RelevantSr;
@@ -267,6 +295,7 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
         var inquiries = (await multi.ReadAsync<(string GroupKey, int InquiryCount, int SrCount, double? AvgMinutesAtInquiry)>()).ToDictionary(r => r.GroupKey);
         var openedByMonth = (await multi.ReadAsync<(int Month, int Cnt)>()).ToDictionary(r => r.Month, r => r.Cnt);
         var invoicedByMonth = (await multi.ReadAsync<(int Month, int Cnt)>()).ToDictionary(r => r.Month, r => r.Cnt);
+        var assignedGroups = (await multi.ReadAsync<(string GroupKey, string ZoneList)>()).ToDictionary(r => r.GroupKey, r => r.ZoneList);
 
         static decimal? MinutesToDays(double? minutes) =>
             minutes.HasValue ? Math.Round((decimal)minutes.Value / 1440m, 2) : null;
@@ -294,6 +323,8 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
             {
                 GroupKey = key,
                 StatusName = label,
+                Assigned = assignedGroups.ContainsKey(key),
+                AssignedZones = assignedGroups.TryGetValue(key, out var durZones) ? durZones : null,
                 CompletedStintsYtd = s.Stints,
                 AvgDaysYtd = MinutesToDays(s.AvgMinutes),
                 CurrentCount = c.CurrentCount,
@@ -310,6 +341,8 @@ public class OfficePerformanceRepository : IOfficePerformanceRepository
             {
                 GroupKey = key,
                 StatusName = label,
+                Assigned = assignedGroups.ContainsKey(key),
+                AssignedZones = assignedGroups.TryGetValue(key, out var ciZones) ? ciZones : null,
                 EntriesYtd = e.Entries,
                 AvgHoursYtd = MinutesToHours(s.AvgMinutes),
                 SrsWithInquiryYtd = q.SrCount,

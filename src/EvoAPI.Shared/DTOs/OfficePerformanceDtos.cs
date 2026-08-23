@@ -33,6 +33,8 @@ public class OfficeStatusDurationDto
 {
     public string GroupKey { get; set; } = string.Empty;      // ss_code, or 'Complete-Other'
     public string StatusName { get; set; } = string.Empty;
+    public bool Assigned { get; set; }                        // admin owns this status in >= 1 zone
+    public string? AssignedZones { get; set; }                // e.g. "TN1, TN2"
     public int CompletedStintsYtd { get; set; }
     public decimal? AvgDaysYtd { get; set; }
     public int CurrentCount { get; set; }
@@ -48,6 +50,8 @@ public class OfficeInquiryStatusDto
 {
     public string GroupKey { get; set; } = string.Empty;      // ss_code, or 'Complete-Other'
     public string StatusName { get; set; } = string.Empty;
+    public bool Assigned { get; set; }                        // admin owns this status in >= 1 zone
+    public string? AssignedZones { get; set; }                // e.g. "TN1, TN2"
     public int EntriesYtd { get; set; }
     public decimal? AvgHoursYtd { get; set; }
     public int SrsWithInquiryYtd { get; set; }
