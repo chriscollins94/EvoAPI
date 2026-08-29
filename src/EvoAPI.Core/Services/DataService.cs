@@ -16352,10 +16352,18 @@ order by sr.sr_insertdatetime
         try
         {
             const string sql = @"
-                SELECT tor.tor_id, u.u_firstname, u.u_lastname, u.u_daysavailablevacation, 
-                       u.u_daysavailablepto, tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail, 
-                       tortd.tortd_id, tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id, 
-                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) AS z_id, tor.tor_insertdatetime
+                SELECT tor.tor_id, u.u_firstname, u.u_lastname, u.u_daysavailablevacation,
+                       u.u_daysavailablepto, tor.tor_startdate, tor.tor_enddate, tortd.tortd_typedetail,
+                       tortd.tortd_id, tors.tors_status, tor.tor_note, tor.tor_notereason, tors.tors_id,
+                       tor.u_id, tor.tor_totalhours, ISNULL(u.z_id, 0) AS z_id, tor.tor_insertdatetime,
+                       CASE WHEN EXISTS (
+                           SELECT 1
+                           FROM xrefUserRole xur
+                           INNER JOIN xrefRoleFunction xrf ON xur.r_id = xrf.r_id
+                           INNER JOIN [function] f ON xrf.f_id = f.f_id
+                           WHERE xur.u_id = u.u_id
+                             AND f.f_functionidentifier = 'TECH'
+                       ) THEN 1 ELSE 0 END AS is_tech
                 FROM timeoffrequest tor
                 INNER JOIN timeoffrequesttypedetail tortd ON tor.tortd_id = tortd.tortd_id
                 INNER JOIN timeoffrequeststatus tors ON tor.tors_id = tors.tors_id

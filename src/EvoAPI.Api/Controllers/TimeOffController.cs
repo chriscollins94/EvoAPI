@@ -562,7 +562,8 @@ public class TimeOffController : BaseController
                 TorNote = row["tor_note"]?.ToString() ?? string.Empty,
                 TorNotereason = row["tor_notereason"]?.ToString() ?? string.Empty,
                 ZoneId = row["z_id"] != DBNull.Value ? Convert.ToInt32(row["z_id"]) : 0,
-                TorInsertdatetime = row["tor_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["tor_insertdatetime"]) : DateTime.MinValue
+                TorInsertdatetime = row["tor_insertdatetime"] != DBNull.Value ? Convert.ToDateTime(row["tor_insertdatetime"]) : DateTime.MinValue,
+                IsTech = row["is_tech"] != DBNull.Value && Convert.ToInt32(row["is_tech"]) == 1
             }).ToList();
 
             stopwatch.Stop();

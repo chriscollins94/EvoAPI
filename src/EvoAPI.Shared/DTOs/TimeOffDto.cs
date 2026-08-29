@@ -63,6 +63,7 @@ public class TimeOffRequestDto
     public string TorNote { get; set; } = string.Empty;
     public string TorNotereason { get; set; } = string.Empty;
     public int ZoneId { get; set; }
+    public bool IsTech { get; set; }
 }
 
 /// <summary>
