@@ -1,0 +1,201 @@
+Form seed generator report - 2026-09-06
+============================================================
+
+Dictionary rows: 216 fields, 86 tasks, 28 photos
+Questions seeded: 285 (171 fields, 86 tasks, 28 photos); inactive: ['F181']
+Answer lists: 20 (7 from the Dropdown Lists sheet, 13 generated from shared value sets)
+
+Questions per section (phase):
+     9  Site & Arrival (Site)
+    28  Asset: Identification (Asset)
+     7  Asset: Filters & Belts (Asset)
+     4  Asset: Controls & Features (Asset)
+    13  Cabinet & Service Area (Unit)
+    46  Filters, Belts, Fans & Airflow (Unit)
+    13  Coils & Condensate (Unit)
+    48  Electrical, Thermostat & Controls (Unit)
+    33  Cooling & Refrigeration Readings (Unit)
+    42  Heating & Hydronic Readings (Unit)
+     4  Unit Condition (Unit)
+    17  Recommendations / Quote Readiness (Unit)
+    21  Closeout & Signoff (Checkout)
+
+Requirement mix: Always 59, Conditional 171, Configured 32, Optional 3, Recommended 20
+Photo rule mix:  Always 32, CustomerConfigured 13, IfIssue 44, No 77, Recommended 119
+Structured conditions: 146; trigger kept as note only: 88
+
+Skipped dictionary fields (45):
+  F001     Section 1 - already built (rule 1)
+  F002     Section 1 - already built (rule 1)
+  F003     Section 3 - ticket entry / location profile, not a tech question
+  F004     Section 3 - ticket entry / location profile, not a tech question
+  F005     Section 3 - ticket entry / location profile, not a tech question
+  F006     Section 3 - ticket entry / location profile, not a tech question
+  F007     Section 1 - already built (rule 1)
+  F008     Section 1 - already built (rule 1)
+  F009     Section 1 - already built (rule 1)
+  F010     Section 1 - already built (rule 1)
+  F011     Section 1 - already built (rule 1)
+  F012     Section 1 - already built (rule 1)
+  F013     Section 1 - already built (rule 1)
+  F014     Section 3 - ticket entry / location profile, not a tech question
+  F015     Section 3 - ticket entry / location profile, not a tech question
+  F016     Section 1 - already built (rule 1)
+  F017     Section 3 - ticket entry / location profile, not a tech question
+  F018     Section 3 - ticket entry / location profile, not a tech question
+  F019     Section 3 - ticket entry / location profile, not a tech question
+  F020     Section 3 - ticket entry / location profile, not a tech question
+  F021     Section 3 - ticket entry / location profile, not a tech question
+  F022     Section 3 - ticket entry / location profile, not a tech question
+  F025     Section 3 - ticket entry / location profile, not a tech question
+  F026     Section 3 - ticket entry / location profile, not a tech question
+  F028     Section 3 - ticket entry / location profile, not a tech question
+  F034     Section 2 - becomes PMRule columns (rule 2)
+  F035     Section 2 - becomes PMRule columns (rule 2)
+  F036     Section 2 - becomes PMRule columns (rule 2)
+  F037     Section 2 - becomes PMRule columns (rule 2)
+  F038     Section 2 - becomes PMRule columns (rule 2)
+  F039     Section 2 - becomes PMRule columns (rule 2)
+  F040     Section 2 - becomes PMRule columns (rule 2)
+  F041     Section 2 - becomes PMRule columns (rule 2)
+  F042     Section 2 - becomes PMRule columns (rule 2)
+  F043     Section 2 - becomes PMRule columns (rule 2)
+  F044     Section 2 - becomes PMRule columns (rule 2)
+  F045     Section 2 - becomes PMRule columns (rule 2)
+  F205     Section 1 - already built (rule 1)
+  F206     Section ???? - office items (rule 1)
+  F207     Section ???? - office items (rule 1)
+  F208     Section ???? - office items (rule 1)
+  F209     Section ???? - office items (rule 1)
+  F210     Section ???? - office items (rule 1)
+  F211     Section 2 - becomes PMRule columns (rule 2)
+  F212     Section 1 - already built (rule 1)
+
+Triggers not turned into a structured condition (kept in fq_triggernote):
+  F023     Occupied site
+  F024     Occupied site
+  F047     Asset-tagged equipment
+  F055     Known / customer requests
+  F058     Nameplate or known
+  F062     Tenant/shared systems
+  F063     Mall/tenant systems
+  F065     Known
+  F066     Condition survey
+  F071     Filtered equipment
+  F072     Filtered equipment
+  F073     Multiple filter sizes
+  F074     Multiple filter sizes
+  F075     Filtered equipment
+  F076     Filtered equipment
+  F079     Filtered equipment
+  F080     Filtered equipment
+  F081     Customer rule requires
+  F089     Fan-equipped unit
+  F090     Fan-equipped unit
+  F091     Measured / customer requests
+  F092     Unit can run
+  F093     Unit can run
+  F100     Customer requests / complaint
+  F101     Occupied site
+  F124     Unit energized and safe to test
+  F129     Fan operating
+  F132     Capacitors present and safe to test
+  F133     Thermostat present
+  F134     Thermostat present
+  F135     Customer setpoint rule / thermostat present
+  F136     Customer setpoint rule / thermostat present
+  F137     Programmable thermostat
+  F139     Customer setpoint rule
+  F140     Customer setpoint rule
+  F141     Customer rule requests
+  F142     Customer rule requires
+  F146     Each controlled unit
+  F153     Unit can operate
+  F154     Electronic controls report codes
+  F180     Applicable system
+  F181     Issue found
+  F182     Issue found
+  F183     Issue found
+  F184     Issue found
+  F185     Issue found
+  F186     Issue found
+  F187     Issue found
+  F188     Repair recommended
+  F189     Quote requested
+  F190     Issue found
+  F191     Immediate approval needed
+  F192     Quote created
+  F193     Material used
+  F194     Material used
+  F195     Material used
+  F200     Occupied site
+  F203     Customer requires
+  T001     Every visit when required by customer
+  T002     Occupied site
+  T010     Applicable units
+  T012     Filtered equipment
+  T013     Filtered equipment
+  T015     Customer requires
+  T017     Applicable fans
+  T018     Fan-equipped unit
+  T019     Fan-equipped unit
+  T020     Serviceable bearings
+  T026     Dirty coils
+  T032     Component present
+  T033     Customer requires
+  T034     Every powered unit
+  T035     Every powered unit
+  T036     Every powered unit
+  T037     Components present
+  T039     Operating motors
+  T040     Unit can operate
+  T041     Thermostat-controlled equipment
+  T043     Customer setpoint rules
+  T044     Customer setpoint rules
+  T045     Customer rule requires
+  T053     Components present
+  T076     Customer requests or comfort issue
+  T078     Unit can operate
+  T082     Occupied site
+  T083     Customer requires
+  T084     Customer uses IVR
+  T086     Urgent issue or quote required
+
+Configured questions enabled by PM rule columns:
+  setpoints                F135, F136, F137, F139, F140, F141, F142, T043, T044, T045
+  antialgae                T033, P13
+  phototimestamp           P07, P08, P09, P12, P16, P17
+  managerseesoldfilters    F081, T015
+  signoff                  T083, P28
+  ivrrequired              T084
+  filtersincluded          T013, T014
+  immediatequoterequired   T086
+
+Answer lists:
+  Task Result: Pass / Completed; Needs Service; Failed / Replace; Not Applicable; Not Accessible; Unable to Test  [fail: Needs Service; Failed / Replace; Not Accessible]
+  Condition: Excellent; Good; Fair; Poor; Needs Replacement  [fail: Poor; Needs Replacement]
+  Overall Recommendation: None; Monitor; Repair; Replace  [fail: Replace]
+  Severity: Observation; Needs Service; Urgent; Safety/Critical; Failed  [fail: Needs Service; Urgent; Safety/Critical; Failed]
+  Equipment Type: RTU; Split System; AHU; Heat Pump; Water-Source Heat Pump; VAV; FPVAV; Fan Coil; VRF; Exhaust / Booster Fan; Refrigeration; Other  [fail: -]
+  Heating Type: Gas; Electric; Heat Pump; Hot Water; Steam; Oil; None; Other  [fail: -]
+  PM Season: Spring Cooling; Fall Heating; Full PM; Inspection Only; Filter Change; Inventory Only  [fail: -]
+  Yes/No/NA: Yes; No; N/A  [fail: -]
+  Yes/No: Yes; No  [fail: -]
+  Yes/No/Unknown: Yes; No; Unknown  [fail: -]
+  Pass/Fail/NA: Pass; Fail; N/A  [fail: Fail]
+  Task: Completed / N/A: Completed; N/A  [fail: -]
+  Task: Pass / Needs Service / Failed / N/A: Pass; Needs Service; Failed; N/A  [fail: Needs Service; Failed]
+  Task: Pass / Leak found / N/A: Pass; Leak found; N/A  [fail: Leak found]
+  Task: Pass / Tightened / Needs repair: Pass; Tightened; Needs repair  [fail: Needs repair]
+  Task: Pass / Cleaned / Needs repair / N/A: Pass; Cleaned; Needs repair; N/A  [fail: Needs repair]
+  Task: Completed / N/A / Unable: Completed; N/A; Unable  [fail: -]
+  Task: Pass / Fail / Unable / N/A: Pass; Fail; Unable; N/A  [fail: Fail]
+  Task: Pass / Issue found / N/A: Pass; Issue found; N/A  [fail: Issue found]
+  Task: Completed / Unable / N/A: Completed; Unable; N/A  [fail: -]
+
+Pricing sheet rows: 78; call-center aliases: {'Boss': 'Boss Facility Services Inc', 'Brinco': 'Brinco - National HVAC Management Services', 'Broadway': 'Broadway National/Servco', 'CLS': 'CLS Facility Services', 'Direct Commercial': 'Direct Commercial', 'Legacy': 'Legacy Group Enterprises Inc', 'Powerhouse Retail': 'Powerhouse Retail Services', 'Retail Mechanical': 'Retail Mechanical Services', 'SMS': 'SMS Assist', 'Total Comfort Group': 'Total Comfort Group', 'Vixxo': 'First Service Networks/Vixxo'}; company aliases: {('Boss', 'Drivetime'): 'Drive Time', ('Brinco', 'Burlington'): 'Burlington Coat Factory', ('CLS', 'Jockey'): 'Jockey International', ('Direct Commercial', 'First Cash'): 'FirstCash, Inc.', ('Direct Commercial', "Jeni's Splendid Ice Cream"): "Jeni's Splendid Ice Creams", ('SMS', 'Signet Jewlers'): 'Signet Jewelers', ('Legacy', 'XPO'): 'XPO LOGISTICS'}
+
+Generator notes:
+  pricing: call center 'Community Choice Financial' has no CallCenter row - skipped Check Into Cash
+  pricing: call center 'Community Choice Financial' has no CallCenter row - skipped Easy Money
+  pricing: call center 'Community Choice Financial' has no CallCenter row - skipped Speedy Cash

@@ -242,6 +242,11 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPerformanceRepository,
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IOfficePerformanceRepository,
     EvoAPI.Infrastructure.Repositories.OfficePerformanceRepository>();
 
+// Forms engine (PM build slice 1): form templates, form rules + PM terms, preview resolver
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IFormRepository,
+    EvoAPI.Infrastructure.Repositories.FormRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IAssetRepository, EvoAPI.Infrastructure.Repositories.AssetRepository>();
+
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
 // builder.Services.AddHostedService<TimeTrackingSyncService>();
