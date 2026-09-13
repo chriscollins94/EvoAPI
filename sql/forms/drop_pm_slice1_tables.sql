@@ -11,5 +11,5 @@ IF OBJECT_ID('dbo.PMTemplateSection', 'U') IS NOT NULL DROP TABLE dbo.PMTemplate
 IF OBJECT_ID('dbo.PMTemplate', 'U') IS NOT NULL DROP TABLE dbo.PMTemplate;
 IF OBJECT_ID('dbo.PMAnswerList', 'U') IS NOT NULL DROP TABLE dbo.PMAnswerList;
 GO
-PRINT 'PM slice-1 tables dropped (PMBillingMode kept; PMRateTier / PMSeason recreated by create_form_tables.sql)';
+PRINT 'PM slice-1 tables dropped (PMBillingMode kept; PMRateTier / PMSeason recreated by sql/migrations/2026-09-08_create_form_tables.sql)';
 GO

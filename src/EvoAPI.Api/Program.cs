@@ -247,6 +247,10 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.IFormRepository,
     EvoAPI.Infrastructure.Repositories.FormRepository>();
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IAssetRepository, EvoAPI.Infrastructure.Repositories.AssetRepository>();
 
+// XRF revisits (second trip to High Volume locations, keyed by meter number; XrfController)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IXrfRepository,
+    EvoAPI.Infrastructure.Repositories.XrfRepository>();
+
 // Register Time Tracking background service for periodic sync
 // TEMPORARILY DISABLED - Uncomment to re-enable in the future
 // builder.Services.AddHostedService<TimeTrackingSyncService>();

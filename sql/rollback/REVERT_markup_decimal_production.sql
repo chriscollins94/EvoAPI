@@ -1,5 +1,5 @@
 -- =============================================================================
--- PRODUCTION REVERT for alter_markup_decimal_and_markuptype.sql (2026-07-18)
+-- PRODUCTION REVERT for sql/migrations/2026-07-18_alter_markup_decimal_and_markuptype.sql (2026-07-18)
 --
 -- Purpose: the decimal migration was accidentally run in production while the
 -- OLD application code is still deployed there. Old code breaks against the

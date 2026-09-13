@@ -51,7 +51,7 @@ US carriers silently drop unverified A2P toll-free traffic. You will see "succes
    - Business legal name, address, EIN
    - Contact email + phone
    - Use case: "Service request budget alerts to dispatched field technicians"
-   - Sample message: paste the seeded template body for `Sms75Body` from [create_NotificationLog_table.sql](create_NotificationLog_table.sql)
+   - Sample message: paste the seeded template body for `Sms75Body` from [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql)
    - Opt-in description: "Recipients are W-2 technicians whose mobile numbers are stored in the company HRIS for operational dispatch. They receive automated alerts only for work orders they are assigned to. STOP/HELP keywords supported."
    - Opt-out: "Recipients reply STOP. Numbers unsubscribe automatically; tech can be re-opted-in by request to dispatch."
    - Estimated volume: realistic per-day estimate.
@@ -90,7 +90,7 @@ This is the value for `NteConfig/AcsEmailFrom`, e.g. `DoNotReply@xxxxxxxx.azurec
 
 ## 4. Update `ConfigSetting` rows
 
-The migration script [create_NotificationLog_table.sql](create_NotificationLog_table.sql) seeds empty rows for these. Update them with the values from §1–3:
+The migration script [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql) seeds empty rows for these. Update them with the values from §1–3:
 
 ```sql
 UPDATE ConfigSetting SET cs_value = 'endpoint=https://evo-acs-prod.communication.azure.com/;accesskey=...'
@@ -212,7 +212,7 @@ Verify current pricing on the [Azure Communication Services pricing page](https:
 
 ## Reference
 
-- Migration script: [create_NotificationLog_table.sql](create_NotificationLog_table.sql)
+- Migration script: [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql)
 - Orchestrator: [NteNotificationService.cs](src/EvoAPI.Infrastructure/Services/NteNotificationService.cs)
 - Background loop: [NteNotificationBackgroundService.cs](src/EvoAPI.Infrastructure/Services/NteNotificationBackgroundService.cs)
 - ACS SMS wrapper: [AcsSmsService.cs](src/EvoAPI.Infrastructure/Services/AcsSmsService.cs)

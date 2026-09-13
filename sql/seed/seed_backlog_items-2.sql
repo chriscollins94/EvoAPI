@@ -2,7 +2,7 @@ PRINT 'Seeding backlogitem records';
 
 IF OBJECT_ID('dbo.backlogitem', 'U') IS NULL
 BEGIN
-    RAISERROR('dbo.backlogitem does not exist. Run create_backlogitem_table.sql first.', 16, 1);
+    RAISERROR('dbo.backlogitem does not exist. Run sql/migrations/2026-03-09_create_backlogitem_table.sql first.', 16, 1);
     RETURN;
 END;
 

@@ -1,6 +1,6 @@
 namespace EvoAPI.Shared.DTOs;
 
-// Asset and location layer (PM build slice 2). Tables from create_asset_tables.sql.
+// Asset and location layer (PM build slice 2). Tables from sql/migrations/2026-09-08_create_asset_tables.sql.
 // Settings > Assets manages the per-trade definitions (equipment types = AssetCategory, manufacturers, component
 // types, attribute types) and the two location/asset lookups (mount locations, access requirements); Company Admin > LOCATIONS manages a location's PM profile and
 // its assets. The FORM RULES preview reads an asset's facts through AssetFactsDto.

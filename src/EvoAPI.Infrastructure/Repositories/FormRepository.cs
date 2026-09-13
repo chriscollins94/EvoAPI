@@ -9,7 +9,7 @@ namespace EvoAPI.Infrastructure.Repositories;
 /// <summary>
 /// Data access for the forms engine (FormTemplate / FormSection / FormQuestion / FormAnswerList / FormRule /
 /// xrefFormRuleQuestion) and the PM terms hanging off a rule (PMRule / PMRateTier / PMSeason).
-/// Tables come from create_form_tables.sql; seed data from sql/forms/.
+/// Tables come from sql/migrations/2026-09-08_create_form_tables.sql; seed data from sql/forms/.
 /// </summary>
 public class FormRepository : IFormRepository
 {

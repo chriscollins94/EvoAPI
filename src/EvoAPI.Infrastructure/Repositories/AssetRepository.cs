@@ -11,7 +11,7 @@ namespace EvoAPI.Infrastructure.Repositories;
 /// <summary>
 /// Data access for the asset and location layer (PM build slice 2): AssetCategory / AssetManufacturer (existing),
 /// AssetComponentType / AssetAttributeType / AssetComponent / AssetAttribute / LocationTradeProfile / AssetMountLocation /
-/// LocationAccessRequirement (create_asset_tables.sql) and the new identity columns on Asset.
+/// LocationAccessRequirement (sql/migrations/2026-09-08_create_asset_tables.sql) and the new identity columns on Asset.
 /// </summary>
 public class AssetRepository : IAssetRepository
 {

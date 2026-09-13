@@ -1,7 +1,7 @@
--- One-time clean-up for a TEST database that ran the first cut of create_asset_tables.sql (2026-09-07),
+-- One-time clean-up for a TEST database that ran the first cut of sql/migrations/2026-09-08_create_asset_tables.sql (2026-09-07),
 -- which created PMUnitLocation, PMAccessRequirement and LocationPMProfile. Those three were renamed the same day to
 -- AssetMountLocation, LocationAccessRequirement and LocationTradeProfile (generic names: nothing in them is PM-only).
--- Run this once, then re-run create_asset_tables.sql. Never needed in production, which only ever sees the renamed script.
+-- Run this once, then re-run sql/migrations/2026-09-08_create_asset_tables.sql. Never needed in production, which only ever sees the renamed script.
 -- Safe to re-run: every step is guarded. Only seed rows lived in these tables; profile rows, if any, are dropped.
 
 SET NOCOUNT ON;
@@ -17,4 +17,4 @@ IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PMAccessRequirement')
 IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PMUnitLocation')
     DROP TABLE dbo.PMUnitLocation;
 
-PRINT 'PM-named slice 2 lookups removed; run create_asset_tables.sql next.';
+PRINT 'PM-named slice 2 lookups removed; run sql/migrations/2026-09-08_create_asset_tables.sql next.';

@@ -10,7 +10,7 @@
 -- Metric display names / formats / higher-vs-lower-is-better live in code.
 --
 -- This script only runs on a database that has never had these tables. For an
--- existing database, add_performance_zone_columns.sql adds the two zone columns
+-- existing database, sql/migrations/2026-07-29_add_performance_zone_columns.sql adds the two zone columns
 -- introduced with the trimmed zone workbook format -- keep the two in sync.
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PerformanceUpload')
