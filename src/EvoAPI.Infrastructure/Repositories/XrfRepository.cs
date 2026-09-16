@@ -54,34 +54,10 @@ public class XrfRepository : IXrfRepository
         return rows.ToList();
     }
 
-    public async Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter)
-    {
-        // Mirrors GetHighVolumeActive: incomplete rows plus anything completed today, so the
-        // page's Incomplete / Completed Today toggle works client-side.
-        //
-        // The High Volume row is resolved through OUTER APPLY so a location still shows its
-        // HV details when hvbd_id was not resolved at load (falls back to the premise number,
-        // most recently completed HV row first). Text columns are CAST so the shape of the
-        // legacy HV table cannot break the mapping. The XRF row's own meter number is
-        // informational only and deliberately not selected.
-        const string locationsSql = @"
-            SELECT TOP 250
-                x.xrfbd_id                AS XrfbdId,
-                x.xrfb_id                 AS XrfbId,
-                b.xrfb_filename           AS BatchName,
-                x.hvbd_id                 AS HvbdId,
-                x.xrfbd_premisenumber     AS PremiseNumber,
-                x.xrfbd_team              AS Team,
-                x.xrfbd_comment           AS Comment,
-                x.xrfbd_result            AS Result,
-                x.xrfbd_completeddatetime AS CompletedDateTime,
-                x.u_id                    AS CompletedByUserId,
-                CASE WHEN xu.u_id IS NULL THEN NULL
-                     ELSE LTRIM(RTRIM(ISNULL(xu.u_firstname, '') + ' ' + ISNULL(xu.u_lastname, ''))) END AS CompletedByName,
-                x.xrfbd_latitude          AS Latitude,
-                x.xrfbd_longitude         AS Longitude,
-                x.xrfbd_geoaccuracy       AS GeoAccuracy,
-
+    // High Volume columns shared by the main query (join on hvbd_id) and the premise fallback.
+    // Text columns are CAST so the shape of the legacy HV table cannot break the mapping.
+    private const string HvColumns = @"
+                hv.hvbd_id                                      AS HvbdId,
                 hv.sr_id                                        AS SrId,
                 CAST(sr.sr_requestnumber AS NVARCHAR(100))      AS SrRequestNumber,
                 CAST(hv.hvbd_address AS NVARCHAR(200))          AS Address,
@@ -98,22 +74,43 @@ public class XrfRepository : IXrfRepository
                 hb.hvb_filename                                 AS HvBatchName,
                 hv.hvbd_completeddatetime                       AS HvCompletedDateTime,
                 CASE WHEN hu.u_id IS NULL THEN NULL
-                     ELSE LTRIM(RTRIM(ISNULL(hu.u_firstname, '') + ' ' + ISNULL(hu.u_lastname, ''))) END AS HvCompletedByName
+                     ELSE LTRIM(RTRIM(ISNULL(hu.u_firstname, '') + ' ' + ISNULL(hu.u_lastname, ''))) END AS HvCompletedByName";
+
+    private const string HvJoins = @"
+            LEFT JOIN dbo.HighVolumeBatch hb ON hb.hvb_id = hv.hvb_id
+            LEFT JOIN dbo.servicerequest sr ON sr.sr_id = hv.sr_id
+            LEFT JOIN dbo.[user] hu ON hu.u_id = hv.u_id";
+
+    public async Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter)
+    {
+        // Mirrors GetHighVolumeActive: incomplete rows plus anything completed today, so the
+        // page's Incomplete / Submitted Today toggle works client-side.
+        //
+        // The High Volume row is joined on hvbd_id only (resolved when the wave was loaded), which
+        // is a primary-key seek per row. Rows whose hvbd_id is still NULL get one follow-up query by
+        // premise number below. Earlier this was a single OUTER APPLY with an OR across both keys,
+        // which forced a scan of HighVolumeBatchDetail per XRF row and timed out past ~2,000 rows.
+        // The XRF row's own meter number is informational only and deliberately not selected.
+        var locationsSql = @"
+            SELECT TOP 250
+                x.xrfbd_id                AS XrfbdId,
+                x.xrfb_id                 AS XrfbId,
+                b.xrfb_filename           AS BatchName,
+                x.xrfbd_premisenumber     AS PremiseNumber,
+                x.xrfbd_team              AS Team,
+                x.xrfbd_comment           AS Comment,
+                x.xrfbd_result            AS Result,
+                x.xrfbd_completeddatetime AS CompletedDateTime,
+                x.u_id                    AS CompletedByUserId,
+                CASE WHEN xu.u_id IS NULL THEN NULL
+                     ELSE LTRIM(RTRIM(ISNULL(xu.u_firstname, '') + ' ' + ISNULL(xu.u_lastname, ''))) END AS CompletedByName,
+                x.xrfbd_latitude          AS Latitude,
+                x.xrfbd_longitude         AS Longitude,
+                x.xrfbd_geoaccuracy       AS GeoAccuracy," + HvColumns + @"
             FROM dbo.XrfBatchDetail x
             INNER JOIN dbo.XrfBatch b ON b.xrfb_id = x.xrfb_id
             LEFT JOIN dbo.[user] xu ON xu.u_id = x.u_id
-            OUTER APPLY (
-                SELECT TOP 1 h.*
-                FROM dbo.HighVolumeBatchDetail h
-                WHERE (x.hvbd_id IS NOT NULL AND h.hvbd_id = x.hvbd_id)
-                   OR (x.hvbd_id IS NULL AND CAST(h.hvbd_premisenumber AS NVARCHAR(50)) = x.xrfbd_premisenumber)
-                ORDER BY CASE WHEN h.hvbd_completeddatetime IS NULL THEN 1 ELSE 0 END,
-                         h.hvbd_completeddatetime DESC,
-                         h.hvbd_id DESC
-            ) hv
-            LEFT JOIN dbo.HighVolumeBatch hb ON hb.hvb_id = hv.hvb_id
-            LEFT JOIN dbo.servicerequest sr ON sr.sr_id = hv.sr_id
-            LEFT JOIN dbo.[user] hu ON hu.u_id = hv.u_id
+            LEFT JOIN dbo.HighVolumeBatchDetail hv ON hv.hvbd_id = x.hvbd_id" + HvJoins + @"
             WHERE (x.xrfbd_completeddatetime IS NULL
                    OR CONVERT(date, x.xrfbd_completeddatetime) = CONVERT(date, GETDATE()))
               AND (@Team = '' OR x.xrfbd_team = @Team)
@@ -124,6 +121,24 @@ public class XrfRepository : IXrfRepository
                    OR hv.hvbd_address LIKE '%' + @Filter + '%'
                    OR hv.hvbd_stanpar LIKE '%' + @Filter + '%')
             ORDER BY TRY_CAST(x.xrfbd_team AS INT), x.xrfbd_team, hv.hvbd_address, x.xrfbd_premisenumber";
+
+        // Fallback for rows loaded without an HV match: one query for all of them, most recently
+        // completed HV row per premise. Runs only when such rows are on the page.
+        var fallbackSql = @"
+            WITH Ranked AS (
+                SELECT h.hvbd_id,
+                       CAST(h.hvbd_premisenumber AS NVARCHAR(50)) AS premise,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY CAST(h.hvbd_premisenumber AS NVARCHAR(50))
+                           ORDER BY CASE WHEN h.hvbd_completeddatetime IS NULL THEN 1 ELSE 0 END,
+                                    h.hvbd_completeddatetime DESC, h.hvbd_id DESC) AS rn
+                FROM dbo.HighVolumeBatchDetail h
+                WHERE CAST(h.hvbd_premisenumber AS NVARCHAR(50)) IN @Premises
+            )
+            SELECT r.premise AS PremiseNumber," + HvColumns + @"
+            FROM Ranked r
+            INNER JOIN dbo.HighVolumeBatchDetail hv ON hv.hvbd_id = r.hvbd_id" + HvJoins + @"
+            WHERE r.rn = 1";
 
         // Latest answer per question for the matched service requests (same de-dupe rule as
         // GetHighVolumeChecklistAnswer: duplicate rows can exist from double submits).
@@ -150,6 +165,19 @@ public class XrfRepository : IXrfRepository
         var locations = (await connection.QueryAsync<XrfLocationDto>(locationsSql,
             new { Team = team, Batch = batch, Filter = filter })).ToList();
 
+        var unresolved = locations.Where(l => !l.HvbdId.HasValue).ToList();
+        if (unresolved.Count > 0)
+        {
+            var premises = unresolved.Select(l => l.PremiseNumber).Distinct().ToList();
+            var matches = await connection.QueryAsync<XrfLocationDto>(fallbackSql, new { Premises = premises });
+            var byPremise = matches.ToDictionary(m => m.PremiseNumber, m => m);
+            foreach (var location in unresolved)
+            {
+                if (byPremise.TryGetValue(location.PremiseNumber, out var hv))
+                    CopyHighVolume(hv, location);
+            }
+        }
+
         var srIds = locations.Where(l => l.SrId.HasValue).Select(l => l.SrId!.Value).Distinct().ToList();
         if (srIds.Count > 0)
         {
@@ -163,6 +191,27 @@ public class XrfRepository : IXrfRepository
         }
 
         return locations;
+    }
+
+    private static void CopyHighVolume(XrfLocationDto from, XrfLocationDto to)
+    {
+        to.HvbdId = from.HvbdId;
+        to.SrId = from.SrId;
+        to.SrRequestNumber = from.SrRequestNumber;
+        to.Address = from.Address;
+        to.City = from.City;
+        to.State = from.State;
+        to.Zip = from.Zip;
+        to.MeterNumber = from.MeterNumber;
+        to.MeterLocation = from.MeterLocation;
+        to.Stanpar = from.Stanpar;
+        to.Instructions = from.Instructions;
+        to.PremiseLatitude = from.PremiseLatitude;
+        to.PremiseLongitude = from.PremiseLongitude;
+        to.HvTeam = from.HvTeam;
+        to.HvBatchName = from.HvBatchName;
+        to.HvCompletedDateTime = from.HvCompletedDateTime;
+        to.HvCompletedByName = from.HvCompletedByName;
     }
 
     public async Task<XrfCompleteOutcome> CompleteAsync(int xrfbdId, int userId, string result, string? comment,

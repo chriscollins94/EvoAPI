@@ -13,8 +13,9 @@ public static class XrfResults
     public const string Error = "Error";
     public const string Inaccessible = "Inaccessible";
     public const string DirtyWet = "Dirty/Wet";
+    public const string NotUsed = "XRF Not Used";
 
-    public static readonly string[] All = { Complete, Error, Inaccessible, DirtyWet };
+    public static readonly string[] All = { Complete, Error, Inaccessible, DirtyWet, NotUsed };
 
     /// Returns the canonical spelling for a client value, or null when it is not one of the options.
     public static string? Normalize(string? value)

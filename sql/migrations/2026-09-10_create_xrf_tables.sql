@@ -34,7 +34,7 @@ BEGIN
         xrfbd_meternumber       NVARCHAR(50)   NULL,      -- informational only, as given on the wave list; never joined on or displayed
         xrfbd_team              NVARCHAR(10)   NULL,      -- team assigned for the revisit (defaults to the HV team at load)
         xrfbd_comment           NVARCHAR(1000) NULL,      -- optional tech comment entered at submit
-        xrfbd_result            NVARCHAR(20)   NULL,      -- required at submit: Complete | Error | Inaccessible | Dirty/Wet
+        xrfbd_result            NVARCHAR(20)   NULL,      -- required at submit: Complete | Error | Inaccessible | Dirty/Wet | XRF Not Used
         u_id                    INT            NULL,      -- tech who submitted the result
         xrfbd_completeddatetime DATETIME       NULL,
         xrfbd_latitude          DECIMAL(9, 6)  NULL,      -- device position when Submit XRF was pressed (NULL when unavailable/denied)
@@ -43,7 +43,7 @@ BEGIN
         xrfbd_insertdatetime    DATETIME       NOT NULL CONSTRAINT DF_XrfBatchDetail_insertdatetime DEFAULT (GETDATE()),
         xrfbd_modifieddatetime  DATETIME       NULL,
         CONSTRAINT CK_XrfBatchDetail_result
-            CHECK (xrfbd_result IS NULL OR xrfbd_result IN ('Complete', 'Error', 'Inaccessible', 'Dirty/Wet'))
+            CHECK (xrfbd_result IS NULL OR xrfbd_result IN ('Complete', 'Error', 'Inaccessible', 'Dirty/Wet', 'XRF Not Used'))
     );
 
     CREATE INDEX IX_XrfBatchDetail_xrfb_id       ON dbo.XrfBatchDetail (xrfb_id);
