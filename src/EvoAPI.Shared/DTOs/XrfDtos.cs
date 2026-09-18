@@ -34,6 +34,20 @@ public class XrfTeamDto
     public int CompletedCount { get; set; }
 }
 
+/// Which stops the page is asking for. 'today' is measured in Central time on the server.
+public static class XrfViews
+{
+    public const string Incomplete = "incomplete";
+    public const string SubmittedToday = "today";
+    public const string SubmittedAll = "submitted";
+
+    public static string Normalize(string? value)
+    {
+        var v = value?.Trim().ToLowerInvariant();
+        return v == SubmittedToday || v == SubmittedAll ? v : Incomplete;
+    }
+}
+
 public class XrfBatchDto
 {
     public int XrfbId { get; set; }

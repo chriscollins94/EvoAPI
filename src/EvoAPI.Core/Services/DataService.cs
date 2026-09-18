@@ -5057,17 +5057,20 @@ public class DataService : IDataService
         
         try
         {
-            const string sql = @" 
+            const string sql = @"
+-- Central-time calendar day. The database clock is UTC, so without this the report rolled to
+-- the next weekday at 7 PM Central and showed a phantom 'today' with no completions.
+DECLARE @today date = CONVERT(date, SYSDATETIMEOFFSET() AT TIME ZONE 'Central Standard Time');
 
 WITH LastFiveWeekdays AS (
     SELECT 
-        DATEADD(DAY, -daysToSubtract, CONVERT(DATE, GETDATE())) AS Date,
+        DATEADD(DAY, -daysToSubtract, @today) AS Date,
         ROW_NUMBER() OVER (ORDER BY daysToSubtract) AS DayOrder,
-        FORMAT(DATEADD(DAY, -daysToSubtract, CONVERT(DATE, GETDATE())), 'dddd') AS DayName
+        FORMAT(DATEADD(DAY, -daysToSubtract, @today), 'dddd') AS DayName
     FROM (
         SELECT TOP 5 
             SUM(CASE 
-                    WHEN DATEPART(WEEKDAY, DATEADD(DAY, -number, CONVERT(DATE, GETDATE()))) IN (1, 7) THEN 1 
+                    WHEN DATEPART(WEEKDAY, DATEADD(DAY, -number, @today)) IN (1, 7) THEN 1 
                     ELSE 0 
                 END) OVER (ORDER BY number) + number AS daysToSubtract
         FROM (
@@ -5075,7 +5078,7 @@ WITH LastFiveWeekdays AS (
             FROM sys.objects a
             CROSS JOIN sys.objects b
         ) nums
-        WHERE DATEPART(WEEKDAY, DATEADD(DAY, -number, CONVERT(DATE, GETDATE()))) NOT IN (1, 7)
+        WHERE DATEPART(WEEKDAY, DATEADD(DAY, -number, @today)) NOT IN (1, 7)
         ORDER BY number
     ) d
 ),
@@ -5084,19 +5087,19 @@ ActiveTechs AS (
         u.u_firstname + ' ' + u.u_lastname AS Tech
     FROM HighVolumeBatchDetail hvbd
     JOIN [user] u ON hvbd.u_id = u.u_id
-    WHERE DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime) >= DATEADD(DAY, -30, GETDATE())
+    WHERE hvbd.hvbd_completeddatetime >= DATEADD(DAY, -30, GETDATE())
 ),
 DailyStats AS (
     SELECT 
         u.u_firstname + ' ' + u.u_lastname AS Tech,
-        CONVERT(DATE, DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime)) AS CompletionDate,
+        CONVERT(date, hvbd.hvbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time') AS CompletionDate,
         COUNT(hvbd.sr_id) AS CompletionCount
     FROM HighVolumeBatchDetail hvbd
     JOIN [user] u ON hvbd.u_id = u.u_id
-    WHERE DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime) >= DATEADD(DAY, -30, GETDATE())
+    WHERE hvbd.hvbd_completeddatetime >= DATEADD(DAY, -30, GETDATE())
     GROUP BY 
         u.u_firstname + ' ' + u.u_lastname,
-        CONVERT(DATE, DATEADD(HOUR, -6, hvbd.hvbd_completeddatetime))
+        CONVERT(date, hvbd.hvbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
 ),
 CrossJoined AS (
     SELECT 
@@ -5196,6 +5199,214 @@ FROM DailyTechSummary;
             _logger.LogError(ex, "Error retrieving high volume dashboard data");
             throw;
         }
+    }
+
+    /// Metro Pipe Program Report: XRF per-tech / per-crew / per-wave / per-result summaries
+    /// plus program totals for both High Volume and XRF. Six result sets, in this order:
+    ///   0 XRF tech rows (+ TOTAL), 1 XRF crews, 2 HV crews, 3 waves, 4 results, 5 scalars.
+    /// Window = last five weekdays including today, Central time, the same calendar the High
+    /// Volume query above uses so the two line up day for day in the Side by Side view. The
+    /// totals countdown uses the most recently loaded wave of each program: waves seldom
+    /// overlap and the office closes one out before starting the next, so the latest wave is
+    /// "the list we are working" and its done / to go resets naturally when a new one loads.
+    public async Task<DataSet> GetMetroPipeSummaryAsync()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            const string sql = @"
+SET NOCOUNT ON;
+
+DECLARE @today date = CONVERT(date, SYSDATETIMEOFFSET() AT TIME ZONE 'Central Standard Time');
+DECLARE @since datetime = DATEADD(DAY, -10, GETDATE());   -- cheap prefilter; the window never reaches back more than 6 calendar days
+
+-- Last five weekdays, DayOrder 1 = today (or the most recent weekday when today is a weekend).
+SELECT TOP 5
+    DATEADD(DAY, -n, @today)                      AS [Date],
+    ROW_NUMBER() OVER (ORDER BY n)                AS DayOrder,
+    DATENAME(WEEKDAY, DATEADD(DAY, -n, @today))   AS DayName
+INTO #Days
+FROM (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) v(n)
+WHERE DATENAME(WEEKDAY, DATEADD(DAY, -n, @today)) NOT IN ('Saturday', 'Sunday')
+ORDER BY n;
+
+-- 0: XRF submissions per tech in the window, plus a TOTAL row
+WITH Sub AS (
+    SELECT
+        ISNULL(u.u_firstname + ' ' + u.u_lastname, 'Unknown') AS Tech,
+        dy.DayOrder,
+        d.xrfbd_result
+    FROM XrfBatchDetail d
+    LEFT JOIN [user] u ON u.u_id = d.u_id
+    JOIN #Days dy ON dy.[Date] = CONVERT(date, d.xrfbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
+    WHERE d.xrfbd_completeddatetime >= @since
+),
+Pivoted AS (
+    SELECT
+        Tech,
+        SUM(CASE WHEN DayOrder = 1 THEN 1 ELSE 0 END) AS [Today],
+        SUM(CASE WHEN DayOrder = 2 THEN 1 ELSE 0 END) AS [Previous_1],
+        SUM(CASE WHEN DayOrder = 3 THEN 1 ELSE 0 END) AS [Previous_2],
+        SUM(CASE WHEN DayOrder = 4 THEN 1 ELSE 0 END) AS [Previous_3],
+        SUM(CASE WHEN DayOrder = 5 THEN 1 ELSE 0 END) AS [Previous_4],
+        SUM(CASE WHEN xrfbd_result = 'Complete' THEN 1 ELSE 0 END) AS Complete
+    FROM Sub
+    GROUP BY Tech
+),
+Names AS (
+    SELECT
+        MAX(CASE WHEN DayOrder = 1 THEN DayName END) AS Today_Name,
+        MAX(CASE WHEN DayOrder = 2 THEN DayName END) AS Previous_1_Name,
+        MAX(CASE WHEN DayOrder = 3 THEN DayName END) AS Previous_2_Name,
+        MAX(CASE WHEN DayOrder = 4 THEN DayName END) AS Previous_3_Name,
+        MAX(CASE WHEN DayOrder = 5 THEN DayName END) AS Previous_4_Name
+    FROM #Days
+)
+SELECT p.Tech, p.[Today], p.[Previous_1], p.[Previous_2], p.[Previous_3], p.[Previous_4], p.Complete,
+       n.Today_Name, n.Previous_1_Name, n.Previous_2_Name, n.Previous_3_Name, n.Previous_4_Name,
+       0 AS SortOrder
+FROM Pivoted p CROSS JOIN Names n
+UNION ALL
+SELECT 'TOTAL',
+       ISNULL(SUM(p.[Today]), 0), ISNULL(SUM(p.[Previous_1]), 0), ISNULL(SUM(p.[Previous_2]), 0),
+       ISNULL(SUM(p.[Previous_3]), 0), ISNULL(SUM(p.[Previous_4]), 0), ISNULL(SUM(p.Complete), 0),
+       n.Today_Name, n.Previous_1_Name, n.Previous_2_Name, n.Previous_3_Name, n.Previous_4_Name,
+       1
+FROM Names n LEFT JOIN Pivoted p ON 1 = 1
+GROUP BY n.Today_Name, n.Previous_1_Name, n.Previous_2_Name, n.Previous_3_Name, n.Previous_4_Name
+ORDER BY SortOrder, Tech;
+
+-- 1: XRF submissions per crew in the window
+SELECT
+    ISNULL(NULLIF(LTRIM(RTRIM(d.xrfbd_team)), ''), 'Unassigned') AS Crew,
+    SUM(CASE WHEN dy.DayOrder = 1 THEN 1 ELSE 0 END) AS [Today],
+    SUM(CASE WHEN dy.DayOrder = 2 THEN 1 ELSE 0 END) AS [Previous_1],
+    SUM(CASE WHEN dy.DayOrder = 3 THEN 1 ELSE 0 END) AS [Previous_2],
+    SUM(CASE WHEN dy.DayOrder = 4 THEN 1 ELSE 0 END) AS [Previous_3],
+    SUM(CASE WHEN dy.DayOrder = 5 THEN 1 ELSE 0 END) AS [Previous_4]
+FROM XrfBatchDetail d
+JOIN #Days dy ON dy.[Date] = CONVERT(date, d.xrfbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
+WHERE d.xrfbd_completeddatetime >= @since
+GROUP BY ISNULL(NULLIF(LTRIM(RTRIM(d.xrfbd_team)), ''), 'Unassigned')
+ORDER BY COUNT(*) DESC, Crew;
+
+-- 2: High Volume completions per crew in the window
+SELECT
+    ISNULL(NULLIF(LTRIM(RTRIM(h.hvbd_team)), ''), 'Unassigned') AS Crew,
+    SUM(CASE WHEN dy.DayOrder = 1 THEN 1 ELSE 0 END) AS [Today],
+    SUM(CASE WHEN dy.DayOrder = 2 THEN 1 ELSE 0 END) AS [Previous_1],
+    SUM(CASE WHEN dy.DayOrder = 3 THEN 1 ELSE 0 END) AS [Previous_2],
+    SUM(CASE WHEN dy.DayOrder = 4 THEN 1 ELSE 0 END) AS [Previous_3],
+    SUM(CASE WHEN dy.DayOrder = 5 THEN 1 ELSE 0 END) AS [Previous_4]
+FROM HighVolumeBatchDetail h
+JOIN #Days dy ON dy.[Date] = CONVERT(date, h.hvbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
+WHERE h.hvbd_completeddatetime >= @since
+GROUP BY ISNULL(NULLIF(LTRIM(RTRIM(h.hvbd_team)), ''), 'Unassigned')
+ORDER BY COUNT(*) DESC, Crew;
+
+-- 3: every loaded wave, newest first
+SELECT
+    b.xrfb_id,
+    b.xrfb_filename,
+    b.xrfb_insertdatetime,
+    COUNT(d.xrfbd_id) AS Total,
+    SUM(CASE WHEN d.xrfbd_completeddatetime IS NOT NULL THEN 1 ELSE 0 END) AS Done
+FROM XrfBatch b
+LEFT JOIN XrfBatchDetail d ON d.xrfb_id = b.xrfb_id
+GROUP BY b.xrfb_id, b.xrfb_filename, b.xrfb_insertdatetime
+ORDER BY b.xrfb_insertdatetime DESC, b.xrfb_id DESC;
+
+-- 4: result mix in the window
+SELECT d.xrfbd_result AS Result, COUNT(*) AS [Count]
+FROM XrfBatchDetail d
+JOIN #Days dy ON dy.[Date] = CONVERT(date, d.xrfbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
+WHERE d.xrfbd_completeddatetime >= @since AND d.xrfbd_result IS NOT NULL
+GROUP BY d.xrfbd_result
+ORDER BY COUNT(*) DESC, d.xrfbd_result;
+
+-- 5: countdown for the most recently loaded wave of each program, plus XRF pending across all waves
+SELECT
+    hv.hvb_filename                                                         AS HvWaveName,
+    ISNULL(hv.Total, 0)                                                     AS HvWaveTotal,
+    ISNULL(hv.Done, 0)                                                      AS HvDone,
+    xw.xrfb_filename                                                        AS XrfWaveName,
+    ISNULL(xw.Total, 0)                                                     AS XrfWaveTotal,
+    ISNULL(xw.Done, 0)                                                      AS XrfDone,
+    (SELECT COUNT(*) FROM XrfBatchDetail WHERE xrfbd_completeddatetime IS NULL) AS XrfPending
+FROM (SELECT 1 AS one) anchor
+OUTER APPLY (
+    SELECT TOP 1 b.hvb_filename,
+           (SELECT COUNT(*) FROM HighVolumeBatchDetail d WHERE d.hvb_id = b.hvb_id) AS Total,
+           (SELECT COUNT(*) FROM HighVolumeBatchDetail d WHERE d.hvb_id = b.hvb_id AND d.hvbd_completeddatetime IS NOT NULL) AS Done
+    FROM HighVolumeBatch b
+    ORDER BY b.hvb_insertdatetime DESC, b.hvb_id DESC
+) hv
+OUTER APPLY (
+    SELECT TOP 1 b.xrfb_filename,
+           (SELECT COUNT(*) FROM XrfBatchDetail d WHERE d.xrfb_id = b.xrfb_id) AS Total,
+           (SELECT COUNT(*) FROM XrfBatchDetail d WHERE d.xrfb_id = b.xrfb_id AND d.xrfbd_completeddatetime IS NOT NULL) AS Done
+    FROM XrfBatch b
+    ORDER BY b.xrfb_insertdatetime DESC, b.xrfb_id DESC
+) xw;
+
+DROP TABLE #Days;
+";
+
+            var result = await ExecuteDataSetAsync(sql);
+
+            stopwatch.Stop();
+            await _auditService.LogAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMetroPipeSummary",
+                Detail = "Retrieved Metro Pipe (XRF + crew + totals) summary data",
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await _auditService.LogErrorAsync(new EvoAPI.Shared.Models.AuditEntry
+            {
+                Name = "DataService",
+                Description = "GetMetroPipeSummary",
+                Detail = ex.ToString(),
+                ResponseTime = stopwatch.Elapsed.TotalSeconds.ToString("F3"),
+                MachineName = Environment.MachineName
+            });
+
+            _logger.LogError(ex, "Error retrieving Metro Pipe summary data");
+            throw;
+        }
+    }
+
+    /// Runs a batch that returns several result sets and hands them back as DataSet tables
+    /// in order. Mirrors ExecuteQueryAsync but does not stop at the first table.
+    private async Task<DataSet> ExecuteDataSetAsync(string sql)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException("No connection string found");
+        }
+
+        var dataSet = new DataSet();
+
+        using var connection = new SqlConnection(connectionString);
+        connection.ConnectionString += ";Connection Timeout=30;";
+
+        using var command = new SqlCommand(sql, connection);
+        command.CommandTimeout = 30;
+
+        await connection.OpenAsync();
+        using var adapter = new SqlDataAdapter(command);
+        adapter.Fill(dataSet);
+
+        return dataSet;
     }
 
     public async Task<DataTable> GetReceiptsDashboardAsync(int? days = null)

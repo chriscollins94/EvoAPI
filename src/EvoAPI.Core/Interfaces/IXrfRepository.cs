@@ -10,9 +10,10 @@ public interface IXrfRepository
     /// Teams across all XRF locations with submitted / total counts, numeric order.
     Task<List<XrfTeamDto>> GetTeamsAsync();
 
-    /// Incomplete locations plus those completed today, with the matched High Volume
-    /// row and its checklist answers. Empty filter values mean "no filter".
-    Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter);
+    /// Locations for one view (XrfViews: incomplete, submitted today in Central time, or all
+    /// submitted), with the matched High Volume row and its checklist answers. No row cap.
+    /// Empty filter values mean "no filter".
+    Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter, string view);
 
     /// Stamps the row submitted (result / who / when / where / comment). One-shot: a row that
     /// is already submitted is left untouched and reported as AlreadyCompleted. `result` must

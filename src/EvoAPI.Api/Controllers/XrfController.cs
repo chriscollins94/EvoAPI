@@ -80,18 +80,19 @@ namespace EvoAPI.Api.Controllers
         }
 
         /// <summary>
-        /// Incomplete locations plus those completed today, with the matched High Volume
-        /// visit. All filters are optional: team (exact), batch (wave name, exact),
-        /// filter (premise / HV meter / address / stanpar contains).
+        /// Locations for one view, with the matched High Volume visit. view = incomplete (default),
+        /// today (submitted today, Central time) or submitted (all). Other filters are optional:
+        /// team (exact), batch (wave name, exact), filter (premise / HV meter / address / stanpar
+        /// contains). Returns every matching row; there is no cap.
         /// </summary>
         [HttpGet("active")]
         public async Task<ActionResult<ApiResponse<List<XrfLocationDto>>>> GetActive(
-            [FromQuery] string? team, [FromQuery] string? batch, [FromQuery] string? filter)
+            [FromQuery] string? team, [FromQuery] string? batch, [FromQuery] string? filter, [FromQuery] string? view)
         {
             try
             {
                 var data = await _xrfRepository.GetActiveAsync(
-                    Clean(team, 10), Clean(batch, 50), Clean(filter, MaxFilterLength));
+                    Clean(team, 10), Clean(batch, 50), Clean(filter, MaxFilterLength), XrfViews.Normalize(view));
 
                 return Ok(new ApiResponse<List<XrfLocationDto>>
                 {
@@ -103,7 +104,7 @@ namespace EvoAPI.Api.Controllers
             }
             catch (Exception ex)
             {
-                await LogAuditErrorAsync("GetXrfActive", ex, new { team, batch, filter });
+                await LogAuditErrorAsync("GetXrfActive", ex, new { team, batch, filter, view });
                 return StatusCode(500, new ApiResponse<List<XrfLocationDto>> { Success = false, Message = "Failed to retrieve XRF locations" });
             }
         }

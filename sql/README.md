@@ -33,7 +33,7 @@ Scripts written since the last PROD deploy, in run order. Delete a line once it 
 | `migrations/2026-09-10_create_xrf_tables.sql` | EvoAPI + evotech | Final shape already includes the result column and the premise key. PROD needs only this one. |
 | `migrations/2026-09-11_add_xrfbatchdetail_result_column.sql` | TEST only | Skip on PROD; folded into the create script. |
 | `migrations/2026-09-12_alter_xrfbatchdetail_premisenumber.sql` | TEST only | Skip on PROD; wipes test waves and re-keys. |
-| `migrations/2026-09-15_xrf_result_add_not_used.sql` | TEST only | Skip on PROD; the create script already lists 'XRF Not Used'. |
+| `migrations/2026-09-15_xrf_result_add_not_used.sql` | EvoAPI + evotech | Required on ANY database whose XRF tables were created before 2026-09-15 (the create script only gained 'XRF Not Used' that day). Without it every XRF Not Used submit fails. Safe to rerun. |
 | `migrations/2026-09-16_add_laborrate_unique_customer_trade.sql` | EvoWS + EvoUI | Unique index on LaborRate (xccc_id, t_id). Aborts and lists duplicates if any exist; clean them first (see `diagnostics/laborrate_duplicates.sql`). |
 
 Earlier scripts (markup decimal, performance, status-change user tracking, attachment

@@ -2,8 +2,9 @@
 -- XrfBatchDetail.xrfbd_result is the only thing that knows the list on the database side, so
 -- it is dropped and recreated with the new value. Existing rows are untouched.
 --
--- TEST only when the tables were created before 2026-09-15; create_xrf_tables.sql already
--- carries the full list, so PROD gets it from that script. Ships with EvoAPI + evotech.
+-- Run on EVERY database whose XRF tables were created before 2026-09-15 (TEST and PROD alike);
+-- create_xrf_tables.sql only gained 'XRF Not Used' that day. Until this runs, every submit with
+-- that result is rejected by the constraint and the tech sees a save failure. Safe to rerun.
 
 IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_XrfBatchDetail_result')
     ALTER TABLE dbo.XrfBatchDetail DROP CONSTRAINT CK_XrfBatchDetail_result;

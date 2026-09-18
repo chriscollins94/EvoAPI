@@ -10,6 +10,9 @@ public class XrfRepository : IXrfRepository
 {
     private readonly string _connectionString;
 
+    // Dapper expands IN lists to one parameter each; SQL Server allows 2,100 per command.
+    private const int ParameterChunkSize = 1000;
+
     public XrfRepository(IConfiguration configuration)
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection")
@@ -81,10 +84,12 @@ public class XrfRepository : IXrfRepository
             LEFT JOIN dbo.servicerequest sr ON sr.sr_id = hv.sr_id
             LEFT JOIN dbo.[user] hu ON hu.u_id = hv.u_id";
 
-    public async Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter)
+    public async Task<List<XrfLocationDto>> GetActiveAsync(string team, string batch, string filter, string view)
     {
-        // Mirrors GetHighVolumeActive: incomplete rows plus anything completed today, so the
-        // page's Incomplete / Submitted Today toggle works client-side.
+        // One view per call (incomplete / submitted today / all submitted) so counts on the page
+        // match the database. No row cap: the office asked for the whole team regardless of size,
+        // and a 250-row cap had been hiding submissions on 2,000-stop waves. "Today" is the
+        // Central-time calendar day, matching how the page displays times; the database clock is UTC.
         //
         // The High Volume row is joined on hvbd_id only (resolved when the wave was loaded), which
         // is a primary-key seek per row. Rows whose hvbd_id is still NULL get one follow-up query by
@@ -92,7 +97,7 @@ public class XrfRepository : IXrfRepository
         // which forced a scan of HighVolumeBatchDetail per XRF row and timed out past ~2,000 rows.
         // The XRF row's own meter number is informational only and deliberately not selected.
         var locationsSql = @"
-            SELECT TOP 250
+            SELECT
                 x.xrfbd_id                AS XrfbdId,
                 x.xrfb_id                 AS XrfbId,
                 b.xrfb_filename           AS BatchName,
@@ -111,8 +116,13 @@ public class XrfRepository : IXrfRepository
             INNER JOIN dbo.XrfBatch b ON b.xrfb_id = x.xrfb_id
             LEFT JOIN dbo.[user] xu ON xu.u_id = x.u_id
             LEFT JOIN dbo.HighVolumeBatchDetail hv ON hv.hvbd_id = x.hvbd_id" + HvJoins + @"
-            WHERE (x.xrfbd_completeddatetime IS NULL
-                   OR CONVERT(date, x.xrfbd_completeddatetime) = CONVERT(date, GETDATE()))
+            WHERE (
+                    (@View = 'incomplete' AND x.xrfbd_completeddatetime IS NULL)
+                 OR (@View = 'submitted'  AND x.xrfbd_completeddatetime IS NOT NULL)
+                 OR (@View = 'today'      AND x.xrfbd_completeddatetime IS NOT NULL
+                     AND CONVERT(date, x.xrfbd_completeddatetime AT TIME ZONE 'UTC' AT TIME ZONE 'Central Standard Time')
+                       = CONVERT(date, SYSDATETIMEOFFSET() AT TIME ZONE 'Central Standard Time'))
+                  )
               AND (@Team = '' OR x.xrfbd_team = @Team)
               AND (@Batch = '' OR b.xrfb_filename = @Batch)
               AND (@Filter = ''
@@ -120,7 +130,10 @@ public class XrfRepository : IXrfRepository
                    OR hv.hvbd_meternumber LIKE '%' + @Filter + '%'
                    OR hv.hvbd_address LIKE '%' + @Filter + '%'
                    OR hv.hvbd_stanpar LIKE '%' + @Filter + '%')
-            ORDER BY TRY_CAST(x.xrfbd_team AS INT), x.xrfbd_team, hv.hvbd_address, x.xrfbd_premisenumber";
+            ORDER BY CASE WHEN @View = 'incomplete' THEN 0 ELSE 1 END,
+                     TRY_CAST(x.xrfbd_team AS INT), x.xrfbd_team,
+                     CASE WHEN @View = 'incomplete' THEN NULL ELSE x.xrfbd_completeddatetime END DESC,
+                     hv.hvbd_address, x.xrfbd_premisenumber";
 
         // Fallback for rows loaded without an HV match: one query for all of them, most recently
         // completed HV row per premise. Runs only when such rows are on the page.
@@ -163,14 +176,18 @@ public class XrfRepository : IXrfRepository
 
         using var connection = new SqlConnection(_connectionString);
         var locations = (await connection.QueryAsync<XrfLocationDto>(locationsSql,
-            new { Team = team, Batch = batch, Filter = filter })).ToList();
+            new { Team = team, Batch = batch, Filter = filter, View = view })).ToList();
 
         var unresolved = locations.Where(l => !l.HvbdId.HasValue).ToList();
         if (unresolved.Count > 0)
         {
             var premises = unresolved.Select(l => l.PremiseNumber).Distinct().ToList();
-            var matches = await connection.QueryAsync<XrfLocationDto>(fallbackSql, new { Premises = premises });
-            var byPremise = matches.ToDictionary(m => m.PremiseNumber, m => m);
+            var byPremise = new Dictionary<string, XrfLocationDto>();
+            foreach (var chunk in premises.Chunk(ParameterChunkSize))
+            {
+                var matches = await connection.QueryAsync<XrfLocationDto>(fallbackSql, new { Premises = chunk });
+                foreach (var m in matches) byPremise[m.PremiseNumber] = m;
+            }
             foreach (var location in unresolved)
             {
                 if (byPremise.TryGetValue(location.PremiseNumber, out var hv))
@@ -181,7 +198,9 @@ public class XrfRepository : IXrfRepository
         var srIds = locations.Where(l => l.SrId.HasValue).Select(l => l.SrId!.Value).Distinct().ToList();
         if (srIds.Count > 0)
         {
-            var answers = await connection.QueryAsync<XrfHvAnswerDto>(answersSql, new { SrIds = srIds });
+            var answers = new List<XrfHvAnswerDto>();
+            foreach (var chunk in srIds.Chunk(ParameterChunkSize))
+                answers.AddRange(await connection.QueryAsync<XrfHvAnswerDto>(answersSql, new { SrIds = chunk }));
             var bySr = answers.GroupBy(a => a.SrId).ToDictionary(g => g.Key, g => g.ToList());
             foreach (var location in locations)
             {

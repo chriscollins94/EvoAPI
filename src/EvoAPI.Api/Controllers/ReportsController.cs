@@ -35,6 +35,47 @@ public class ReportsController : BaseController
 
     #region Get
 
+    /// <summary>
+    /// XRF half of the Metro Pipe Program Report plus the shared summaries (program totals,
+    /// locations by crew). Pairs with GET high-volume, which stays unchanged.
+    /// </summary>
+    [HttpGet("metro-pipe")]
+    [AdminOnly]
+    public async Task<ActionResult<ApiResponse<MetroPipeReportDto>>> GetMetroPipeReport()
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var dataSet = await _dataService.GetMetroPipeSummaryAsync();
+            var report = ConvertDataSetToMetroPipeReport(dataSet);
+
+            stopwatch.Stop();
+            await LogAuditAsync("GetMetroPipeReport",
+                $"Retrieved {report.XrfRows.Count} XRF tech rows, {report.XrfWaves.Count} waves",
+                stopwatch.Elapsed.TotalSeconds.ToString("0.00"));
+
+            return Ok(new ApiResponse<MetroPipeReportDto>
+            {
+                Success = true,
+                Message = "Metro Pipe report retrieved successfully",
+                Data = report,
+                Count = report.XrfRows.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            await LogAuditErrorAsync("GetMetroPipeReport", ex);
+            _logger.LogError(ex, "Error retrieving Metro Pipe report");
+            return StatusCode(500, new ApiResponse<MetroPipeReportDto>
+            {
+                Success = false,
+                Message = "Failed to retrieve Metro Pipe report"
+            });
+        }
+    }
+
     [HttpGet("high-volume")]
     [AdminOnly]
     public async Task<ActionResult<ApiResponse<List<HighVolumeReportDto>>>> GetHighVolumeReport()
@@ -778,6 +819,84 @@ public class ReportsController : BaseController
         }
         
         return result;
+    }
+
+    /// Result-set order is fixed by DataService.GetMetroPipeSummaryAsync:
+    /// 0 XRF tech rows, 1 XRF crews, 2 HV crews, 3 waves, 4 results, 5 scalars.
+    private static MetroPipeReportDto ConvertDataSetToMetroPipeReport(DataSet dataSet)
+    {
+        var report = new MetroPipeReportDto();
+        if (dataSet.Tables.Count < 6)
+            throw new InvalidOperationException($"Metro Pipe summary returned {dataSet.Tables.Count} result sets, expected 6");
+
+        foreach (DataRow row in dataSet.Tables[0].Rows)
+        {
+            report.XrfRows.Add(new XrfReportRowDto
+            {
+                Tech = CleanString(row["Tech"]),
+                Today = ConvertToInt(row["Today"]),
+                Previous1 = ConvertToInt(row["Previous_1"]),
+                Previous2 = ConvertToInt(row["Previous_2"]),
+                Previous3 = ConvertToInt(row["Previous_3"]),
+                Previous4 = ConvertToInt(row["Previous_4"]),
+                Complete = ConvertToInt(row["Complete"]),
+                TodayName = CleanString(row["Today_Name"]),
+                Previous1Name = CleanString(row["Previous_1_Name"]),
+                Previous2Name = CleanString(row["Previous_2_Name"]),
+                Previous3Name = CleanString(row["Previous_3_Name"]),
+                Previous4Name = CleanString(row["Previous_4_Name"])
+            });
+        }
+
+        static CrewReportRowDto Crew(DataRow row) => new()
+        {
+            Crew = CleanString(row["Crew"]),
+            Today = ConvertToInt(row["Today"]),
+            Previous1 = ConvertToInt(row["Previous_1"]),
+            Previous2 = ConvertToInt(row["Previous_2"]),
+            Previous3 = ConvertToInt(row["Previous_3"]),
+            Previous4 = ConvertToInt(row["Previous_4"])
+        };
+        foreach (DataRow row in dataSet.Tables[1].Rows) report.XrfCrews.Add(Crew(row));
+        foreach (DataRow row in dataSet.Tables[2].Rows) report.HvCrews.Add(Crew(row));
+
+        foreach (DataRow row in dataSet.Tables[3].Rows)
+        {
+            var total = ConvertToInt(row["Total"]);
+            var done = ConvertToInt(row["Done"]);
+            report.XrfWaves.Add(new XrfWaveProgressDto
+            {
+                BatchId = ConvertToInt(row["xrfb_id"]),
+                Wave = CleanString(row["xrfb_filename"]),
+                LoadedDate = row["xrfb_insertdatetime"] is DateTime dt ? dt : DateTime.MinValue,
+                Total = total,
+                Done = done,
+                Pending = Math.Max(0, total - done)
+            });
+        }
+
+        foreach (DataRow row in dataSet.Tables[4].Rows)
+        {
+            report.XrfResults.Add(new XrfResultCountDto
+            {
+                Result = CleanString(row["Result"]),
+                Count = ConvertToInt(row["Count"])
+            });
+        }
+
+        if (dataSet.Tables[5].Rows.Count > 0)
+        {
+            var row = dataSet.Tables[5].Rows[0];
+            report.XrfPending = ConvertToInt(row["XrfPending"]);
+            report.XrfWaveName = row["XrfWaveName"] == DBNull.Value ? null : CleanString(row["XrfWaveName"]);
+            report.XrfWaveTotal = ConvertToInt(row["XrfWaveTotal"]);
+            report.XrfDone = ConvertToInt(row["XrfDone"]);
+            report.HvWaveName = row["HvWaveName"] == DBNull.Value ? null : CleanString(row["HvWaveName"]);
+            report.HvWaveTotal = ConvertToInt(row["HvWaveTotal"]);
+            report.HvDone = ConvertToInt(row["HvDone"]);
+        }
+
+        return report;
     }
 
     private static List<ReceiptsReportDto> ConvertDataTableToReceiptsReport(DataTable dataTable)
