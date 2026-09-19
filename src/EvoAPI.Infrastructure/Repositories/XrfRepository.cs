@@ -111,10 +111,13 @@ public class XrfRepository : IXrfRepository
                      ELSE LTRIM(RTRIM(ISNULL(xu.u_firstname, '') + ' ' + ISNULL(xu.u_lastname, ''))) END AS CompletedByName,
                 x.xrfbd_latitude          AS Latitude,
                 x.xrfbd_longitude         AS Longitude,
-                x.xrfbd_geoaccuracy       AS GeoAccuracy," + HvColumns + @"
+                x.xrfbd_geoaccuracy       AS GeoAccuracy,
+                x.xrfbd_att_id            AS AttId,
+                CAST(xa.att_filename AS NVARCHAR(500)) AS AttFilename," + HvColumns + @"
             FROM dbo.XrfBatchDetail x
             INNER JOIN dbo.XrfBatch b ON b.xrfb_id = x.xrfb_id
             LEFT JOIN dbo.[user] xu ON xu.u_id = x.u_id
+            LEFT JOIN dbo.attachment xa ON xa.att_id = x.xrfbd_att_id
             LEFT JOIN dbo.HighVolumeBatchDetail hv ON hv.hvbd_id = x.hvbd_id" + HvJoins + @"
             WHERE (
                     (@View = 'incomplete' AND x.xrfbd_completeddatetime IS NULL)
@@ -234,7 +237,7 @@ public class XrfRepository : IXrfRepository
     }
 
     public async Task<XrfCompleteOutcome> CompleteAsync(int xrfbdId, int userId, string result, string? comment,
-        double? latitude, double? longitude, int? geoAccuracy)
+        double? latitude, double? longitude, int? geoAccuracy, int? attId)
     {
         const string completeSql = @"
             UPDATE dbo.XrfBatchDetail
@@ -245,6 +248,7 @@ public class XrfRepository : IXrfRepository
                 xrfbd_latitude          = @Latitude,
                 xrfbd_longitude         = @Longitude,
                 xrfbd_geoaccuracy       = @GeoAccuracy,
+                xrfbd_att_id            = @AttId,
                 xrfbd_modifieddatetime  = GETDATE()
             OUTPUT INSERTED.xrfbd_completeddatetime
             WHERE xrfbd_id = @XrfbdId
@@ -275,7 +279,8 @@ public class XrfRepository : IXrfRepository
             Comment = trimmedComment,
             Latitude = lat,
             Longitude = lon,
-            GeoAccuracy = accuracy
+            GeoAccuracy = accuracy,
+            AttId = attId.HasValue && attId.Value > 0 ? attId : null
         });
 
         if (!completedAt.HasValue)

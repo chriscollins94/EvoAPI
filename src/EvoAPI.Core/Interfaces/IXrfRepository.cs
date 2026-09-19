@@ -19,5 +19,5 @@ public interface IXrfRepository
     /// is already submitted is left untouched and reported as AlreadyCompleted. `result` must
     /// already be a canonical XrfResults value.
     Task<XrfCompleteOutcome> CompleteAsync(int xrfbdId, int userId, string result, string? comment,
-        double? latitude, double? longitude, int? geoAccuracy);
+        double? latitude, double? longitude, int? geoAccuracy, int? attId);
 }

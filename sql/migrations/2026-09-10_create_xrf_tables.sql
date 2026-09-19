@@ -40,6 +40,7 @@ BEGIN
         xrfbd_latitude          DECIMAL(9, 6)  NULL,      -- device position when Submit XRF was pressed (NULL when unavailable/denied)
         xrfbd_longitude         DECIMAL(9, 6)  NULL,
         xrfbd_geoaccuracy       INT            NULL,      -- accuracy radius in meters reported by the device
+        xrfbd_att_id            INT            NULL,      -- Attachment.att_id of the optional XRF photo taken at submit
         xrfbd_insertdatetime    DATETIME       NOT NULL CONSTRAINT DF_XrfBatchDetail_insertdatetime DEFAULT (GETDATE()),
         xrfbd_modifieddatetime  DATETIME       NULL,
         CONSTRAINT CK_XrfBatchDetail_result

@@ -136,7 +136,7 @@ namespace EvoAPI.Api.Controllers
                 }
 
                 var outcome = await _xrfRepository.CompleteAsync(
-                    request.XrfbdId, UserId, result, request.Comment, request.Latitude, request.Longitude, request.GeoAccuracy);
+                    request.XrfbdId, UserId, result, request.Comment, request.Latitude, request.Longitude, request.GeoAccuracy, request.AttId);
 
                 switch (outcome.Status)
                 {
@@ -155,6 +155,7 @@ namespace EvoAPI.Api.Controllers
                         result,
                         locationCaptured = outcome.Result!.LocationCaptured,
                         geoAccuracy = request.GeoAccuracy,
+                        attId = request.AttId,
                         hasComment = !string.IsNullOrWhiteSpace(request.Comment)
                     },
                     stopwatch.Elapsed.TotalSeconds.ToString("0.00"));

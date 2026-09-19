@@ -77,6 +77,9 @@ public class XrfLocationDto
     public decimal? Latitude { get; set; }
     public decimal? Longitude { get; set; }
     public int? GeoAccuracy { get; set; }
+    /// Optional photo taken at submit (Attachment row); null when none was attached.
+    public int? AttId { get; set; }
+    public string? AttFilename { get; set; }
 
     // Matched High Volume row; all null when the meter had no High Volume match
     public int? SrId { get; set; }
@@ -121,6 +124,8 @@ public class XrfCompleteRequest
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
     public int? GeoAccuracy { get; set; }
+    /// Attachment id of the photo already uploaded through the attachment service; optional.
+    public int? AttId { get; set; }
 }
 
 public class XrfCompleteResult
