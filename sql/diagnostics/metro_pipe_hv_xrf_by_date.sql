@@ -49,7 +49,15 @@ SELECT
     MAX(xrf.xrfbd_geoaccuracy) AS XrfAccuracyMeters,
     MAX(CASE WHEN xrf.xrfbd_latitude IS NOT NULL
              THEN 'https://maps.google.com/?q=' + CAST(xrf.xrfbd_latitude AS varchar(20)) + ',' + CAST(xrf.xrfbd_longitude AS varchar(20)) END) AS XrfMapLink,
-    MAX(xrf.xrfbd_meternumber) AS XrfListMeterNumber   -- meter as given on the wave list, informational only
+    MAX(xrf.xrfbd_meternumber) AS XrfListMeterNumber,  -- meter as given on the wave list, informational only
+
+    -- Optional XRF photo taken at submit (attachment row; NULL when the tech did not attach one)
+    MAX(xrf.XrfPhotoFilename) AS XrfPhoto,
+    MAX(xrf.XrfPhotoLatitude) AS XrfPhotoLatitude,
+    MAX(xrf.XrfPhotoLongitude) AS XrfPhotoLongitude,
+    MAX(CASE WHEN xrf.xrfbd_att_id IS NOT NULL
+             THEN 'https://www.evotrakker.com/ws/api/file/getattachment?att_id=' + CAST(xrf.xrfbd_att_id AS varchar(50))
+                  + '&att_filename=' + xrf.XrfPhotoFilename END) AS XrfPhotoLink
 FROM
     highvolumebatch hvb
     INNER JOIN highvolumebatchdetail hvbd ON hvb.hvb_id = hvbd.hvb_id
@@ -63,11 +71,16 @@ FROM
         SELECT TOP 1
             d.xrfbd_id, d.xrfbd_team, d.xrfbd_result, d.xrfbd_comment, d.xrfbd_completeddatetime,
             d.xrfbd_latitude, d.xrfbd_longitude, d.xrfbd_geoaccuracy, d.xrfbd_meternumber,
+            d.xrfbd_att_id,
+            xa.att_filename  AS XrfPhotoFilename,
+            xa.att_latitude  AS XrfPhotoLatitude,
+            xa.att_longitude AS XrfPhotoLongitude,
             b.xrfb_filename,
             xu.u_firstname + ' ' + xu.u_lastname AS XrfTech
         FROM xrfbatchdetail d
         INNER JOIN xrfbatch b ON b.xrfb_id = d.xrfb_id
         LEFT JOIN [user] xu ON xu.u_id = d.u_id
+        LEFT JOIN attachment xa ON xa.att_id = d.xrfbd_att_id   -- PK seek, one row at most
         WHERE d.hvbd_id = hvbd.hvbd_id
         ORDER BY d.xrfbd_completeddatetime DESC, d.xrfbd_id DESC
     ) xrf

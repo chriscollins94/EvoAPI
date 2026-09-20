@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using EvoAPI.Api.Middleware;
@@ -303,6 +304,41 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("LoggedIn", policy => policy.RequireAuthenticatedUser());
 });
 
+// Rate limiting for the anonymous public report (PublicReportsController). The route is guarded
+// only by a shared key, so cap guesses two ways:
+//   1. per client: 20 requests per minute, keyed on the address Azure appends to
+//      X-Forwarded-For (see ClientAddress; the first entry is caller-controlled and spoofable);
+//   2. globally: 300 requests per minute across ALL callers on /EvoApi/public, so even a
+//      distributed guesser sharing many addresses is bounded. At 55^8 possible keys that is
+//      well beyond any practical brute force, and the public page needs one request per load.
+// Authenticated routes are untouched: the global limiter returns a no-op partition for them.
+builder.Services.AddMemoryCache();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy(EvoAPI.Api.Controllers.PublicReportsController.RateLimitPolicy, httpContext =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            EvoAPI.Api.Services.ClientAddress.Resolve(httpContext), _ =>
+            new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
+    options.GlobalLimiter = System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+        httpContext.Request.Path.StartsWithSegments("/EvoApi/public")
+            ? System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter("public-all", _ =>
+                new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 300,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0
+                })
+            : System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("authenticated"));
+});
+
 // Add CORS support
 builder.Services.AddCors(options =>
 {
@@ -335,6 +371,7 @@ app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 app.UseCors("EvoPolicy");
+app.UseRateLimiter();
 
 // Add audit middleware
 app.UseMiddleware<AuditMiddleware>();

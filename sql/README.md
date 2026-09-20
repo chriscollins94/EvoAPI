@@ -35,6 +35,7 @@ Scripts written since the last PROD deploy, in run order. Delete a line once it 
 | `migrations/2026-09-12_alter_xrfbatchdetail_premisenumber.sql` | TEST only | Skip on PROD; wipes test waves and re-keys. |
 | `migrations/2026-09-15_xrf_result_add_not_used.sql` | EvoAPI + evotech | Required on ANY database whose XRF tables were created before 2026-09-15 (the create script only gained 'XRF Not Used' that day). Without it every XRF Not Used submit fails. Safe to rerun. |
 | `migrations/2026-09-16_add_laborrate_unique_customer_trade.sql` | EvoWS + EvoUI | Unique index on LaborRate (xccc_id, t_id). Aborts and lists duplicates if any exist; clean them first (see `diagnostics/laborrate_duplicates.sql`). |
+| `migrations/2026-09-19_add_metropipe_public_report_key.sql` | EvoAPI + evotech | Generates and inserts the 8-character key for the public (no-login) Metro Pipe report and PRINTs it; copy it from Messages. Safe to rerun (keeps an existing key). |
 
 Earlier scripts (markup decimal, performance, status-change user tracking, attachment
 geolocation, customer inquiry attack points) each carry their own TEST/PROD status in their
