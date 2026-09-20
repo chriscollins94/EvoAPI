@@ -363,3 +363,6 @@ FodyWeavers.xsd
 # Environment-specific configuration files with sensitive data
 appsettings.*.local.json
 appsettings.secrets.json
+
+# Next.js env files belong to the evotech repo, never here (contain live API tokens)
+.env*
