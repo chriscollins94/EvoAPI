@@ -47,6 +47,13 @@ public interface IAssetRepository
     Task<int> CreateAssetAsync(int lId, SaveAssetRequest request, int? userId);
     Task<bool> UpdateAssetAsync(int asId, SaveAssetRequest request, int? userId);
 
+    // location attachments (Attachment.l_id)
+    Task<List<LocationAttachmentDto>> GetLocationAttachmentsAsync(int lId, bool includeInactive);
+    Task<LocationAttachmentDto?> GetLocationAttachmentAsync(int attId);
+    Task<bool> TagAttachmentToLocationAsync(int attId, int lId);
+    Task<bool> DeactivateLocationAttachmentAsync(int lId, int attId);
+    Task<bool> SetProfileAerialAsync(int lId, int tId, int? attId);
+
     // facts for the resolver
     Task<AssetFactsDto?> GetAssetFactsAsync(int asId);
 }

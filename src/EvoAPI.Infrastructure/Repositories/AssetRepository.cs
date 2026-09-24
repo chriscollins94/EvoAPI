@@ -527,6 +527,72 @@ public class AssetRepository : IAssetRepository
 
     #endregion
 
+    #region location attachments
+
+    private const string LocationAttachmentSelect = @"
+        SELECT
+            a.att_id             AS AttId,
+            a.l_id               AS LId,
+            a.att_filename       AS FileName,
+            a.att_description    AS Description,
+            a.att_extension      AS Extension,
+            a.att_size           AS Size,
+            CASE WHEN LOWER(ISNULL(a.att_extension, '')) IN ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif') THEN 1 ELSE 0 END AS IsImage,
+            ISNULL(a.att_active, 1) AS Active,
+            a.att_submittedby    AS SubmittedBy,
+            a.att_insertdatetime AS InsertDateTime
+        FROM dbo.Attachment a";
+
+    public async Task<List<LocationAttachmentDto>> GetLocationAttachmentsAsync(int lId, bool includeInactive)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        return (await conn.QueryAsync<LocationAttachmentDto>(LocationAttachmentSelect + @"
+            WHERE a.l_id = @LId AND (@IncludeInactive = 1 OR ISNULL(a.att_active, 1) = 1)
+            ORDER BY a.att_id DESC", new { LId = lId, IncludeInactive = includeInactive ? 1 : 0 })).ToList();
+    }
+
+    public async Task<LocationAttachmentDto?> GetLocationAttachmentAsync(int attId)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        return await conn.QueryFirstOrDefaultAsync<LocationAttachmentDto>(LocationAttachmentSelect + " WHERE a.att_id = @AttId", new { AttId = attId });
+    }
+
+    /// <summary>Stamps the location on a row the legacy file service just inserted (it has no location field of its own).</summary>
+    public async Task<bool> TagAttachmentToLocationAsync(int attId, int lId)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        return await conn.ExecuteAsync("UPDATE dbo.Attachment SET l_id = @LId, att_modifieddatetime = GETDATE() WHERE att_id = @AttId AND l_id IS NULL",
+            new { AttId = attId, LId = lId }) > 0;
+    }
+
+    /// <summary>Retires a location file and clears it from any trade profile at the location that used it as the aerial.</summary>
+    public async Task<bool> DeactivateLocationAttachmentAsync(int lId, int attId)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        await conn.OpenAsync();
+        using var tx = conn.BeginTransaction();
+        var n = await conn.ExecuteAsync("UPDATE dbo.Attachment SET att_active = 0, att_modifieddatetime = GETDATE() WHERE att_id = @AttId AND l_id = @LId AND ISNULL(att_active, 1) = 1",
+            new { AttId = attId, LId = lId }, tx);
+        if (n == 0) { tx.Rollback(); return false; }
+        await conn.ExecuteAsync("UPDATE dbo.LocationTradeProfile SET att_id_aerial = NULL, ltp_modifieddatetime = GETDATE() WHERE l_id = @LId AND att_id_aerial = @AttId",
+            new { AttId = attId, LId = lId }, tx);
+        tx.Commit();
+        return true;
+    }
+
+    /// <summary>Sets (or clears) the aerial on a location's trade profile, creating the profile row when it does not exist yet.</summary>
+    public async Task<bool> SetProfileAerialAsync(int lId, int tId, int? attId)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        var n = await conn.ExecuteAsync("UPDATE dbo.LocationTradeProfile SET att_id_aerial = @AttId, ltp_modifieddatetime = GETDATE() WHERE l_id = @LId AND t_id = @TId",
+            new { LId = lId, TId = tId, AttId = attId });
+        if (n == 0)
+            n = await conn.ExecuteAsync("INSERT INTO dbo.LocationTradeProfile (l_id, t_id, att_id_aerial) VALUES (@LId, @TId, @AttId)", new { LId = lId, TId = tId, AttId = attId });
+        return n > 0;
+    }
+
+    #endregion
+
     #region facts for the resolver
 
     public async Task<AssetFactsDto?> GetAssetFactsAsync(int asId)

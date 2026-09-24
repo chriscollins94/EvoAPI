@@ -281,6 +281,25 @@ public class SaveAssetAttributeRequest
 
 #endregion
 
+#region location attachments
+
+/// <summary>A file linked to a location (Attachment.l_id): aerial images, site and access photos.</summary>
+public class LocationAttachmentDto
+{
+    public int AttId { get; set; }
+    public int LId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Extension { get; set; }
+    public int? Size { get; set; }
+    public bool IsImage { get; set; }
+    public bool Active { get; set; }
+    public string? SubmittedBy { get; set; }
+    public DateTime InsertDateTime { get; set; }
+}
+
+#endregion
+
 #region facts for the resolver
 
 /// <summary>What the form resolver needs to know about one unit. Built from Asset + AssetAttribute + lookups.</summary>

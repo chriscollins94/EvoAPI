@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using EvoAPI.Core.Interfaces;
 using EvoAPI.Core.Services;
 using EvoAPI.Shared.Attributes;
@@ -30,11 +31,15 @@ namespace EvoAPI.Api.Controllers
 
         private readonly IAssetRepository _repo;
         private readonly IAuditCriticalService _auditCriticalService;
+        private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _configuration;
 
-        public AssetController(IAssetRepository repo, IAuditService auditService, IAuditCriticalService auditCriticalService)
+        public AssetController(IAssetRepository repo, IAuditService auditService, IAuditCriticalService auditCriticalService, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
             _repo = repo;
             _auditCriticalService = auditCriticalService;
+            _httpClientFactory = httpClientFactory;
+            _configuration = configuration;
             InitializeAuditService(auditService);
         }
 
@@ -461,6 +466,157 @@ namespace EvoAPI.Api.Controllers
                 await LogAuditErrorAsync("AssetSaveProfile", ex, new { lId, tId, request });
                 return Fail<LocationTradeProfileDto>(500, "Failed to save the PM profile");
             }
+        }
+
+        #endregion
+
+        #region location attachments
+
+        private static readonly string[] ImageExtensions = { "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif" };
+        private const long MaxUploadBytes = 25L * 1024 * 1024;
+
+        [HttpGet("/EvoApi/locations/{lId:int}/attachments")]
+        public async Task<ActionResult<ApiResponse<List<LocationAttachmentDto>>>> GetLocationAttachments(int lId, [FromQuery] bool includeInactive = false)
+        {
+            try
+            {
+                var rows = await _repo.GetLocationAttachmentsAsync(lId, includeInactive);
+                return Ok(Ok(rows, $"Retrieved {rows.Count} location files"));
+            }
+            catch (Exception ex)
+            {
+                await LogAuditErrorAsync("AssetGetLocationAttachments", ex, new { lId });
+                return Fail<List<LocationAttachmentDto>>(500, "Failed to retrieve the location's files");
+            }
+        }
+
+        /// <summary>
+        /// Uploads one file for a location. The bytes go to the legacy file service (same storage, image resize
+        /// and EXIF handling as every other attachment); the new row is then stamped with the location. With
+        /// aerialForTId the file also becomes the aerial image of that trade's profile at the location.
+        /// </summary>
+        [HttpPost("/EvoApi/locations/{lId:int}/attachments")]
+        [RequestSizeLimit(MaxUploadBytes + 1024 * 1024)]
+        public async Task<ActionResult<ApiResponse<LocationAttachmentDto>>> UploadLocationAttachment(int lId, IFormFile? file, [FromForm] string? description, [FromQuery] int? aerialForTId)
+        {
+            if (file == null || file.Length == 0) return Fail<LocationAttachmentDto>(400, "Choose a file to upload");
+            if (file.Length > MaxUploadBytes) return Fail<LocationAttachmentDto>(400, "Files are limited to 25 MB");
+            var extension = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
+            if (aerialForTId is > 0 && !ImageExtensions.Contains(extension)) return Fail<LocationAttachmentDto>(400, "The aerial must be an image (jpg, png, gif, bmp, webp or heic)");
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                if (!await _repo.LocationExistsAsync(lId)) return Fail<LocationAttachmentDto>(404, "Location not found");
+
+                var attId = await ForwardToFileServiceAsync(file, description);
+                if (attId == null) return Fail<LocationAttachmentDto>(502, "The file service did not accept the upload");
+
+                if (!await _repo.TagAttachmentToLocationAsync(attId.Value, lId))
+                    return Fail<LocationAttachmentDto>(500, "The file was stored but could not be linked to the location");
+
+                if (aerialForTId is > 0)
+                    await _repo.SetProfileAerialAsync(lId, aerialForTId.Value, attId.Value);
+
+                var saved = (await _repo.GetLocationAttachmentAsync(attId.Value))!;
+                await LogAuditAsync("AssetUploadLocationAttachment", new { lId, attId, file.FileName, file.Length, aerialForTId, ms = stopwatch.ElapsedMilliseconds });
+                return Ok(Ok(saved, aerialForTId is > 0 ? "Aerial image uploaded" : "File uploaded"));
+            }
+            catch (Exception ex)
+            {
+                await LogAuditErrorAsync("AssetUploadLocationAttachment", ex, new { lId, file.FileName, aerialForTId });
+                return Fail<LocationAttachmentDto>(500, "Failed to upload the file");
+            }
+        }
+
+        [HttpDelete("/EvoApi/locations/{lId:int}/attachments/{attId:int}")]
+        public async Task<ActionResult<ApiResponse<bool>>> DeactivateLocationAttachment(int lId, int attId)
+        {
+            try
+            {
+                var ok = await _repo.DeactivateLocationAttachmentAsync(lId, attId);
+                if (!ok) return Fail<bool>(404, "File not found at this location");
+                await LogAuditAsync("AssetDeactivateLocationAttachment", new { lId, attId });
+                return Ok(Ok(true, "File removed"));
+            }
+            catch (Exception ex)
+            {
+                await LogAuditErrorAsync("AssetDeactivateLocationAttachment", ex, new { lId, attId });
+                return Fail<bool>(500, "Failed to remove the file");
+            }
+        }
+
+        [HttpPut("/EvoApi/locations/{lId:int}/trade-profiles/{tId:int}/aerial")]
+        public async Task<ActionResult<ApiResponse<bool>>> SetProfileAerial(int lId, int tId, [FromBody] SetAerialRequest request)
+        {
+            try
+            {
+                if (request.AttId is > 0)
+                {
+                    var att = await _repo.GetLocationAttachmentAsync(request.AttId.Value);
+                    if (att == null || att.LId != lId) return Fail<bool>(400, "That file does not belong to this location");
+                }
+                if (!await _repo.LocationExistsAsync(lId)) return Fail<bool>(404, "Location not found");
+                await _repo.SetProfileAerialAsync(lId, tId, request.AttId is > 0 ? request.AttId : null);
+                await LogAuditAsync("AssetSetProfileAerial", new { lId, tId, request.AttId });
+                return Ok(Ok(true, request.AttId is > 0 ? "Aerial image set" : "Aerial image cleared"));
+            }
+            catch (Exception ex)
+            {
+                await LogAuditErrorAsync("AssetSetProfileAerial", ex, new { lId, tId, request.AttId });
+                return Fail<bool>(500, "Failed to update the aerial image");
+            }
+        }
+
+        /// <summary>Sends the file to the legacy ProcessAttachments endpoint and returns the new att_id (same path the employee-attachment upload uses).</summary>
+        private async Task<int?> ForwardToFileServiceAsync(IFormFile file, string? description)
+        {
+            // Test / Local / Production configs hold a ${EVOWS_BASE_URL} placeholder that Program.cs only resolves when the
+            // environment variable is set; when it is not (a local run), fall back to the local EvoWS address.
+            var configured = _configuration["EvoWS:BaseUrl"];
+            var baseUrl = (string.IsNullOrWhiteSpace(configured) || configured.Contains("${") || !Uri.IsWellFormedUriString(configured, UriKind.Absolute)
+                ? "https://localhost:44307" : configured).TrimEnd('/');
+            using var form = new MultipartFormDataContent();
+            var content = new StreamContent(file.OpenReadStream());
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
+            form.Add(content, "file1", file.FileName);
+            form.Add(new StringContent(UserId.ToString()), "u_id_submittedby");
+            form.Add(new StringContent(UserFullName), "submittedby");
+            form.Add(new StringContent(string.IsNullOrWhiteSpace(description) ? file.FileName : description.Trim()), "Description");
+            form.Add(new StringContent("0"), "sr_id");   // not tied to a service request
+
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromMinutes(3);
+            HttpResponseMessage response;
+            try
+            {
+                response = await client.PostAsync($"{baseUrl}/ws/api/file/ProcessAttachments", form);
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException)
+            {
+                await LogAuditAsync("AssetUploadLocationAttachment", new { stage = "fileservice-unreachable", baseUrl, error = ex.Message });
+                return null;   // reported to the caller as 502
+            }
+            using var _ = response;
+            var body = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                await LogAuditAsync("AssetUploadLocationAttachment", new { stage = "fileservice", status = (int)response.StatusCode, body = body.Length > 500 ? body[..500] : body });
+                return null;
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("att_id", out var el) && int.TryParse(el.GetRawText().Trim('"'), out var attId) && attId > 0)
+                    return attId;
+            }
+            catch (JsonException) { }
+            await LogAuditAsync("AssetUploadLocationAttachment", new { stage = "parse", body = body.Length > 500 ? body[..500] : body });
+            return null;
+        }
+
+        public class SetAerialRequest
+        {
+            public int? AttId { get; set; }
         }
 
         #endregion
