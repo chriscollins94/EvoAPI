@@ -876,7 +876,8 @@ public class DataService : IDataService
                     p_order as [Order],
                     p_color as Color,
                     p_arrivaltimeinhours as ArrivalTimeInHours,
-                    p_attack as Attack
+                    p_attack as Attack,
+                    p_allowpreventative as AllowPreventative
                 FROM Priority
                 ORDER BY p_order, p_priority";
 
@@ -925,6 +926,7 @@ public class DataService : IDataService
                     p_color = @Color,
                     p_arrivaltimeinhours = @ArrivalTimeInHours,
                     p_attack = @Attack,
+                    p_allowpreventative = @AllowPreventative,
                     p_modifieddatetime = GETDATE()
                 WHERE p_id = @Id";
 
@@ -935,7 +937,8 @@ public class DataService : IDataService
                 { "@Order", request.Order ?? (object)DBNull.Value },
                 { "@Color", request.Color ?? (object)DBNull.Value },
                 { "@ArrivalTimeInHours", request.ArrivalTimeInHours ?? (object)DBNull.Value },
-                { "@Attack", request.Attack }
+                { "@Attack", request.Attack },
+                { "@AllowPreventative", request.AllowPreventative }
             };
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
@@ -9918,7 +9921,8 @@ order by sr.sr_insertdatetime
                     p.p_priority,
                     ISNULL(xcp.xcp_priority, '') AS xcp_priority,
                     ISNULL(xcp.xcp_arrivaltimeinhours, p.p_arrivaltimeinhours) AS xcp_arrivaltimeinhours,
-                    ISNULL(p.p_order, 999) AS p_order
+                    ISNULL(p.p_order, 999) AS p_order,
+                    p.p_allowpreventative
                 FROM Priority p
                 LEFT JOIN xrefCompanyPriority xcp ON p.p_id = xcp.p_id AND xcp.c_id = @companyId
                 ORDER BY ISNULL(p.p_order, 999)";
@@ -9942,7 +9946,8 @@ order by sr.sr_insertdatetime
                             PriorityName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
                             CompanySpecificName = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
                             ArrivalTimeInHours = reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
-                            PriorityOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6)
+                            PriorityOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                            AllowPreventative = !reader.IsDBNull(7) && reader.GetBoolean(7)
                         });
                     }
                 }
@@ -14299,6 +14304,9 @@ order by sr.sr_insertdatetime
         var srNte = request.SrNte ?? 0m;
         var srTripCharge = request.SrTripChargeWorked ?? 100m;
         var ssId = request.SsId ?? 1;
+        // PM build slice 3: flat-rate tickets (contract-priced PMs) and the PM ticket columns. Everything else stays 'hourly'.
+        var srFlatOrHourly = string.Equals(request.SrFlatOrHourly, "flat", StringComparison.OrdinalIgnoreCase) ? "flat" : "hourly";
+        var srRateFlat = srFlatOrHourly == "flat" ? request.SrRateFlat : null;
 
         int srId;
         int woId;
@@ -14311,26 +14319,29 @@ order by sr.sr_insertdatetime
             using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
             {
                 // 1) Insert ServiceRequest. sr_tripcharge_quote mirrors sr_tripcharge_worked and
-                //    sr_flatorhourly is seeded 'hourly', exactly as the legacy insert does.
+                //    sr_flatorhourly is 'hourly' exactly as the legacy insert does, unless a PM ticket asks for 'flat'
+                //    (sql/migrations/2026-09-24_create_pm_ticket_tables.sql adds svt_id, fr_id, sr_pmunitcount, sr_servicebydate).
                 const string insertSrSql = @"
                     INSERT INTO ServiceRequest
                         (xccc_id, l_id, t_id, ss_id, p_id, lrt_id, sr_summary, sr_requestnumber, sr_ivrrequestnumber,
-                         sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly,
+                         sr_callnote, sr_officenote, sr_nte, sr_tripcharge_worked, sr_tripcharge_quote, sr_flatorhourly, sr_rateflat,
                          sr_requiresprearrivalcall, sr_shiftdifferential, u_id_createdby,
                          sr_methodofrequest, sr_requestor_name, sr_requestor_email, sr_requestor_phone, sr_requestemailtext,
                          sr_portal_url, sr_portal_note, sr_agency,
                          sr_sitecontact_name, sr_sitecontact_phone, sr_sitecontact_email,
                          sr_porequired, sr_poprovider_name, sr_poprovider_phone, sr_poprovider_email,
-                         sr_invoice_email, sr_quote_email)
+                         sr_invoice_email, sr_quote_email,
+                         svt_id, fr_id, sr_pmunitcount, sr_servicebydate)
                     VALUES
                         (@xccc_id, @l_id, @t_id, @ss_id, @p_id, @lrt_id, @sr_summary, @sr_requestnumber, @sr_ivrrequestnumber,
-                         @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, 'hourly',
+                         @sr_callnote, @sr_officenote, @sr_nte, @sr_tripcharge_worked, @sr_tripcharge_worked, @sr_flatorhourly, @sr_rateflat,
                          @sr_requiresprearrivalcall, @sr_shiftdifferential, @u_id_createdby,
                          @sr_methodofrequest, @sr_requestor_name, @sr_requestor_email, @sr_requestor_phone, @sr_requestemailtext,
                          @sr_portal_url, @sr_portal_note, @sr_agency,
                          @sr_sitecontact_name, @sr_sitecontact_phone, @sr_sitecontact_email,
                          @sr_porequired, @sr_poprovider_name, @sr_poprovider_phone, @sr_poprovider_email,
-                         @sr_invoice_email, @sr_quote_email);
+                         @sr_invoice_email, @sr_quote_email,
+                         @svt_id, @fr_id, @sr_pmunitcount, @sr_servicebydate);
                     SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
                 using (var command = new SqlCommand(insertSrSql, connection, transaction))
@@ -14368,6 +14379,12 @@ order by sr.sr_insertdatetime
                     command.Parameters.Add("@sr_poprovider_email", SqlDbType.VarChar, 150).Value = (object?)srPoProviderEmail ?? DBNull.Value;
                     command.Parameters.Add("@sr_invoice_email", SqlDbType.VarChar, 150).Value = (object?)srInvoiceEmail ?? DBNull.Value;
                     command.Parameters.Add("@sr_quote_email", SqlDbType.VarChar, 150).Value = (object?)srQuoteEmail ?? DBNull.Value;
+                    command.Parameters.Add("@sr_flatorhourly", SqlDbType.VarChar, 50).Value = srFlatOrHourly;
+                    command.Parameters.Add("@sr_rateflat", SqlDbType.Decimal).Value = (object?)srRateFlat ?? DBNull.Value;
+                    command.Parameters.Add("@svt_id", SqlDbType.Int).Value = (object?)request.SvtId ?? DBNull.Value;
+                    command.Parameters.Add("@fr_id", SqlDbType.Int).Value = (object?)request.FrId ?? DBNull.Value;
+                    command.Parameters.Add("@sr_pmunitcount", SqlDbType.Int).Value = (object?)request.SrPmUnitCount ?? DBNull.Value;
+                    command.Parameters.Add("@sr_servicebydate", SqlDbType.Date).Value = (object?)request.SrServiceByDate?.Date ?? DBNull.Value;
 
                     var result = await command.ExecuteScalarAsync();
                     if (result == null || result == DBNull.Value)

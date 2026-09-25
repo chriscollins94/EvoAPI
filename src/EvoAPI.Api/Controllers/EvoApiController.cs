@@ -3967,7 +3967,8 @@ public class EvoApiController : BaseController
                 Order = row["Order"] != DBNull.Value ? Convert.ToInt32(row["Order"]) : null,
                 Color = CleanString(row["Color"]),
                 ArrivalTimeInHours = row["ArrivalTimeInHours"] != DBNull.Value ? Convert.ToDecimal(row["ArrivalTimeInHours"]) : null,
-                Attack = Convert.ToInt32(row["Attack"])
+                Attack = Convert.ToInt32(row["Attack"]),
+                AllowPreventative = dataTable.Columns.Contains("AllowPreventative") && row["AllowPreventative"] != DBNull.Value && Convert.ToBoolean(row["AllowPreventative"])
             };
 
             priorities.Add(priority);

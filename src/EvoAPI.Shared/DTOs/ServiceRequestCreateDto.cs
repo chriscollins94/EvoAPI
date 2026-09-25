@@ -69,6 +69,26 @@ public class CreateServiceRequestRequest
 
     /// <summary>Email to submit the quote to (defaulted from the company's 'Quote' contact, editable).</summary>
     public string? SrQuoteEmail { get; set; }
+
+    // ---- Preventative Maintenance (PM build slice 3). All optional; the reactionary path sends none of them. ----
+
+    /// <summary>ServiceType.svt_id (Reactionary / Preventative / Proposal / Administrative). Null is read as Reactionary.</summary>
+    public int? SvtId { get; set; }
+
+    /// <summary>FormRule.fr_id in effect when a Preventative ticket was created.</summary>
+    public int? FrId { get; set; }
+
+    /// <summary>Units to service on a Preventative ticket (sr_pmunitcount).</summary>
+    public int? SrPmUnitCount { get; set; }
+
+    /// <summary>Customer's service-by date (sr_servicebydate, date only). Not sr_datedue, which is the invoice due date.</summary>
+    public DateTime? SrServiceByDate { get; set; }
+
+    /// <summary>'hourly' (default, legacy behaviour) or 'flat'. Contract-priced PM tickets are stored flat with the total in SrRateFlat.</summary>
+    public string? SrFlatOrHourly { get; set; }
+
+    /// <summary>Flat amount for a flat-rate ticket (sr_rateflat). The legacy invoice turns it into a "Flat Rate Applied" line.</summary>
+    public decimal? SrRateFlat { get; set; }
 }
 
 public class CreateServiceRequestResponse

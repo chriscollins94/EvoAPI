@@ -10,6 +10,8 @@ public class PriorityDto
     public string? Color { get; set; }
     public decimal? ArrivalTimeInHours { get; set; }
     public int Attack { get; set; }
+    /// <summary>Preventative (PM) tickets may only use priorities with this flag (PM build slice 3).</summary>
+    public bool AllowPreventative { get; set; }
 }
 
 public class UpdatePriorityRequest
@@ -20,4 +22,5 @@ public class UpdatePriorityRequest
     public string? Color { get; set; }
     public decimal? ArrivalTimeInHours { get; set; }
     public int Attack { get; set; }
+    public bool AllowPreventative { get; set; }
 }

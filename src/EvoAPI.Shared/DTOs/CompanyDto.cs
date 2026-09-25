@@ -193,6 +193,8 @@ public class CompanyPriorityDto
     public string CompanySpecificName { get; set; } = string.Empty;
     public decimal ArrivalTimeInHours { get; set; }
     public int PriorityOrder { get; set; }
+    /// <summary>Preventative (PM) tickets may only use priorities with this flag (PM build slice 3).</summary>
+    public bool AllowPreventative { get; set; }
 }
 
 public class UpdateCompanyPriorityRequest

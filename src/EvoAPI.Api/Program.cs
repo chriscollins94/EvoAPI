@@ -247,6 +247,8 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.IOfficePerformanceRepository,
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IFormRepository,
     EvoAPI.Infrastructure.Repositories.FormRepository>();
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IAssetRepository, EvoAPI.Infrastructure.Repositories.AssetRepository>();
+// PM ticket entry (PM build slice 3): ServiceType, PM sub-trades per company, first-time check, PMVisit snapshot (PmTicketController)
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPmVisitRepository, EvoAPI.Infrastructure.Repositories.PmVisitRepository>();
 
 // XRF revisits (second trip to High Volume locations, keyed by meter number; XrfController)
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IXrfRepository,

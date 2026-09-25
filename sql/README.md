@@ -37,10 +37,19 @@ Scripts written since the last PROD deploy, in run order. Delete a line once it 
 | `migrations/2026-09-16_add_laborrate_unique_customer_trade.sql` | EvoWS + EvoUI | Unique index on LaborRate (xccc_id, t_id). Aborts and lists duplicates if any exist; clean them first (see `diagnostics/laborrate_duplicates.sql`). |
 | `migrations/2026-09-20_add_attachment_location.sql` | EvoAPI + evotech | Nullable `l_id` on Attachment (+ filtered index) so aerials and site files link to a location. Safe to rerun. |
 | `migrations/2026-09-19_add_metropipe_public_report_key.sql` | EvoAPI + evotech | Generates and inserts the 8-character key for the public (no-login) Metro Pipe report and PRINTs it; copy it from Messages. Safe to rerun (keeps an existing key). |
+| `migrations/2026-09-24_create_pm_ticket_tables.sql` | EvoAPI + evotech | PM workflow slice 3 (ticket entry): ServiceType lookup, ServiceRequest.svt_id / fr_id / sr_pmunitcount / sr_servicebydate, Priority.p_allowpreventative, PMVisit, PMVisitUnit. Safe to rerun. |
 
 Earlier scripts (markup decimal, performance, status-change user tracking, attachment
 geolocation, customer inquiry attack points) each carry their own TEST/PROD status in their
 header comments and in the deploy notes kept with the feature.
+
+## PM workflow (Preventative Maintenance)
+
+- `seed/seed_pm_poc_test_customer.sql` (TEST only) sets up the POC test customer Chris picked on 2026-09-24:
+  23rd Group Facility Services / DELETE - Archwood Meadows (pairing 25, location "Archwood Meadows" 4661).
+  Adds PM - Spring / PM - Fall labor rates, fills the PM terms on the HVAC form rule, loads a price sheet
+  (RTU / Split System tiers, coil cleaner and belt change add-ons), three seasons, and three more rooftop
+  units with filters, belts and attributes. Re-runnable; only NULL rule fields are filled, tiers are replaced.
 
 ## XRF
 
