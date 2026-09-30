@@ -71,6 +71,7 @@ public class FormQuestionDto
     public int? FalId { get; set; }
     public string? AnswerListName { get; set; }
     public string? AnswerListValues { get; set; }
+    public string? AnswerListFailValues { get; set; }
     public string? AnswerValues { get; set; }
     public string? DataType { get; set; }
     public string? Unit { get; set; }
@@ -422,6 +423,24 @@ public class FormPreviewQuestionDto
     public string? Condition { get; set; }
     public string? RepeatKey { get; set; }
     public int? RepeatCount { get; set; }                     // times the question repeats on the named unit (circuits, compressors ...)
+
+    // What a live form needs to render and validate the answer (PM build slice 4a). Copied from the template question.
+    public int Order { get; set; }
+    public int ClatId { get; set; }
+    public string? AnswerListName { get; set; }
+    public string? AnswerListValues { get; set; }               // semicolon separated
+    public string? AnswerListFailValues { get; set; }           // which list values count as an issue (drives "if issue" photos)
+    public string? AnswerValues { get; set; }                   // inline values when there is no named list
+    public string? DataType { get; set; }                       // Text | Number | Decimal | Bool | Date | DateTime | MultiSelect
+    public string? Unit { get; set; }
+    public decimal? Min { get; set; }
+    public decimal? Max { get; set; }
+    public string? CalcFormula { get; set; }
+    public string WritesTo { get; set; } = "Visit";
+    public string? PhotoTiming { get; set; }
+    public string? LinkedCode { get; set; }
+    public string? SkipAnswer { get; set; }
+    public int? SkipToOrder { get; set; }
 }
 
 #endregion

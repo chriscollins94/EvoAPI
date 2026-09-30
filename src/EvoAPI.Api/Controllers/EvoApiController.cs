@@ -3943,7 +3943,8 @@ public class EvoApiController : BaseController
                 Is811Required = dataTable.Columns.Contains("Is811Required") && row["Is811Required"] != DBNull.Value && Convert.ToBoolean(row["Is811Required"]),
                 CollectPaymentOnSite = dataTable.Columns.Contains("CollectPaymentOnSite") && row["CollectPaymentOnSite"] != DBNull.Value && Convert.ToBoolean(row["CollectPaymentOnSite"]),
                 ActionableNote = CleanString(row["ActionableNote"]),
-                InvoiceNumber = dataTable.Columns.Contains("InvoiceNumber") ? CleanString(row["InvoiceNumber"]) : string.Empty
+                InvoiceNumber = dataTable.Columns.Contains("InvoiceNumber") ? CleanString(row["InvoiceNumber"]) : string.Empty,
+                ServiceType = dataTable.Columns.Contains("ServiceType") ? CleanString(row["ServiceType"]) : string.Empty
             };
 
             workOrders.Add(workOrder);

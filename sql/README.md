@@ -38,6 +38,8 @@ Scripts written since the last PROD deploy, in run order. Delete a line once it 
 | `migrations/2026-09-20_add_attachment_location.sql` | EvoAPI + evotech | Nullable `l_id` on Attachment (+ filtered index) so aerials and site files link to a location. Safe to rerun. |
 | `migrations/2026-09-19_add_metropipe_public_report_key.sql` | EvoAPI + evotech | Generates and inserts the 8-character key for the public (no-login) Metro Pipe report and PRINTs it; copy it from Messages. Safe to rerun (keeps an existing key). |
 | `migrations/2026-09-24_create_pm_ticket_tables.sql` | EvoAPI + evotech | PM workflow slice 3 (ticket entry): ServiceType lookup, ServiceRequest.svt_id / fr_id / sr_pmunitcount / sr_servicebydate, Priority.p_allowpreventative, PMVisit, PMVisitUnit. Safe to rerun. |
+| `migrations/2026-09-25_create_pm_visit_answer_table.sql` | EvoAPI + evotech + EvoUI | PM workflow slice 4a (tech visit): PMVisitAnswer. EvoUI ships the legacy tech schedule routing (config.tech.js apiRootEvoApi / evotechRoot + schedule.js). Safe to rerun. |
+| `migrations/2026-09-25_create_pm_visit_finding_table.sql` | EvoAPI + evotech | PM workflow slice 4b (checkout): PMVisitFinding. Safe to rerun. |
 
 Earlier scripts (markup decimal, performance, status-change user tracking, attachment
 geolocation, customer inquiry attack points) each carry their own TEST/PROD status in their

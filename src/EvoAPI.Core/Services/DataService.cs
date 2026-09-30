@@ -292,6 +292,7 @@ public class DataService : IDataService
                         sr.sr_escalated       AS Escalated,
                         ISNULL(sr.sr_schedulelock, 0) AS ScheduleLock,
                         ISNULL(sr.sr_actionablenote, '') AS ActionableNote,
+                        ISNULL(svt.svt_code, '') AS ServiceType,
                         ROW_NUMBER() OVER (
                             PARTITION BY cc.cc_name
                             ORDER BY wo.wo_startdatetime DESC
@@ -313,6 +314,7 @@ public class DataService : IDataService
                     LEFT JOIN role r ON r.r_id = xur.r_id
                     LEFT JOIN Zone z ON u.z_id = z.z_id
                     LEFT JOIN [user] u_createdby ON sr.u_id_createdby = u_createdby.u_id
+                    LEFT JOIN ServiceType svt ON sr.svt_id = svt.svt_id
                     WHERE 
                         (wo.wo_startdatetime BETWEEN DATEADD(DAY, -@numberOfDays, GETDATE()) AND DATEADD(DAY, 180, GETDATE()) or (wo.wo_startdatetime is null AND not s.s_status in ('Rejected', 'Paid', 'Invoiced')))
                         AND c.c_name NOT IN ('Metro Pipe Program')
@@ -346,7 +348,8 @@ public class DataService : IDataService
                     CreatedBy,
                     Escalated,
                     ScheduleLock,
-                    ActionableNote
+                    ActionableNote,
+                    ServiceType
                 FROM RankedOrders
                 ORDER BY CallCenter, Company, Trade, requestnumber;";
 

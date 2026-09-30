@@ -215,6 +215,15 @@ public class PmVisitDto
     public DateTime? ParamsConfirmedDateTime { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime InsertDateTime { get; set; }
+    // tech capture / completion (slices 4a / 4b)
+    public string? Weather { get; set; }
+    public decimal? OutdoorTempF { get; set; }
+    public string? WeatherSource { get; set; }
+    public DateTime? WeatherDateTime { get; set; }
+    public bool? FullScopeCompleted { get; set; }
+    public string? IncompleteReason { get; set; }
+    public bool? CustomerFormCompleted { get; set; }
+    public DateTime? SubmittedDateTime { get; set; }
     public List<PmVisitUnitDto> Units { get; set; } = new();
 }
 

@@ -61,6 +61,7 @@ public class FormRepository : IFormRepository
             q.fal_id           AS FalId,
             al.fal_name        AS AnswerListName,
             al.fal_values      AS AnswerListValues,
+            al.fal_failvalues  AS AnswerListFailValues,
             q.fq_answervalues  AS AnswerValues,
             q.fq_datatype      AS DataType,
             q.fq_unit          AS Unit,

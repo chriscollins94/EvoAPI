@@ -32,7 +32,8 @@ public class WorkOrderDto
     public bool CollectPaymentOnSite { get; set; }
     public string ActionableNote { get; set; } = string.Empty;
     public string InvoiceNumber { get; set; } = string.Empty;
-
+    /// <summary>ServiceType code (Reactionary / Preventative / Proposal / Administrative); empty for tickets created before service types existed. Lets the tech dashboard open a PM visit (PM build slice 4a).</summary>
+    public string ServiceType { get; set; } = string.Empty;
 }
 
 public class ActiveServiceRequestDto

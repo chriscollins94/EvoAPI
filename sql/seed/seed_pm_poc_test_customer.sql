@@ -6,7 +6,7 @@
 --
 -- Loosely follows the mockup story (Temp\PM\mockups: four rooftop units, Fall Heating, contract pricing, coil cleaner):
 --   1. Labor rates for PM - Spring and PM - Fall (copied from the pairing's PM - HVAC rate) so the seasonal sub-trades
---      appear in the Preventative trade list.
+--      appear in the Preventative trade list, and HVAC Repair so the proposal ticket a PM visit creates has a repair trade with a rate.
 --   2. PM terms on the pairing's HVAC form rule: contract pricing, "do not follow NTE", trip charge on a first-time PM,
 --      inclusions, customer form, setpoints and the other parameters, contact. Only NULL columns are filled, so edits
 --      made on the FORM RULES tab survive a re-run.
@@ -46,9 +46,9 @@ BEGIN
     FROM dbo.LaborRate src
     CROSS JOIN dbo.Trade t
     WHERE src.lr_id = @pmHvacRate
-      AND t.t_id_parent = @hvac AND t.t_active = 1 AND t.t_trade IN ('PM - Spring', 'PM - Fall')
+      AND t.t_id_parent = @hvac AND t.t_active = 1 AND t.t_trade IN ('PM - Spring', 'PM - Fall', 'HVAC Repair')   -- HVAC Repair: the trade the proposal ticket from a PM visit goes under (slice 4b)
       AND NOT EXISTS (SELECT 1 FROM dbo.LaborRate x WHERE x.xccc_id = @xccc AND x.t_id = t.t_id);
-    PRINT 'Seasonal PM labor rates added: ' + CAST(@@ROWCOUNT AS VARCHAR(10));
+    PRINT 'PM-related labor rates added (PM - Spring, PM - Fall, HVAC Repair as needed): ' + CAST(@@ROWCOUNT AS VARCHAR(10));
 END;
 
 ------------------------------------------------------------------------------------------------------
@@ -207,7 +207,7 @@ ELSE
     WHERE l_id = @lId AND t_id = @hvac;
 PRINT 'Profile ready.';
 
-SELECT 'labor rates' AS what, COUNT(*) AS n FROM dbo.LaborRate lr JOIN dbo.Trade t ON t.t_id = lr.t_id WHERE lr.xccc_id = @xccc AND t.t_id_parent = @hvac AND t.t_trade LIKE 'PM%'
+SELECT 'HVAC labor rates' AS what, COUNT(*) AS n FROM dbo.LaborRate lr JOIN dbo.Trade t ON t.t_id = lr.t_id WHERE lr.xccc_id = @xccc AND t.t_id_parent = @hvac
 UNION ALL SELECT 'tiers', COUNT(*) FROM dbo.PMRateTier WHERE pmr_id = @pmr
 UNION ALL SELECT 'seasons', COUNT(*) FROM dbo.PMSeason WHERE pmr_id = @pmr
 UNION ALL SELECT 'HVAC units at location', COUNT(*) FROM dbo.Asset s JOIN dbo.AssetCategory c ON c.asc_id = s.asc_id WHERE s.l_id = @lId AND c.t_id = @hvac AND s.as_active = 1;

@@ -108,7 +108,24 @@ public static class FormTemplateResolver
             RepeatKey = q.RepeatKey,
             RepeatCount = !string.IsNullOrWhiteSpace(q.RepeatKey) && facts.RepeatCounts.TryGetValue(q.RepeatKey, out var repeatCount) ? repeatCount : null,
             CustomerEnabled = customerEnabled,
-            Included = true
+            Included = true,
+            // rendering / validation facts for the visit page (slice 4a)
+            Order = q.Order,
+            ClatId = q.ClatId,
+            AnswerListName = q.AnswerListName,
+            AnswerListValues = q.AnswerListValues,
+            AnswerListFailValues = q.AnswerListFailValues,
+            AnswerValues = q.AnswerValues,
+            DataType = q.DataType,
+            Unit = q.Unit,
+            Min = q.Min,
+            Max = q.Max,
+            CalcFormula = q.CalcFormula,
+            WritesTo = q.WritesTo,
+            PhotoTiming = q.PhotoTiming,
+            LinkedCode = q.LinkedCode,
+            SkipAnswer = q.SkipAnswer,
+            SkipToOrder = q.SkipToOrder
         };
 
         // effective requirement / photo rule for this customer

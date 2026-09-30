@@ -249,6 +249,8 @@ builder.Services.AddScoped<EvoAPI.Core.Interfaces.IFormRepository,
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IAssetRepository, EvoAPI.Infrastructure.Repositories.AssetRepository>();
 // PM ticket entry (PM build slice 3): ServiceType, PM sub-trades per company, first-time check, PMVisit snapshot (PmTicketController)
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IPmVisitRepository, EvoAPI.Infrastructure.Repositories.PmVisitRepository>();
+// PM visit weather at check-in (PM build slice 4a): Open-Meteo, no key
+builder.Services.AddHttpClient<EvoAPI.Core.Interfaces.IWeatherService, EvoAPI.Infrastructure.Services.OpenMeteoWeatherService>();
 
 // XRF revisits (second trip to High Volume locations, keyed by meter number; XrfController)
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.IXrfRepository,
