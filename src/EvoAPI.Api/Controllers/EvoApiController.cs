@@ -10734,38 +10734,48 @@ public class EvoApiController : BaseController
                 //
                 // *_modifieddatetime columns are ignored when counting field diffs — they
                 // auto-stamp on every UPDATE and would otherwise mask all single-field updates.
+                //
+                // The 3s window is expressed with DATEADD/BETWEEN, not DATEDIFF(MILLISECOND).
+                // DATEDIFF(MILLISECOND) returns int and overflows (error 535) once two updates
+                // to the same entity are ~24.8 days apart, which made the report fail with
+                // "0 records" on any SR with more than a few weeks of history (found 2026-10-22).
+                //
+                // Candidates and per-field diffs are materialized into temp tables. As CTEs they
+                // were re-evaluated four times (the IN subquery plus both sides of the self-join),
+                // and the OPENJSON diff is the expensive part: ~10s vs ~1.5s on a 700-row SR.
                 const string flipFlopSql = @"
                     CREATE TABLE #FlipFlopSraIds (sra_id BIGINT PRIMARY KEY);
 
-                    ;WITH UpdateCandidates AS (
-                        SELECT a.sra_id, a.sra_insertdatetime, a.entity_name, a.entity_id, a.old_values, a.new_values
-                        FROM dbo.ServiceRequestActivity a
-                        WHERE a.sr_id = @SrId AND a.action = 'U'
-                          AND EXISTS (
-                              SELECT 1 FROM dbo.ServiceRequestActivity b
-                              WHERE b.sr_id = a.sr_id AND b.action = 'U'
-                                AND b.entity_name = a.entity_name
-                                AND ISNULL(b.entity_id, -1) = ISNULL(a.entity_id, -1)
-                                AND b.sra_id <> a.sra_id
-                                AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
-                          )
-                    ),
-                    FieldDiffs AS (
-                        SELECT uc.sra_id, uc.sra_insertdatetime, uc.entity_name, uc.entity_id,
-                               ov.[key] AS field_name,
-                               ov.[value] AS old_val,
-                               nv.[value] AS new_val
-                        FROM UpdateCandidates uc
-                        CROSS APPLY OPENJSON(uc.old_values) ov
-                        CROSS APPLY (SELECT [value] FROM OPENJSON(uc.new_values) WHERE [key] = ov.[key]) nv
-                        WHERE ov.[key] NOT LIKE '%[_]modifieddatetime'
-                          AND ISNULL(ov.[value], N'') <> ISNULL(nv.[value], N'')
-                    ),
-                    SingleFieldUpdates AS (
+                    SELECT a.sra_id, a.sra_insertdatetime, a.entity_name, a.entity_id, a.old_values, a.new_values
+                    INTO #FlipFlopCandidates
+                    FROM dbo.ServiceRequestActivity a
+                    WHERE a.sr_id = @SrId AND a.action = 'U'
+                      AND EXISTS (
+                          SELECT 1 FROM dbo.ServiceRequestActivity b
+                          WHERE b.sr_id = a.sr_id AND b.action = 'U'
+                            AND b.entity_name = a.entity_name
+                            AND ISNULL(b.entity_id, -1) = ISNULL(a.entity_id, -1)
+                            AND b.sra_id <> a.sra_id
+                            AND b.sra_insertdatetime BETWEEN DATEADD(SECOND, -3, a.sra_insertdatetime) AND DATEADD(SECOND, 3, a.sra_insertdatetime)
+                      );
+
+                    SELECT uc.sra_id, uc.sra_insertdatetime, uc.entity_name, uc.entity_id,
+                           d.field_name, d.old_val, d.new_val
+                    INTO #FlipFlopFieldDiffs
+                    FROM #FlipFlopCandidates uc
+                    CROSS APPLY (
+                        SELECT ov.[key] AS field_name, ov.[value] AS old_val, nv.[value] AS new_val
+                        FROM OPENJSON(uc.old_values) ov
+                        INNER JOIN OPENJSON(uc.new_values) nv ON nv.[key] = ov.[key]
+                    ) d
+                    WHERE d.field_name NOT LIKE '%[_]modifieddatetime'
+                      AND ISNULL(d.old_val, N'') <> ISNULL(d.new_val, N'');
+
+                    ;WITH SingleFieldUpdates AS (
                         SELECT fd.sra_id, fd.sra_insertdatetime, fd.entity_name, fd.entity_id,
                                fd.field_name, fd.old_val, fd.new_val
-                        FROM FieldDiffs fd
-                        WHERE fd.sra_id IN (SELECT sra_id FROM FieldDiffs GROUP BY sra_id HAVING COUNT(*) = 1)
+                        FROM #FlipFlopFieldDiffs fd
+                        WHERE fd.sra_id IN (SELECT sra_id FROM #FlipFlopFieldDiffs GROUP BY sra_id HAVING COUNT(*) = 1)
                     )
                     INSERT INTO #FlipFlopSraIds (sra_id)
                     SELECT DISTINCT a.sra_id
@@ -10775,9 +10785,12 @@ public class EvoApiController : BaseController
                        AND ISNULL(a.entity_id, -1) = ISNULL(b.entity_id, -1)
                        AND a.field_name = b.field_name
                        AND a.sra_id <> b.sra_id
-                       AND ABS(DATEDIFF(MILLISECOND, a.sra_insertdatetime, b.sra_insertdatetime)) <= 3000
+                       AND b.sra_insertdatetime BETWEEN DATEADD(SECOND, -3, a.sra_insertdatetime) AND DATEADD(SECOND, 3, a.sra_insertdatetime)
                        AND ISNULL(a.old_val, N'') = ISNULL(b.new_val, N'')
-                       AND ISNULL(a.new_val, N'') = ISNULL(b.old_val, N'');";
+                       AND ISNULL(a.new_val, N'') = ISNULL(b.old_val, N'');
+
+                    DROP TABLE #FlipFlopFieldDiffs;
+                    DROP TABLE #FlipFlopCandidates;";
 
                 using (var flipFlopCmd = new SqlCommand(flipFlopSql, connection))
                 {
