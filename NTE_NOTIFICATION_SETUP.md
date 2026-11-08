@@ -1,220 +1,151 @@
-# NTE Notification Service - Azure Setup Guide
+# NTE Notification Service - Setup, Rollout and Operations
 
-This document covers the **Azure Communication Services (ACS)** setup needed before the NTE notification service can send SMS or email. The code is already wired up in EvoAPI; this guide is what an admin does once in the Azure portal.
+How the NTE alerts are configured, rolled out to prod in stages, and watched. Design decisions and the
+build history are in [NTE_NOTIFICATION_PLAN.md](NTE_NOTIFICATION_PLAN.md).
 
-## Overview
+## What it does
 
-The service sends:
-- **SMS** to the assigned tech when an active service request crosses **75%** of its NTE.
-- **SMS** to the tech **AND email** to the zone email at **100%**.
+Every `NteConfig/ScanIntervalMinutes` (5) the EvoAPI background loop looks at every open service request
+that has an NTE **and a tech checked in right now** (EvoTrakker check-in with no check-out, newer than
+`MaxOpenCheckInHours`). For each one it works out spend to date the way the invoice will (labor to the
+minute, service items with tax and markup, trip charge) and:
 
-It uses **Azure Communication Services** as the single provider for both SMS and email. Configuration (connection string, sender number, sender email, message templates, thresholds) lives in the `ConfigSetting` table — no redeploy needed to tune.
+- **75%** of NTE: texts the checked-in tech to stop and call the office.
+- **100%**: texts the tech and emails the tech's zone (Employee Directory zone, `Zone.z_email`).
 
----
+Only the highest crossed threshold is sent; a job first seen at 137% gets one text, not two. Each
+text / email is sent once per tech (or zone) per threshold per NTE amount; changing the NTE re-arms it.
+A job nobody is checked in on is not scanned at all, so idle, Complete or Invoiced jobs never alert.
+A job already past its NTE alerts the moment someone next checks in.
 
-## 1. Provision the ACS resource
-
-1. In the Azure Portal, **Create a resource → Communication Services**.
-2. Subscription / Resource group: same one EvoAPI lives in.
-3. Resource name: e.g. `evo-acs-prod` (and `evo-acs-test` for the test slot).
-4. Data location: **United States** (must match your compliance posture; cannot be changed later).
-5. Review + Create.
-
-After it deploys:
-
-- Open the resource → **Settings → Keys**.
-- Copy the **Connection string** (Primary). This is the value for `NteConfig/AcsConnectionString` in the `ConfigSetting` table.
-
-> **One resource, both environments.** A single ACS resource (one phone number, one email domain, one connection string) is shared between QA and prod. The same `AcsConnectionString` / `AcsSmsFrom` / `AcsEmailFrom` go into both QA and prod `ConfigSetting` rows. Environment separation is handled by the smoke-test override fields (see §5): QA keeps them populated so all sends route to the engineer; prod keeps them blank so real techs and zones get notified. This works because volume is low and there is a single developer maintaining both environments — if the team grows, revisit (separate resources, or add a code guard that refuses to send in non-prod when the override is empty).
+Texts go through **Azure Communication Services** (resource `evo-acs-prod`, toll-free `+1 888 289 0689`,
+verified). Emails go through the same Office 365 SMTP mailbox as the time-off emails.
 
 ---
 
-## 2. Provision an SMS phone number
+## 1. Config rows (ConfigSetting, `cs_type = 'NteConfig'`)
 
-ACS does not give you a phone number by default — you have to buy one and (for US toll-free) get it verified.
+All read every scan; edit `cs_value` and the next scan picks it up. No redeploy.
 
-1. In the ACS resource, go to **Phone numbers → + Get** (or **Numbers → Buy**).
-2. Country: **United States**.
-3. Number type: **Toll-free** (recommended for A2P) or **Local** (10DLC — requires brand/campaign registration).
-4. Features: tick **SMS - Outbound** at minimum.
-5. Quantity: 1.
-6. Buy. The number appears in E.164 format (e.g. `+18005551234`).
+| Identifier | Purpose | Prod value |
+|---|---|---|
+| `Enabled` | Master switch. Anything but `true` skips the scan. | `false` until step 3 below |
+| `ScanIntervalMinutes` | Loop cadence. | `5` |
+| `Thresholds` | CSV of percents. Email leg fires only at `>= 100`. | `75,100` |
+| `MaxOpenCheckInHours` | Open check-ins older than this are a forgotten check-out: ignored for spend and the SR is not scanned. | `24` (lower to `12` if forgotten check-outs keep alerting the next morning) |
+| `AcsConnectionString` | From the ACS resource, Settings > Keys. Same value as TEST. | set by hand |
+| `AcsSmsFrom` | E.164 sender. | `+18882890689` |
+| `EmailFrom` | Mailbox whose password is in `EmailServer/FromPassword`. | `noreply@evolutionmaintenance.com` |
+| `SmokeTestOverrideMobile` | **Rollout control.** Semicolon list of numbers. When non-empty every text goes here instead of the tech. | phase 1: reviewers; phase 3: blank |
+| `SmokeTestOverrideEmail` | **Rollout control.** Semicolon list of addresses. When non-empty every zone email goes here. | phase 1 and 2: reviewers; phase 3: blank |
+| `EnabledTechIds` | **Rollout control.** Comma list of Employee Directory user ids that may be alerted. Empty = everyone. Techs not listed are skipped with no audit row. | phase 2: a few ids; phase 3: blank |
 
-This E.164 number is the value for `NteConfig/AcsSmsFrom`.
+Templates live in `cs_type = 'NteTemplate'`: `Sms75Body`, `Sms100Body`, `Email100Subject`, `Email100Body`.
+Tokens: `{sr_number}` `{sr_id}` `{percent}` `{threshold}` `{nte}` `{spent}` `{labor}` `{service_items}`
+`{trip_charge}` `{tech_firstname}` `{tech_name}` `{zone}` `{customer}` `{location}`.
 
-### Toll-free verification (TFV) — REQUIRED before sending to US carriers
-
-US carriers silently drop unverified A2P toll-free traffic. You will see "successful" sends in the API but the texts never arrive on real phones.
-
-1. In the ACS resource → **Phone numbers** → click your number → **Toll-free verification**.
-2. Submit the TFV form. You'll need:
-   - Business legal name, address, EIN
-   - Contact email + phone
-   - Use case: "Service request budget alerts to dispatched field technicians"
-   - Sample message: paste the seeded template body for `Sms75Body` from [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql)
-   - Opt-in description: "Recipients are W-2 technicians whose mobile numbers are stored in the company HRIS for operational dispatch. They receive automated alerts only for work orders they are assigned to. STOP/HELP keywords supported."
-   - Opt-out: "Recipients reply STOP. Numbers unsubscribe automatically; tech can be re-opted-in by request to dispatch."
-   - Estimated volume: realistic per-day estimate.
-   - Website URL: company site.
-3. **Lead time: 2–6 weeks.** Plan accordingly. While verification is pending, the override fields below can be used to test.
-
-> Until TFV is approved, only verify message delivery to the **smoke-test override numbers** (see §5). Production tech numbers will not receive anything.
+Optional: `EmailServer/Port` (defaults to 587; Office 365 needs 587, and port 25 is blocked on most networks).
 
 ---
 
-## 3. Set up email sending domain
+## 2. Deploy to prod
 
-Email needs a verified sender domain attached to the ACS resource. Two options:
-
-### Option A — Azure-managed `*.azurecomm.net` subdomain (fast, low cap, fine for smoke testing)
-
-1. In the ACS resource → **Email → Domains → + Connect domain → Azure managed domain**.
-2. Pick the resource group and a name. Azure will create something like `xxxxxxxx.azurecomm.net`.
-3. Click the new domain → **MailFrom addresses**. The default `DoNotReply@<subdomain>.azurecomm.net` is what you'll use.
-4. **Daily send limit: ~100 messages/day**. Acceptable for smoke testing only.
-
-This is the value for `NteConfig/AcsEmailFrom`, e.g. `DoNotReply@xxxxxxxx.azurecomm.net`.
-
-### Option B — Custom domain with SPF/DKIM (production)
-
-1. **Email → Domains → + Connect domain → Custom domain**.
-2. Domain name, e.g. `notify.evo.com` (a subdomain of your company domain — do not use the bare `evo.com`).
-3. Azure shows DNS records to add: a TXT for verification, plus SPF and two DKIM CNAMEs.
-4. Add those records in your DNS provider (Cloudflare / Route 53 / GoDaddy / wherever the company domain is hosted).
-5. Back in Azure click **Verify** for each row. Verification can take from minutes up to ~48 hours depending on TTL.
-6. Once verified, add a **MailFrom address**, e.g. `nte-alerts@notify.evo.com` — that becomes `NteConfig/AcsEmailFrom`.
-
-> **Connect the domain to the Communication Services resource.** A common pitfall: the email domain is a *separate Azure resource* (Email Communication Service). After verifying it, you must explicitly connect it to your main ACS resource via **ACS → Email → Domains → Connect domain**. Until then the SDK will reject sends with `400 Sender domain is not verified`.
+1. Deploy EvoAPI.
+2. Run, in order, on PROD:
+   - `sql/migrations/2026-04-19_create_AuditNTE_table.sql` (table + seed rows, `Enabled = false`)
+   - `sql/migrations/2026-11-01_nte_notification_config_updates.sql` (EmailFrom, MaxOpenCheckInHours, EnabledTechIds, templates)
+3. Set by hand on PROD: `AcsConnectionString` (copy from TEST), `AcsSmsFrom`, and confirm `EmailFrom`.
+4. Run `sql/diagnostics/nte_notification_status.sql`: three EXISTS/gone lines, 10 NteConfig rows, 4 templates.
+5. Confirm the prod App Service has **Always On**. The loop runs inside EvoAPI; without Always On it only
+   runs while something is hitting the API.
 
 ---
 
-## 4. Update `ConfigSetting` rows
+## 3. Rollout phases
 
-The migration script [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql) seeds empty rows for these. Update them with the values from §1–3:
+Size the first scan first: `sql/diagnostics/nte_population_counts.sql` on PROD. The `with_open_checkin`
+column is how many SRs the scan can actually touch (7 on 2026-11-04). Everything else is context.
+
+**Phase 1 - review. Everything goes to the reviewers, no tech or zone is contacted.**
 
 ```sql
-UPDATE ConfigSetting SET cs_value = 'endpoint=https://evo-acs-prod.communication.azure.com/;accesskey=...'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'AcsConnectionString';
-
-UPDATE ConfigSetting SET cs_value = '+18005551234'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'AcsSmsFrom';
-
-UPDATE ConfigSetting SET cs_value = 'DoNotReply@xxxxxxxx.azurecomm.net'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'AcsEmailFrom';
+UPDATE ConfigSetting SET cs_value = '+16155550100;+16155550101' WHERE cs_type = 'NteConfig' AND cs_identifier = 'SmokeTestOverrideMobile';
+UPDATE ConfigSetting SET cs_value = 'you@company.com;other@company.com' WHERE cs_type = 'NteConfig' AND cs_identifier = 'SmokeTestOverrideEmail';
+UPDATE ConfigSetting SET cs_value = 'true' WHERE cs_type = 'NteConfig' AND cs_identifier = 'Enabled';
 ```
 
-Do **not** flip `Enabled` to `true` yet.
+Watch `sql/diagnostics/nte_audit_recent.sql`. Every row shows `an_overridden = 1`, `an_intendedrecipient`
+(the tech's phone / zone email it would have gone to) and `an_recipient` (you). Check the numbers in
+`an_detail` against the SR.
 
----
-
-## 5. Smoke test (without spamming real techs)
-
-The override fields are how this codebase separates QA from prod. While set, **all** SMS goes to the override mobile and **all** zone emails go to the override email — no real tech or zone is contacted, regardless of what's in the service request data.
-
-- **QA**: keep `SmokeTestOverrideMobile` and `SmokeTestOverrideEmail` populated with engineer contacts at all times. `Enabled` can stay `'true'` permanently.
-- **Prod**: keep both override fields blank. Real techs and zones are the only recipients.
-
-Before enabling the live path in prod, do a one-time smoke pass with the override fields populated:
+**Phase 2 - a few techs for real, emails still to the reviewers.**
 
 ```sql
-UPDATE ConfigSetting SET cs_value = '+15555550100'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'SmokeTestOverrideMobile';
-
-UPDATE ConfigSetting SET cs_value = 'you@yourcompany.com'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'SmokeTestOverrideEmail';
-
-UPDATE ConfigSetting SET cs_value = 'true'
-  WHERE cs_type = 'NteConfig' AND cs_identifier = 'Enabled';
+UPDATE ConfigSetting SET cs_value = '163,9' WHERE cs_type = 'NteConfig' AND cs_identifier = 'EnabledTechIds';   -- Employee Directory ids
+UPDATE ConfigSetting SET cs_value = '' WHERE cs_type = 'NteConfig' AND cs_identifier = 'SmokeTestOverrideMobile';
 ```
 
-Trigger a single scan immediately (admin JWT required):
+Only listed techs are texted; nobody else gets a row, so they alert normally later. Leave
+`SmokeTestOverrideEmail` set if the office is not ready for zone emails yet.
 
-```bash
-curl -X POST https://evotest.azurewebsites.net/EvoApi/nte/run-once \
-     -H "Authorization: Bearer <admin-jwt>"
-```
-
-The current implementation uses [StubNteSpendCalculator.cs](src/EvoAPI.Infrastructure/Services/StubNteSpendCalculator.cs), which assigns each active service request a deterministic percent (0 / 50 / 76 / 101) based on `sr_id`. So one scan should produce visible activity:
-
-- SR with `sr_id % 4 == 2` → SMS to override mobile (76% threshold).
-- SR with `sr_id % 4 == 3` → SMS + email to overrides (101% threshold, both 75 and 100 fire).
-
-Verify in the database:
+**Phase 3 - everyone. Run the cutover script at the same time.**
 
 ```sql
-SELECT TOP 50 nl_id, nl_type, nl_key, nl_entity_id, nl_channel,
-       nl_recipient, nl_send_status, nl_send_error, nl_insertdatetime
-FROM dbo.NotificationLog
-ORDER BY nl_id DESC;
+UPDATE ConfigSetting SET cs_value = '' WHERE cs_type = 'NteConfig' AND cs_identifier IN ('EnabledTechIds', 'SmokeTestOverrideMobile', 'SmokeTestOverrideEmail');
 ```
 
-Re-run `POST /EvoApi/nte/run-once` — no new rows should appear (dedup via the unique constraint).
+then run `sql/migrations/2026-11-07_nte_cutover_mark_reviewed.sql` **once, by hand, on PROD**. It marks the
+rows that were rerouted during phases 1 and 2 as `Reviewed`. Without it, a tech checking in on one of
+those SRs would never be warned, because the dedup row says the alert was already sent.
 
-When you're done smoke-testing **in prod**, clear the override fields and re-enable. In QA, leave the override fields set permanently so you can keep `Enabled='true'` without ever touching real users.
-
-> **Operational checklist:** any time you edit `ConfigSetting` for the NTE service in QA, double-check that `SmokeTestOverrideMobile` and `SmokeTestOverrideEmail` are still non-empty before walking away. They are the only thing keeping a QA scan from texting prod techs (since both environments share the same ACS resource and connection string).
-
----
-
-## 6. Going live in prod
-
-1. Confirm TFV approval email from Microsoft (or the equivalent for 10DLC).
-2. From the QA environment (overrides still populated), send a final test message to confirm delivery reaches a real US mobile.
-3. Replace `StubNteSpendCalculator` with the real spend implementation (see plan file). Until that ships, enabling in prod will fire alerts based on the stub's deterministic percent — **not safe for production**.
-4. In **prod's** `ConfigSetting`, confirm the override fields are blank:
-   ```sql
-   UPDATE ConfigSetting SET cs_value = ''
-     WHERE cs_type = 'NteConfig'
-       AND cs_identifier IN ('SmokeTestOverrideMobile', 'SmokeTestOverrideEmail');
-   ```
-5. Set `Enabled='true'` in prod. The background loop scans every `NteConfig/ScanIntervalMinutes` minutes (default 15).
-6. **Do not change** the QA overrides — they stay populated forever so QA can keep `Enabled='true'` safely.
+**TEST stays in phase 1 forever.** Both override rows populated, `Enabled = true`. TEST shares the ACS
+number and the SMTP mailbox with PROD; the overrides are the only thing keeping a TEST scan from texting
+a real tech. Any time you edit NteConfig on TEST, check they are still non-empty before walking away.
 
 ---
 
-## 7. Tuning without a redeploy
+## 4. Watching it
 
-Everything in `cs_type IN ('NteConfig', 'NteTemplate')` is read on each scan. Edit the `cs_value` and the next iteration picks it up. Notable knobs:
-
-| Identifier | Purpose |
+| Script | Shows |
 |---|---|
-| `NteConfig/Enabled` | Master kill-switch. `false` skips the entire scan. |
-| `NteConfig/ScanIntervalMinutes` | How often the loop runs. |
-| `NteConfig/Thresholds` | CSV of percent triggers, e.g. `75,100` or `50,75,90,100`. The email leg fires only at thresholds `>= 100`. |
-| `NteConfig/AcsConnectionString` | Rotate keys here. The SDK client is cached and rebuilds on connection-string change. |
-| `NteConfig/SmokeTestOverrideMobile` / `SmokeTestOverrideEmail` | Re-enable any time you need to re-test in prod safely. |
-| `NteTemplate/Sms75Body` etc. | Edit message wording. Tokens: `{sr_number}`, `{sr_id}`, `{percent}`, `{threshold}`, `{nte}`, `{spent}`, `{tech_firstname}`, `{tech_name}`, `{zone}`. |
+| `sql/diagnostics/nte_notification_status.sql` | Migrations applied, all config values (connection string masked), last 50 audit rows. |
+| `sql/diagnostics/nte_audit_recent.sql` | Last 100 texts / emails with who, where (intended and actual), status, attempts, message, error; 30-day totals. |
+| `sql/diagnostics/nte_recipients.sql` | Which (SR, checked-in tech) rows the next scan will consider. |
+| `sql/diagnostics/nte_spend_validation.sql` | The spend arithmetic against invoiced SRs. |
+| `sql/diagnostics/nte_population_counts.sql` | Population sizing by activity and status. |
+
+`dbo.AuditNTE` is both the audit trail and the dedup lock. Statuses: `Sending` (in flight), `Sent`,
+`Failed` (retried next scan; `an_attempts` counts, earlier errors kept in `an_errormessage`), `Skipped`
+(no phone, no zone, superseded by the 100% alert; reason in `an_errormessage`), `Reviewed` (released by
+the cutover script). Rows stuck in `Sending` for 15 minutes are marked `Failed` at the next scan start.
+
+Manual scan (admin JWT): `POST /EvoApi/nte/run-once`.
 
 ---
 
-## 8. Costs (approximate, US, as of writing)
-
-- **SMS toll-free outbound (US):** ~$0.0075 per segment + ~$2/month per number.
-- **Email:** ~$0.00025 per email, plus ~$0.0008 per MB of payload. Custom domain has no monthly fee; Azure-managed subdomain is free with the per-message rate.
-- **TFV one-time fee:** none from Microsoft, but carriers may impose surcharges per message once verified.
-
-Verify current pricing on the [Azure Communication Services pricing page](https://azure.microsoft.com/pricing/details/communication-services/) before committing — these numbers move.
-
----
-
-## 9. Common failure modes
+## 5. Failure modes
 
 | Symptom | Likely cause |
 |---|---|
-| `RequestFailedException: 401 Unauthorized` | `AcsConnectionString` is wrong or the access key was rotated. |
-| `400 Invalid 'from' phone number` | `AcsSmsFrom` is not E.164, or the number has not been provisioned for outbound SMS. |
-| `400 Sender domain is not verified` | Email domain is verified but not connected to the ACS resource (see §3 callout). |
-| API returns "Sent" but no SMS arrives on US mobiles | Toll-free verification not yet approved. |
-| `NotificationLog` rows show `nl_send_status='Skipped'` with `NoMobile` | Tech `u_phonemobile` is empty in the user table. |
-| Background service starts but never sends | `NteConfig/Enabled` is not `'true'` (case-sensitive string compare). |
+| Email rows `Failed` with "SMTP send timed out after 60s" | Outbound SMTP port blocked. Default is 587; set `EmailServer/Port` if the network needs something else. |
+| Email rows `Failed` with an authentication error | `EmailFrom` is not the mailbox whose password is in `EmailServer/FromPassword`. |
+| SMS `Failed` with `401 Unauthorized` | `AcsConnectionString` wrong or key rotated. |
+| SMS `Failed` with `400 Invalid 'from' phone number` | `AcsSmsFrom` not E.164 or not provisioned for outbound SMS. |
+| SMS `Sent` but nothing arrives on a tech's phone | Carrier filtering; toll-free verification is approved, so check the number in the Employee Directory. |
+| `Skipped` "has no Evo Cell or Personal Cell on file" | Fill `u_phonemobile` (Evo Cell) in the Employee Directory. Raising or lowering the NTE re-arms the alert. |
+| `Skipped` "has no zone" / "Zone has no email address" | Employee Directory zone assignment or `Zone.z_email`. |
+| Loop runs, nothing ever sent | `Enabled` not `true`; or nobody is checked in on an SR with an NTE (see `nte_recipients.sql`); or `EnabledTechIds` excludes them. |
+| A tech says they were not warned about an SR you can see is past NTE | They were not checked in when it crossed; it alerts at their next check-in. Or the row is `Sent` from the review period and the cutover script was not run. |
 
 ---
 
 ## Reference
 
-- Migration script: [sql/migrations/2026-04-19_create_NotificationLog_table.sql](sql/migrations/2026-04-19_create_NotificationLog_table.sql)
+- Migrations: `sql/migrations/2026-04-19_create_AuditNTE_table.sql`, `sql/migrations/2026-11-01_nte_notification_config_updates.sql`, `sql/migrations/2026-11-07_nte_cutover_mark_reviewed.sql` (manual)
 - Orchestrator: [NteNotificationService.cs](src/EvoAPI.Infrastructure/Services/NteNotificationService.cs)
+- Recipient query: [NteQueryRepository.cs](src/EvoAPI.Infrastructure/Repositories/NteQueryRepository.cs)
+- Spend: [SqlNteSpendCalculator.cs](src/EvoAPI.Infrastructure/Services/SqlNteSpendCalculator.cs)
+- Audit / dedup: [AuditNteRepository.cs](src/EvoAPI.Infrastructure/Repositories/AuditNteRepository.cs)
 - Background loop: [NteNotificationBackgroundService.cs](src/EvoAPI.Infrastructure/Services/NteNotificationBackgroundService.cs)
-- ACS SMS wrapper: [AcsSmsService.cs](src/EvoAPI.Infrastructure/Services/AcsSmsService.cs)
-- ACS Email wrapper: [AcsEmailService.cs](src/EvoAPI.Infrastructure/Services/AcsEmailService.cs)
-- Admin trigger endpoint: [NteController.cs](src/EvoAPI.Api/Controllers/NteController.cs) — `POST /EvoApi/nte/run-once`
+- SMS: [AcsSmsService.cs](src/EvoAPI.Infrastructure/Services/AcsSmsService.cs); email: [SmtpEmailService.cs](src/EvoAPI.Infrastructure/Services/SmtpEmailService.cs)
+- Admin trigger: [NteController.cs](src/EvoAPI.Api/Controllers/NteController.cs)

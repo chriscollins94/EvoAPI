@@ -1,49 +1,75 @@
--- Generic notification log. NTE is the first consumer; future notification types
--- (escalations, password expiry warnings, schedule reminders, etc.) reuse the same table.
+-- NTE notification audit + control table. One row per (service request, channel, dedup key).
+-- Ships with: EvoAPI. Idempotent. Run on TEST first, on PROD with the EvoAPI deploy, before
+-- sql/migrations/2026-11-01_nte_notification_config_updates.sql.
 --
--- Dedup is enforced by the unique constraint on
--- (nl_type, nl_key, nl_entity_type, nl_entity_id, nl_channel).
--- Insert with status 'Sending' BEFORE the send, then update to 'Sent' / 'Failed'
--- so a crash between send and log cannot double-send.
+-- Shaped like dbo.Audit (an_ prefix, identity key, GETDATE() insert time, description / detail /
+-- error / servername) plus what the office needs to see for each text or email: who it was about,
+-- where it was meant to go, where it actually went, the message, the spend numbers, and the outcome.
+--
+-- Dedup: unique (sr_id, an_channel, an_key). The scan inserts the row as 'Sending' BEFORE the send,
+-- then updates it to 'Sent' / 'Failed', so a crash between send and log cannot double-send.
+-- A retry reuses the row: an_attempts goes up, the earlier error text is kept behind the new one.
+--
+-- History: this table was first created on TEST as dbo.NotificationLog (nl_ columns) during the
+-- 2026-11-01 smoke tests. PROD never had that table. The DROP below removes the TEST copy (six smoke
+-- rows, nothing to keep) so the same script yields the same table in both environments.
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'NotificationLog')
+IF OBJECT_ID('dbo.NotificationLog') IS NOT NULL
+    DROP TABLE dbo.NotificationLog;
+GO
+
+IF OBJECT_ID('dbo.AuditNTE') IS NULL
 BEGIN
-    CREATE TABLE dbo.NotificationLog (
-        nl_id              INT IDENTITY(1,1) PRIMARY KEY,
-        nl_type            NVARCHAR(100) NOT NULL,        -- e.g. 'NteThresholdCrossed'
-        nl_key             NVARCHAR(100) NULL,            -- type-specific dedup key, e.g. '75' / '100'
-        nl_entity_type     NVARCHAR(50)  NULL,            -- e.g. 'ServiceRequest', 'WorkOrder', 'User'
-        nl_entity_id       INT           NULL,            -- the related entity id
-        nl_channel         NVARCHAR(20)  NOT NULL,        -- 'Sms' | 'Email'
-        nl_recipient       NVARCHAR(500) NOT NULL,        -- phone number or email actually sent to
-        nl_subject         NVARCHAR(500) NULL,            -- email subject (null for SMS)
-        nl_body            NVARCHAR(MAX) NULL,            -- rendered message body
-        nl_send_status     NVARCHAR(20)  NOT NULL,        -- 'Sending' | 'Sent' | 'Failed' | 'Skipped'
-        nl_send_error      NVARCHAR(MAX) NULL,
-        nl_metadata        NVARCHAR(MAX) NULL,            -- JSON for type-specific snapshot data
-        nl_insertdatetime  DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT UQ_NotificationLog_Type_Key_Entity_Channel
-            UNIQUE (nl_type, nl_key, nl_entity_type, nl_entity_id, nl_channel)
+    CREATE TABLE dbo.AuditNTE (
+        an_id                 INT IDENTITY(1,1) NOT NULL,
+        an_insertdatetime     DATETIME       NOT NULL CONSTRAINT DF_AuditNTE_insertdatetime DEFAULT (GETDATE()),
+        an_modifieddatetime   DATETIME       NULL,            -- last status change / retry
+        an_description        VARCHAR(8000)  NULL,            -- one readable line, e.g. 'SMS 100% to Ayman Abdulshaheed for SR 20261020-6783'
+        an_detail             VARCHAR(MAX)   NULL,            -- JSON spend snapshot (labor, items, trip charge, check-ins)
+        an_error              BIT            NOT NULL CONSTRAINT DF_AuditNTE_error DEFAULT (0),
+        an_errormessage       VARCHAR(MAX)   NULL,            -- ACS / SMTP error, or the skip reason; earlier attempts kept after ' || earlier: '
+        an_servername         VARCHAR(50)    NULL,
+        an_channel            VARCHAR(10)    NOT NULL,        -- 'Sms' | 'Email'
+        an_threshold          INT            NOT NULL,        -- 75 | 100
+        an_key                VARCHAR(100)   NOT NULL,        -- dedup key: '{threshold}@{nte}|u{u_id}' (SMS) or '{threshold}@{nte}|z{z_id}' (email)
+        an_status             VARCHAR(20)    NOT NULL,        -- 'Sending' | 'Sent' | 'Failed' | 'Skipped' | 'Reviewed'
+        an_attempts           INT            NOT NULL CONSTRAINT DF_AuditNTE_attempts DEFAULT (1),
+        an_sentdatetime       DATETIME       NULL,
+        sr_id                 INT            NOT NULL,
+        an_srnumber           VARCHAR(50)    NULL,
+        u_id                  INT            NULL,            -- the tech it was about
+        an_techname           VARCHAR(100)   NULL,
+        z_id                  INT            NULL,            -- the tech's zone (email leg)
+        an_zonename           VARCHAR(100)   NULL,
+        an_intendedrecipient  VARCHAR(500)   NULL,            -- the tech's phone / the zone email it was meant for
+        an_recipient          VARCHAR(500)   NULL,            -- where it actually went (override rows reroute it); NULL when skipped
+        an_overridden         BIT            NOT NULL CONSTRAINT DF_AuditNTE_overridden DEFAULT (0),
+        an_subject            VARCHAR(500)   NULL,            -- email only
+        an_body               VARCHAR(MAX)   NULL,            -- the rendered message exactly as sent
+        an_nte                DECIMAL(18,2)  NULL,
+        an_spent              DECIMAL(18,2)  NULL,
+        an_percent            DECIMAL(18,1)  NULL,
+        CONSTRAINT PK_AuditNTE PRIMARY KEY CLUSTERED (an_id),
+        CONSTRAINT UQ_AuditNTE_sr_channel_key UNIQUE (sr_id, an_channel, an_key)
     );
 
-    CREATE INDEX IX_NotificationLog_Entity ON dbo.NotificationLog(nl_entity_type, nl_entity_id);
-    CREATE INDEX IX_NotificationLog_Type   ON dbo.NotificationLog(nl_type, nl_insertdatetime);
+    CREATE INDEX IX_AuditNTE_insertdatetime ON dbo.AuditNTE (an_insertdatetime DESC);
+    CREATE INDEX IX_AuditNTE_u_id           ON dbo.AuditNTE (u_id) INCLUDE (an_insertdatetime, an_status);
 END;
 GO
 
--- Seed default config rows. Update AcsConnectionString / AcsSmsFrom / AcsEmailFrom in
--- ConfigSetting after this runs. Leave Enabled = false until smoke-tested.
+-- Seed config rows. Fill AcsConnectionString / AcsSmsFrom after this runs; EmailFrom, MaxOpenCheckInHours,
+-- EnabledTechIds and the final template wording come from the 2026-11-01 script. Leave Enabled = false.
 IF NOT EXISTS (SELECT 1 FROM ConfigSetting WHERE cs_type = 'NteConfig' AND cs_identifier = 'Enabled')
 BEGIN
     INSERT INTO ConfigSetting (o_id, cs_type, cs_identifier, cs_value, cs_insertdatetime, cs_description) VALUES
       (1, 'NteConfig', 'Enabled',                 'false',     GETDATE(), 'Master kill-switch for the NTE notification service'),
-      (1, 'NteConfig', 'ScanIntervalMinutes',     '15',        GETDATE(), 'How often the background loop scans active service requests'),
+      (1, 'NteConfig', 'ScanIntervalMinutes',     '5',         GETDATE(), 'How often the background loop scans active service requests'),
       (1, 'NteConfig', 'Thresholds',              '75,100',    GETDATE(), 'CSV of percent thresholds that trigger a notification'),
       (1, 'NteConfig', 'AcsConnectionString',     '',          GETDATE(), 'Azure Communication Services connection string'),
       (1, 'NteConfig', 'AcsSmsFrom',              '',          GETDATE(), 'E.164 sender number for SMS, e.g. +15551234567'),
-      (1, 'NteConfig', 'AcsEmailFrom',            '',          GETDATE(), 'Verified ACS sender email address'),
-      (1, 'NteConfig', 'SmokeTestOverrideMobile', '',          GETDATE(), 'When non-empty, all SMS routes here instead of the tech mobile'),
-      (1, 'NteConfig', 'SmokeTestOverrideEmail',  '',          GETDATE(), 'When non-empty, all zone emails route here instead of the zone email');
+      (1, 'NteConfig', 'SmokeTestOverrideMobile', '',          GETDATE(), 'When non-empty, every SMS goes to these numbers (semicolon-separated) instead of the tech'),
+      (1, 'NteConfig', 'SmokeTestOverrideEmail',  '',          GETDATE(), 'When non-empty, every zone email goes to these addresses (semicolon-separated) instead of the zone');
 END;
 GO
 

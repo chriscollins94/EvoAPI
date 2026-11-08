@@ -220,13 +220,12 @@ builder.Services.AddHttpClient<IChatService, ChatService>(client =>
 // edit there to retune without redeploying.
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteQueryRepository,
     EvoAPI.Infrastructure.Repositories.NteQueryRepository>();
-builder.Services.AddScoped<EvoAPI.Core.Interfaces.INotificationLogRepository,
-    EvoAPI.Infrastructure.Repositories.NotificationLogRepository>();
+builder.Services.AddScoped<EvoAPI.Core.Interfaces.IAuditNteRepository,
+    EvoAPI.Infrastructure.Repositories.AuditNteRepository>();
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteSpendCalculator,
-    EvoAPI.Infrastructure.Services.StubNteSpendCalculator>();
+    EvoAPI.Infrastructure.Services.SqlNteSpendCalculator>();
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.ISmsService,
     EvoAPI.Infrastructure.Services.AcsSmsService>();
-builder.Services.AddScoped<EvoAPI.Infrastructure.Services.AcsEmailService>();
 builder.Services.AddScoped<EvoAPI.Core.Interfaces.INteNotificationService,
     EvoAPI.Infrastructure.Services.NteNotificationService>();
 builder.Services.AddHostedService<EvoAPI.Infrastructure.Services.NteNotificationBackgroundService>();

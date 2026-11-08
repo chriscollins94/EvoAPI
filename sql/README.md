@@ -25,21 +25,19 @@ Rules that keep this workable for one person:
 ## Pending for PROD
 
 Scripts written since the last PROD deploy, in run order. Delete a line once it has run on PROD.
+`diagnostics/prod_deploy_preflight.sql` (read-only) reports OK / MISSING for every line below; run it before and after.
 
 | Script | Ships with | Notes |
 | --- | --- | --- |
 | `migrations/2026-09-08_create_form_tables.sql` | EvoAPI + evotech | PM workflow slice 1 |
 | `migrations/2026-09-08_create_asset_tables.sql` | EvoAPI + evotech | PM workflow slice 2 |
-| `migrations/2026-09-10_create_xrf_tables.sql` | EvoAPI + evotech | Final shape already includes the result column and the premise key. PROD needs only this one. |
-| `migrations/2026-09-11_add_xrfbatchdetail_result_column.sql` | TEST only | Skip on PROD; folded into the create script. |
-| `migrations/2026-09-12_alter_xrfbatchdetail_premisenumber.sql` | TEST only | Skip on PROD; wipes test waves and re-keys. |
-| `migrations/2026-09-15_xrf_result_add_not_used.sql` | EvoAPI + evotech | Required on ANY database whose XRF tables were created before 2026-09-15 (the create script only gained 'XRF Not Used' that day). Without it every XRF Not Used submit fails. Safe to rerun. |
 | `migrations/2026-09-16_add_laborrate_unique_customer_trade.sql` | EvoWS + EvoUI | Unique index on LaborRate (xccc_id, t_id). Aborts and lists duplicates if any exist; clean them first (see `diagnostics/laborrate_duplicates.sql`). |
-| `migrations/2026-09-20_add_attachment_location.sql` | EvoAPI + evotech | Nullable `l_id` on Attachment (+ filtered index) so aerials and site files link to a location. Safe to rerun. |
-| `migrations/2026-09-19_add_metropipe_public_report_key.sql` | EvoAPI + evotech | Generates and inserts the 8-character key for the public (no-login) Metro Pipe report and PRINTs it; copy it from Messages. Safe to rerun (keeps an existing key). |
 | `migrations/2026-09-24_create_pm_ticket_tables.sql` | EvoAPI + evotech | PM workflow slice 3 (ticket entry): ServiceType lookup, ServiceRequest.svt_id / fr_id / sr_pmunitcount / sr_servicebydate, Priority.p_allowpreventative, PMVisit, PMVisitUnit. Safe to rerun. |
 | `migrations/2026-09-25_create_pm_visit_answer_table.sql` | EvoAPI + evotech + EvoUI | PM workflow slice 4a (tech visit): PMVisitAnswer. EvoUI ships the legacy tech schedule routing (config.tech.js apiRootEvoApi / evotechRoot + schedule.js). Safe to rerun. |
 | `migrations/2026-09-25_create_pm_visit_finding_table.sql` | EvoAPI + evotech | PM workflow slice 4b (checkout): PMVisitFinding. Safe to rerun. |
+| `migrations/2026-04-19_create_AuditNTE_table.sql` | EvoAPI | NTE notifications: AuditNTE table (audit trail + dedup) and NteConfig/NteTemplate seed rows. Drops the TEST-only NotificationLog predecessor. Ran on TEST 2026-11-07. Safe to rerun. |
+| `migrations/2026-11-01_nte_notification_config_updates.sql` | EvoAPI | NTE notifications: EmailFrom, MaxOpenCheckInHours (D8), EnabledTechIds rollout valve, 5-minute interval (D5), final template wording. Run after the 2026-04-19 script. Ran on TEST 2026-11-07. Safe to rerun. |
+| `migrations/2026-11-07_nte_cutover_mark_reviewed.sql` | manual | NTE notifications: run by hand on PROD once, when the SmokeTestOverride* rows are cleared at the end of the review period. Marks rerouted AuditNTE rows Reviewed so techs get their real alert. Not part of a deploy. |
 
 Earlier scripts (markup decimal, performance, status-change user tracking, attachment
 geolocation, customer inquiry attack points) each carry their own TEST/PROD status in their
