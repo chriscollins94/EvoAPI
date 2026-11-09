@@ -25,7 +25,7 @@ stub spend calculator. Azure toll-free verification completed and an SMS from `e
 | D4 | NTE changes | Dedup key includes the NTE amount, so raising (or lowering) the NTE re-arms both thresholds against the new amount. |
 | D5 | Scan interval | 5 minutes (`NteConfig/ScanIntervalMinutes = 5`). Event-driven recompute on check-in/out is a follow-up only if 5 minutes proves too loose. |
 | D6 | Wording | See Config changes below. Office can edit templates in ConfigSetting at any time. |
-| D7 | Quoted items | Same rule as the tech UI: quoted service items (`xwosi_forquote = 1`) count toward spend unless `sr.sr_nteexcludequotedsi = 1`. |
+| D7 | Quoted items | **Revised 2026-11-09:** quoted service items (`xwosi_forquote = 1`) never count toward spend. The legacy `sr.sr_nteexcludequotedsi` flag (set only by the tech page's Prepare Quote button, never cleared) is not consulted. The excluded amount is written to the audit detail as `quotedItemsExcluded`. Original rule (count unless the flag = 1, matching the tech page) produced texts driven by unapproved parts. |
 | D8 | Stale open check-ins | Open check-ins older than `NteConfig/MaxOpenCheckInHours` (default 24) are treated as a forgotten check-out and ignored; the count is written to NotificationLog metadata as `staleCheckIns`. Within the limit an open check-in counts up to now. |
 | D9 | Which SRs the scan considers (2026-11-04) | Only SRs with a tech checked in right now (open check-in newer than `MaxOpenCheckInHours`). SRs nobody is on are not scanned, so nothing fires for idle, Complete or Invoiced jobs; a job already past its NTE alerts at the next check-in, which is when the warning matters. The 100% zone email waits for that check-in too; split it off later if the office needs it sooner. Prod sizing 2026-11-04: 1,608 open SRs with an NTE, 744 >= 75%, 1,252 of them Invoiced; only 7 had a tech checked in. An activity window was rejected because invoicing counts as activity. |
 | D10 | Audit + staged rollout (2026-11-07) | NotificationLog renamed/reshaped to `dbo.AuditNTE` (Audit-style `an_` columns): one row per text/email = audit trail AND dedup lock; retries bump `an_attempts` and keep earlier errors. Rollout in three phases driven by config only: (1) both `SmokeTestOverride*` rows hold the reviewers (semicolon lists), (2) `EnabledTechIds` lists a few user ids, (3) all cleared + `2026-11-07_nte_cutover_mark_reviewed.sql` marks rerouted rows `Reviewed` so techs still get their real alert. Techs outside the allowlist get no audit row. |
@@ -44,7 +44,7 @@ percent = spent / sr.sr_nte * 100
   Flat-rate SRs (`sr_flatorhourly = 'flat'`) use `sr_rateflat` instead of hours.
 - **Service items** - per item `((xwosi_basecost * xwosi_quantity) + tax) * (1 + xwosi_percentagemarkup / 100)` where
   `tax = xwosi_basecost * xwosi_quantity * xwosi_percentagetax / 100`. `xwosi_percentagemarkup` already includes the
-  supplier markup. Incurred items always; quoted items per D7.
+  supplier markup. Incurred items only; quoted items never (D7, revised 2026-11-09).
 - **Trip charge** - per D3. Reuse the cascade already in `GetServiceRequestLaborContext` / `ResolveTripCharge`.
 
 ## Work items
@@ -151,3 +151,12 @@ until then the email body would render those tokens literally.
   `EnabledTechIds` row. New `sql/diagnostics/nte_audit_recent.sql`; status script updated. Both migrations run on
   TEST 2026-11-07; AuditNTE empty, so the next scan re-sends SR 100337 if Ayman is still checked in (good: it
   exercises the audit row and the port-587 email). Setup doc rewritten. Build clean.
+- **2026-11-09 - D7 revised: quoted items never count.** Prod go-live review of SR 20261108-3364 (125%, text + email
+  rerouted to the reviewer) raised the question of what the spend includes. Findings against the legacy invoice:
+  labor, rounding, minimum, flat rate and trip cascade all match CreateInvoice; TimeQuoted hours are not billed by
+  either; quoted service items were counted unless `sr_nteexcludequotedsi = 1`, a flag only the tech page's Prepare
+  Quote button sets. Decision: quoted items (`xwosi_forquote = 1`) are excluded unconditionally and the flag is no
+  longer read. `NteSpendResult.QuotedItemsExcluded` / audit detail `quotedItemsExcluded` show what was left out.
+  New `sql/diagnostics/nte_spend_breakdown.sql` explains one SR's number; validation and recipients scripts updated.
+  Also found: the tech page's Spent is the stored invoice total (no labor until check-out, no trip until time exists),
+  so it reads lower than the scan mid-job by design (D3/D8).

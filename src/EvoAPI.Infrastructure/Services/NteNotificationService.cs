@@ -419,6 +419,7 @@ public class NteNotificationService : INteNotificationService
                 percent = spend.Percent,
                 labor = spend.Labor,
                 serviceItems = spend.ServiceItems,
+                quotedItemsExcluded = spend.QuotedItemsExcluded,
                 tripCharge = spend.TripCharge,
                 openCheckIns = spend.OpenCheckIns,
                 staleCheckIns = spend.StaleCheckIns,

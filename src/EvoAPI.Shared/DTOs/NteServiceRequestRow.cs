@@ -9,7 +9,6 @@ public class NteServiceRequestRow
     public int SrId { get; set; }
     public string? SrNumber { get; set; }
     public decimal Nte { get; set; }
-    public bool ExcludeQuotedSi { get; set; }
     public string? CustomerName { get; set; }
     public string? LocationName { get; set; }
 

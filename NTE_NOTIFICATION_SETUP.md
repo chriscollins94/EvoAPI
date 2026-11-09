@@ -8,10 +8,14 @@ build history are in [NTE_NOTIFICATION_PLAN.md](NTE_NOTIFICATION_PLAN.md).
 Every `NteConfig/ScanIntervalMinutes` (5) the EvoAPI background loop looks at every open service request
 that has an NTE **and a tech checked in right now** (EvoTrakker check-in with no check-out, newer than
 `MaxOpenCheckInHours`). For each one it works out spend to date the way the invoice will (labor to the
-minute, service items with tax and markup, trip charge) and:
+minute, incurred service items with tax and markup, trip charge) and:
 
 - **75%** of NTE: texts the checked-in tech to stop and call the office.
 - **100%**: texts the tech and emails the tech's zone (Employee Directory zone, `Zone.z_email`).
+
+Quoted service items and quoted labor hours never count toward spend; the quoted trip charge counts once a
+quote has been started on the SR, the same as the invoice. `sql/diagnostics/nte_spend_breakdown.sql` explains
+any one SR's number line by line.
 
 Only the highest crossed threshold is sent; a job first seen at 137% gets one text, not two. Each
 text / email is sent once per tech (or zone) per threshold per NTE amount; changing the NTE re-arms it.

@@ -3,7 +3,8 @@
 -- so a figure in AuditNTE.an_detail can be traced back to the SR. Same rules as the scan:
 --   labor        closed check-ins + open ones up to now (unless stale, D8); CEILING to the billable rule;
 --                company minimum applied once to the first row; flat SR = sr_rateflat once any time exists
---   items        ((base * qty) + tax) * (1 + markup%) per row; quoted rows count unless sr_nteexcludequotedsi = 1 (D7)
+--   items        ((base * qty) + tax) * (1 + markup%) per row; quoted rows (xwosi_forquote = 1) never count (D7, 2026-11-09);
+--                the legacy sr_nteexcludequotedsi flag is shown in section 1 for reference but not used
 --   trip         worked: lr_tripcharge if > 0 else rate * sr_tripcharge_worked%  (counted from the start, D3)
 --                quoted: sr_tripcharge_quote_billed if set, else the same cascade when sr_quotedtimestart is set
 --   NOT counted  TimeQuoted (quoted labor hours) - the invoice does not bill it either; listed below for reference.
@@ -18,7 +19,7 @@ IF @sr_id IS NULL BEGIN PRINT 'No service request with that number'; RETURN; END
 
 -- 1) SR-level inputs
 SELECT sr.sr_id, sr.sr_requestnumber, s.s_status, sr.sr_nte,
-       ISNULL(sr.sr_nteexcludequotedsi, 0)                      AS exclude_quoted_items,
+       ISNULL(sr.sr_nteexcludequotedsi, 0)                      AS legacy_exclude_flag_not_used,
        LOWER(ISNULL(NULLIF(sr.sr_flatorhourly, ''), 'hourly'))  AS flat_or_hourly,
        sr.sr_rateflat,
        lrt.lrt_fieldname                                        AS sr_rate_type,
@@ -87,10 +88,9 @@ SELECT x.xwosi_id, wo.wo_workordernumber, si.si_name,
        ROUND((ISNULL(x.xwosi_basecost, 0) * ISNULL(x.xwosi_quantity, 0))
              * (1 + ISNULL(x.xwosi_percentagetax, 0) / 100.0)
              * (1 + ISNULL(x.xwosi_percentagemarkup, 0) / 100.0), 2) AS amount,
-       CASE WHEN ISNULL(x.xwosi_forquote, 0) = 1 AND ISNULL(sr.sr_nteexcludequotedsi, 0) = 1 THEN 'no (quoted, excluded by SR)' ELSE 'yes' END AS counted
+       CASE WHEN ISNULL(x.xwosi_forquote, 0) = 1 THEN 'no (quoted)' ELSE 'yes' END AS counted
 FROM dbo.xrefWorkOrderServiceItem x
 INNER JOIN dbo.WorkOrder wo ON wo.wo_id = x.wo_id
-INNER JOIN dbo.ServiceRequest sr ON sr.sr_id = wo.sr_id
 LEFT JOIN dbo.ServiceItem si ON si.si_id = x.si_id
 WHERE wo.sr_id = @sr_id AND wo.wot_id = 1
 ORDER BY x.xwosi_id;
@@ -101,7 +101,6 @@ SELECT tq.* FROM dbo.TimeQuoted tq WHERE tq.sr_id = @sr_id;
 -- 5) Totals the scan would report for this SR right now
 ;WITH A AS (
     SELECT sr.sr_id, sr.sr_nte,
-           ISNULL(sr.sr_nteexcludequotedsi, 0) AS exclude_quoted,
            LOWER(ISNULL(NULLIF(sr.sr_flatorhourly, ''), 'hourly')) AS flatorhourly,
            ISNULL(sr.sr_rateflat, 0) AS sr_rateflat,
            ISNULL(sr.sr_tripcharge_worked, 0) AS tc_worked_pct, ISNULL(sr.sr_tripcharge_quote, 0) AS tc_quote_pct,
@@ -147,8 +146,8 @@ SELECT tq.* FROM dbo.TimeQuoted tq WHERE tq.sr_id = @sr_id;
 )
 SELECT a.sr_nte AS nte,
        CAST(CASE WHEN a.flatorhourly = 'flat' THEN CASE WHEN ISNULL(l.tt_rows, 0) > 0 THEN a.sr_rateflat ELSE 0 END ELSE ISNULL(l.labor_hourly, 0) END AS decimal(18,2)) AS labor,
-       CAST(ISNULL(i.items_incurred, 0) + CASE WHEN a.exclude_quoted = 1 THEN 0 ELSE ISNULL(i.items_quoted, 0) END AS decimal(18,2)) AS service_items,
-       CAST(ISNULL(i.items_quoted, 0) AS decimal(18,2)) AS of_which_quoted_items,
+       CAST(ISNULL(i.items_incurred, 0) AS decimal(18,2)) AS service_items,
+       CAST(ISNULL(i.items_quoted, 0) AS decimal(18,2)) AS quoted_items_excluded,
        CAST(CASE WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge ELSE ROUND(COALESCE(l.first_rate, a.sr_rate, 0) * a.tc_worked_pct / 100.0, 2) END AS decimal(18,2)) AS trip_worked,
        CAST(CASE WHEN a.sr_tripcharge_quote_billed IS NOT NULL THEN a.sr_tripcharge_quote_billed
                  WHEN a.sr_quotedtimestart IS NULL THEN 0

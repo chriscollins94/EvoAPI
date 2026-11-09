@@ -8,7 +8,8 @@ public class NteSpendResult
     public int SrId { get; set; }
     public decimal Nte { get; set; }
     public decimal Labor { get; set; }
-    public decimal ServiceItems { get; set; }
+    public decimal ServiceItems { get; set; }          // incurred items only (xwosi_forquote = 0)
+    public decimal QuotedItemsExcluded { get; set; }   // quoted items left out of ServiceItems (D7), for the audit detail
     public decimal TripCharge { get; set; }
     public int OpenCheckIns { get; set; }    // open check-ins counted (within MaxOpenCheckInHours)
     public int StaleCheckIns { get; set; }   // open check-ins ignored as forgotten check-outs (D8)

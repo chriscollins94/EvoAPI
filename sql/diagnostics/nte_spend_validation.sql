@@ -5,7 +5,7 @@
 -- service requests that have an invoice total stored, open or closed, so the two numbers can be compared.
 -- Expected, explainable differences (do NOT chase these):
 --   * trip_charge: the invoice zeroes the worked trip charge when no time was worked; the scan counts it (D3).
---   * service_items: when sr_nteexcludequotedsi = 1 the scan drops quoted items; sr_totaldue keeps them (D7).
+--   * service_items: the scan never counts quoted items (xwosi_forquote = 1); sr_totaldue keeps them (D7).
 --   * sr_totaldue is a snapshot from the last CreateInvoice; items or time added since will not be in it.
 -- Everything else should match to the cent. Rows where it does not are the ones to look at.
 -- Keep in sync with the C# constant when the formula changes.
@@ -17,7 +17,6 @@ DECLARE @MaxOpenCheckInHours int = 24;   -- mirror NteConfig/MaxOpenCheckInHours
 WITH ActiveSr AS (
     SELECT TOP (@TakeRows)
            sr.sr_id, sr.sr_nte, sr.sr_requestnumber, sr.s_id, sr.sr_totaldue,
-           ISNULL(sr.sr_nteexcludequotedsi, 0)                     AS exclude_quoted,
            LOWER(ISNULL(NULLIF(sr.sr_flatorhourly, ''), 'hourly'))  AS flatorhourly,
            ISNULL(sr.sr_rateflat, 0)                                AS sr_rateflat,
            ISNULL(sr.sr_tripcharge_worked, 0)                       AS tc_worked_pct,
@@ -107,16 +106,14 @@ Items AS (
 ),
 Calc AS (
     SELECT
-        a.sr_id, a.sr_requestnumber, a.s_id, a.sr_nte, a.sr_totaldue, a.exclude_quoted, a.flatorhourly,
+        a.sr_id, a.sr_requestnumber, a.s_id, a.sr_nte, a.sr_totaldue, a.flatorhourly,
         ISNULL(l.tt_rows, 0) AS tt_rows, ISNULL(l.open_checkins, 0) AS open_checkins, ISNULL(s.stale_checkins, 0) AS stale_checkins,
         CAST(CASE WHEN a.flatorhourly = 'flat'
                   THEN CASE WHEN ISNULL(l.tt_rows, 0) > 0 THEN a.sr_rateflat ELSE 0 END
                   ELSE ISNULL(l.labor_hourly, 0) END AS decimal(18, 2))                       AS labor,
         CAST(ISNULL(i.items_incurred, 0) AS decimal(18, 2))                                   AS items_incurred,
         CAST(ISNULL(i.items_quoted, 0) AS decimal(18, 2))                                     AS items_quoted,
-        CAST(ISNULL(i.items_incurred, 0)
-             + CASE WHEN a.exclude_quoted = 1 THEN 0 ELSE ISNULL(i.items_quoted, 0) END
-             AS decimal(18, 2))                                                               AS service_items,
+        CAST(ISNULL(i.items_incurred, 0) AS decimal(18, 2))                                   AS service_items,
         CAST(CASE WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
                   ELSE ROUND(COALESCE(l.first_rate, a.sr_rate, 0) * a.tc_worked_pct / 100.0, 2) END
              + CASE WHEN a.sr_tripcharge_quote_billed IS NOT NULL THEN a.sr_tripcharge_quote_billed
@@ -130,14 +127,15 @@ Calc AS (
     LEFT JOIN Stale s ON s.sr_id = a.sr_id
     LEFT JOIN Items i ON i.sr_id = a.sr_id
 )
-SELECT sr_id, sr_requestnumber, s_id, sr_nte, flatorhourly, exclude_quoted, tt_rows, open_checkins, stale_checkins,
+SELECT sr_id, sr_requestnumber, s_id, sr_nte, flatorhourly, tt_rows, open_checkins, stale_checkins,
        labor, service_items, items_quoted, trip_charge, trip_charge_invoiced,
        labor + service_items + trip_charge          AS spent_scan,
        sr_totaldue                                   AS spent_invoice,
        labor + service_items + trip_charge - sr_totaldue AS diff,
        CASE WHEN ABS(labor + service_items + trip_charge - sr_totaldue) < 0.01 THEN 'match'
             WHEN ABS(labor + service_items + trip_charge - sr_totaldue - (trip_charge - trip_charge_invoiced)) < 0.01 THEN 'trip charge only (D3)'
-            WHEN exclude_quoted = 1 AND ABS(labor + service_items + items_quoted + trip_charge - sr_totaldue) < 0.01 THEN 'quoted items excluded (D7)'
+            WHEN ABS(labor + service_items + items_quoted + trip_charge - sr_totaldue) < 0.01 THEN 'quoted items excluded (D7)'
+            WHEN ABS(labor + service_items + items_quoted + trip_charge - sr_totaldue - (trip_charge - trip_charge_invoiced)) < 0.01 THEN 'quoted items (D7) + trip charge (D3)'
             ELSE 'LOOK' END                          AS verdict,
        CASE WHEN sr_nte > 0 THEN CAST(ROUND((labor + service_items + trip_charge) / sr_nte * 100, 1) AS decimal(18, 1)) END AS pct_of_nte
 FROM Calc

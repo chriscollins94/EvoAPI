@@ -12,7 +12,9 @@ namespace EvoAPI.Infrastructure.Services;
 // service-item formula). Differences from the invoice are deliberate and listed
 // in NTE_NOTIFICATION_PLAN.md:
 //   D3 - trip charge counts from the moment the SR has an NTE (invoice zeroes it until time is worked)
-//   D7 - quoted service items count unless sr_nteexcludequotedsi = 1
+//   D7 - quoted service items (xwosi_forquote = 1) never count toward NTE spend; the legacy
+//        sr_nteexcludequotedsi flag is not consulted (changed 2026-11-09, was: count unless flag = 1).
+//        The excluded amount is returned as QuotedItemsExcluded for the audit detail.
 //   D8 - open check-ins are measured up to now (GETUTCDATE(); tt_begin is UTC on both the EvoWS and EvoAPI
 //        paths) unless older than NteConfig/MaxOpenCheckInHours, in which case they are ignored as a
 //        forgotten check-out and reported in StaleCheckIns
@@ -30,7 +32,6 @@ public class SqlNteSpendCalculator : INteSpendCalculator
     public const string ActiveSpendSql = @"
         WITH ActiveSr AS (
             SELECT sr.sr_id, sr.sr_nte,
-                   ISNULL(sr.sr_nteexcludequotedsi, 0)                     AS exclude_quoted,
                    LOWER(ISNULL(NULLIF(sr.sr_flatorhourly, ''), 'hourly'))  AS flatorhourly,
                    ISNULL(sr.sr_rateflat, 0)                                AS sr_rateflat,
                    ISNULL(sr.sr_tripcharge_worked, 0)                       AS tc_worked_pct,
@@ -107,6 +108,7 @@ public class SqlNteSpendCalculator : INteSpendCalculator
         ),
         -- ((base * qty) + tax) * (1 + markup%) per item, rounded like CreateInvoice.
         -- xwosi_percentagemarkup already includes the supplier markup.
+        -- Only incurred rows (xwosi_forquote = 0) count; quoted rows are summed separately for the audit (D7).
         Items AS (
             SELECT wo.sr_id,
                    SUM(CASE WHEN ISNULL(x.xwosi_forquote, 0) = 0 THEN x.amt ELSE 0 END) AS items_incurred,
@@ -129,9 +131,8 @@ public class SqlNteSpendCalculator : INteSpendCalculator
             CAST(CASE WHEN a.flatorhourly = 'flat'
                       THEN CASE WHEN ISNULL(l.tt_rows, 0) > 0 THEN a.sr_rateflat ELSE 0 END
                       ELSE ISNULL(l.labor_hourly, 0) END AS decimal(18, 2))                       AS Labor,
-            CAST(ISNULL(i.items_incurred, 0)
-                 + CASE WHEN a.exclude_quoted = 1 THEN 0 ELSE ISNULL(i.items_quoted, 0) END
-                 AS decimal(18, 2))                                                               AS ServiceItems,
+            CAST(ISNULL(i.items_incurred, 0) AS decimal(18, 2))                                   AS ServiceItems,
+            CAST(ISNULL(i.items_quoted, 0) AS decimal(18, 2))                                     AS QuotedItemsExcluded,
             CAST(
                 -- worked trip charge: trade flat $ wins, else % of the hourly rate (first check-in rate, else the SR rate type)
                 CASE WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge

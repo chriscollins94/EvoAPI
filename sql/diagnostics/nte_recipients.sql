@@ -18,7 +18,6 @@ SELECT
     sr.sr_id                                AS SrId,
     sr.sr_requestnumber                     AS SrNumber,
     sr.sr_nte                               AS Nte,
-    ISNULL(sr.sr_nteexcludequotedsi, 0)     AS ExcludeQuotedSi,
     c.c_name                                AS CustomerName,
     l.l_location                            AS LocationName,
     sr.wo_id_primary                        AS PrimaryWoId,
