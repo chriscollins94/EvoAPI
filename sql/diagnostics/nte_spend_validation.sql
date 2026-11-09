@@ -5,6 +5,7 @@
 -- service requests that have an invoice total stored, open or closed, so the two numbers can be compared.
 -- Expected, explainable differences (do NOT chase these):
 --   * trip_charge: the invoice zeroes the worked trip charge when no time was worked; the scan counts it (D3).
+--                  The scan never counts the quoted trip charge; sr_totaldue includes it once billed (D3, 2026-11-09).
 --   * service_items: the scan never counts quoted items (xwosi_forquote = 1); sr_totaldue keeps them (D7).
 --   * sr_totaldue is a snapshot from the last CreateInvoice; items or time added since will not be in it.
 -- Everything else should match to the cent. Rows where it does not are the ones to look at.
@@ -116,10 +117,6 @@ Calc AS (
         CAST(ISNULL(i.items_incurred, 0) AS decimal(18, 2))                                   AS service_items,
         CAST(CASE WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
                   ELSE ROUND(COALESCE(l.first_rate, a.sr_rate, 0) * a.tc_worked_pct / 100.0, 2) END
-             + CASE WHEN a.sr_tripcharge_quote_billed IS NOT NULL THEN a.sr_tripcharge_quote_billed
-                    WHEN a.sr_quotedtimestart IS NULL THEN 0
-                    WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
-                    ELSE ROUND(ISNULL(a.sr_rate, 0) * a.tc_quote_pct / 100.0, 2) END
              AS decimal(18, 2))                                                               AS trip_charge,
         CAST(ISNULL(a.sr_tripcharge_worked_billed, 0) + ISNULL(a.sr_tripcharge_quote_billed, 0) AS decimal(18, 2)) AS trip_charge_invoiced
     FROM ActiveSr a

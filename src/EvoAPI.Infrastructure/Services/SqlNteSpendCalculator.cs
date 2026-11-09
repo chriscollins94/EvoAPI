@@ -11,7 +11,8 @@ namespace EvoAPI.Infrastructure.Services;
 // UpdateServiceRequestTripChargeBilledToDefault, and the EvoUI getBillToCustomer
 // service-item formula). Differences from the invoice are deliberate and listed
 // in NTE_NOTIFICATION_PLAN.md:
-//   D3 - trip charge counts from the moment the SR has an NTE (invoice zeroes it until time is worked)
+//   D3 - worked trip charge counts from the moment the SR has an NTE (invoice zeroes it until time is worked);
+//        the quoted trip charge (sr_tripcharge_quote / _quote_billed) never counts (changed 2026-11-09)
 //   D7 - quoted service items (xwosi_forquote = 1) never count toward NTE spend; the legacy
 //        sr_nteexcludequotedsi flag is not consulted (changed 2026-11-09, was: count unless flag = 1).
 //        The excluded amount is returned as QuotedItemsExcluded for the audit detail.
@@ -35,9 +36,6 @@ public class SqlNteSpendCalculator : INteSpendCalculator
                    LOWER(ISNULL(NULLIF(sr.sr_flatorhourly, ''), 'hourly'))  AS flatorhourly,
                    ISNULL(sr.sr_rateflat, 0)                                AS sr_rateflat,
                    ISNULL(sr.sr_tripcharge_worked, 0)                       AS tc_worked_pct,
-                   ISNULL(sr.sr_tripcharge_quote, 0)                        AS tc_quote_pct,
-                   sr.sr_tripcharge_quote_billed,
-                   sr.sr_quotedtimestart,
                    ISNULL(xccc.xccc_minimumlaborchargeinminutes, 0)         AS min_minutes,
                    ISNULL(br.br_roundtominute, 0)                           AS round_minutes,
                    ISNULL(lr.lr_tripcharge, 0)                              AS lr_tripcharge,
@@ -134,14 +132,10 @@ public class SqlNteSpendCalculator : INteSpendCalculator
             CAST(ISNULL(i.items_incurred, 0) AS decimal(18, 2))                                   AS ServiceItems,
             CAST(ISNULL(i.items_quoted, 0) AS decimal(18, 2))                                     AS QuotedItemsExcluded,
             CAST(
-                -- worked trip charge: trade flat $ wins, else % of the hourly rate (first check-in rate, else the SR rate type)
+                -- worked trip charge only: trade flat $ wins, else % of the hourly rate (first check-in rate, else the SR rate type).
+                -- The quoted trip charge is deliberately not added (D3, 2026-11-09).
                 CASE WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
                      ELSE ROUND(COALESCE(l.first_rate, a.sr_rate, 0) * a.tc_worked_pct / 100.0, 2) END
-                -- quoted trip charge: whatever invoicing already billed, else the same cascade when the SR is quoted
-                + CASE WHEN a.sr_tripcharge_quote_billed IS NOT NULL THEN a.sr_tripcharge_quote_billed
-                       WHEN a.sr_quotedtimestart IS NULL THEN 0
-                       WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
-                       ELSE ROUND(ISNULL(a.sr_rate, 0) * a.tc_quote_pct / 100.0, 2) END
                 AS decimal(18, 2))                                                                AS TripCharge,
             ISNULL(l.open_checkins, 0)                                                            AS OpenCheckIns,
             ISNULL(s.stale_checkins, 0)                                                           AS StaleCheckIns

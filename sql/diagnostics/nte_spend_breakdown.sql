@@ -5,9 +5,9 @@
 --                company minimum applied once to the first row; flat SR = sr_rateflat once any time exists
 --   items        ((base * qty) + tax) * (1 + markup%) per row; quoted rows (xwosi_forquote = 1) never count (D7, 2026-11-09);
 --                the legacy sr_nteexcludequotedsi flag is shown in section 1 for reference but not used
---   trip         worked: lr_tripcharge if > 0 else rate * sr_tripcharge_worked%  (counted from the start, D3)
---                quoted: sr_tripcharge_quote_billed if set, else the same cascade when sr_quotedtimestart is set
---   NOT counted  TimeQuoted (quoted labor hours) - the invoice does not bill it either; listed below for reference.
+--   trip         worked only: lr_tripcharge if > 0 else rate * sr_tripcharge_worked%  (counted from the start, D3)
+--   NOT counted  quoted trip charge (shown as quoted_trip_excluded, D3 2026-11-09);
+--                TimeQuoted (quoted labor hours) - the invoice does not bill it either; listed below for reference.
 -- Keep in sync with the C# constant when the formula changes.
 
 SET NOCOUNT ON;
@@ -152,7 +152,7 @@ SELECT a.sr_nte AS nte,
        CAST(CASE WHEN a.sr_tripcharge_quote_billed IS NOT NULL THEN a.sr_tripcharge_quote_billed
                  WHEN a.sr_quotedtimestart IS NULL THEN 0
                  WHEN a.lr_tripcharge > 0 THEN a.lr_tripcharge
-                 ELSE ROUND(ISNULL(a.sr_rate, 0) * a.tc_quote_pct / 100.0, 2) END AS decimal(18,2)) AS trip_quoted,
+                 ELSE ROUND(ISNULL(a.sr_rate, 0) * a.tc_quote_pct / 100.0, 2) END AS decimal(18,2)) AS quoted_trip_excluded,
        CASE WHEN a.lr_tripcharge > 0 THEN 'trade flat $' ELSE 'rate ' + CAST(COALESCE(l.first_rate, a.sr_rate, 0) AS varchar(20)) + ' x ' + CAST(a.tc_worked_pct AS varchar(20)) + '%' END AS trip_worked_source,
        ISNULL(l.open_checkins, 0) AS open_checkins
 FROM A a CROSS JOIN L l CROSS JOIN I i;

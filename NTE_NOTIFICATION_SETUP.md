@@ -13,9 +13,9 @@ minute, incurred service items with tax and markup, trip charge) and:
 - **75%** of NTE: texts the checked-in tech to stop and call the office.
 - **100%**: texts the tech and emails the tech's zone (Employee Directory zone, `Zone.z_email`).
 
-Quoted service items and quoted labor hours never count toward spend; the quoted trip charge counts once a
-quote has been started on the SR, the same as the invoice. `sql/diagnostics/nte_spend_breakdown.sql` explains
-any one SR's number line by line.
+Nothing quoted counts toward spend: quoted service items, quoted labor hours and the quoted trip charge are all
+left out, even after a tech has started a quote. Only incurred items, worked time and the worked trip charge
+count. `sql/diagnostics/nte_spend_breakdown.sql` explains any one SR's number line by line.
 
 Only the highest crossed threshold is sent; a job first seen at 137% gets one text, not two. Each
 text / email is sent once per tech (or zone) per threshold per NTE amount; changing the NTE re-arms it.

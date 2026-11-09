@@ -21,7 +21,7 @@ stub spend calculator. Azure toll-free verification completed and an SMS from `e
 |---|---|---|
 | D1 | Email provider | Use the existing `IEmailService` (SMTP, `EmailServer/*` ConfigSetting rows, same From as time-off emails). Delete `AcsEmailService`, its DI registration, the `NteConfig/AcsEmailFrom` row and setup doc section 3. ACS is for SMS only. |
 | D2 | Who gets the text | Any tech currently checked in (`TimeTracking.ttt_id = 3`, `tt_end IS NULL`) on any work order of the SR. Two techs checked in at once both get it. Zone email goes to the zone of whoever received the text. (The original fallback to the tech on `sr.wo_id_primary` was dropped by D9.) |
-| D3 | Trip charge | Counts from the moment the SR has an NTE, using the invoice cascade (LaborRate flat $ -> SR % -> company %). |
+| D3 | Trip charge | Worked trip charge counts from the moment the SR has an NTE, using the invoice cascade (LaborRate flat $ -> SR % -> company %). **Revised 2026-11-09:** the quoted trip charge (`sr_tripcharge_quote` / `_quote_billed`) never counts, even after Prepare Quote. |
 | D4 | NTE changes | Dedup key includes the NTE amount, so raising (or lowering) the NTE re-arms both thresholds against the new amount. |
 | D5 | Scan interval | 5 minutes (`NteConfig/ScanIntervalMinutes = 5`). Event-driven recompute on check-in/out is a follow-up only if 5 minutes proves too loose. |
 | D6 | Wording | See Config changes below. Office can edit templates in ConfigSetting at any time. |
@@ -45,7 +45,7 @@ percent = spent / sr.sr_nte * 100
 - **Service items** - per item `((xwosi_basecost * xwosi_quantity) + tax) * (1 + xwosi_percentagemarkup / 100)` where
   `tax = xwosi_basecost * xwosi_quantity * xwosi_percentagetax / 100`. `xwosi_percentagemarkup` already includes the
   supplier markup. Incurred items only; quoted items never (D7, revised 2026-11-09).
-- **Trip charge** - per D3. Reuse the cascade already in `GetServiceRequestLaborContext` / `ResolveTripCharge`.
+- **Trip charge** - worked leg only, per D3 (quoted trip charge excluded since 2026-11-09). Reuse the cascade already in `GetServiceRequestLaborContext` / `ResolveTripCharge`.
 
 ## Work items
 
@@ -160,3 +160,7 @@ until then the email body would render those tokens literally.
   New `sql/diagnostics/nte_spend_breakdown.sql` explains one SR's number; validation and recipients scripts updated.
   Also found: the tech page's Spent is the stored invoice total (no labor until check-out, no trip until time exists),
   so it reads lower than the scan mid-job by design (D3/D8).
+- **2026-11-09 - D3 revised: quoted trip charge never counts.** Follow-on to the D7 change above. TripCharge is the
+  worked leg only; `sr_tripcharge_quote`, `sr_tripcharge_quote_billed` and `sr_quotedtimestart` are no longer read by
+  the calculator. Breakdown script shows the excluded amount as `quoted_trip_excluded`; validation script updated.
+  Net rule: nothing quoted (items, hours, trip) counts toward NTE spend.
